@@ -14,5 +14,7 @@ ed25519-dalek = "2"
 getrandom = "0.2"
 hex = "0.4"
 igd-next = { version = "0.18", features = ["aio_tokio"] }
+libc = "0.2"
 sha2 = "0.10"
+socket2 = "0.5"
 tokio = { version = "1", features = ["full"] }

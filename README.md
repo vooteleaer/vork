@@ -81,7 +81,22 @@ All nodes ran on one machine with two CPU cores, so every relay competes with th
 | 2 relays in a chain (4 processes) | about 300 Mbit/s |
 | 2 parallel paths over 2 relays (4 processes) | about 400–470 Mbit/s |
 
-One node is a single thread doing two layers of WireGuard in userspace, so it handles roughly 1 Gbit/s of traffic on one core of this VM. On separate machines each relay has its own CPU, and the limit is usually the slowest uplink on the path. Room to grow: reuse buffers instead of allocating per packet, batch socket calls (`recvmmsg`/GSO), and spread work across threads.
+One node is a single thread doing two layers of WireGuard in userspace, so it handles roughly 1 Gbit/s of traffic on one core of this VM. On separate machines each relay has its own CPU, and the limit is usually the slowest uplink on the path. Room to grow: batch socket calls (`sendmmsg`/`recvmmsg`, UDP GSO/GRO) — on older CPUs with Meltdown mitigations the per-packet system call is the main cost —, reuse buffers instead of allocating per packet, and spread work across threads.
+
+### Real machines
+
+A Windows PC (10.10.10.238) and cafa-cloud (Debian 13, Xeon E5-2650 from 2012, a busy production host; 10.10.30.2), in different subnets with a router between them, linked directly:
+
+| Bench rate (Mbit/s) | Received | Loss |
+|---|---|---|
+| 100 | 100 | 0% |
+| 250 | 250 | 0% |
+| 500 | 430–497 | mostly 0–2%, spikes to 23% |
+| 800–1000 | 280–460 | 20–64% |
+
+The ping round trip was 2–4 ms. The ceiling, **about 450–500 Mbit/s**, is cafa-cloud's receiving side: an old CPU where Meltdown/MDS mitigations make every system call expensive, and vØrk makes one or more per packet. The PC sent up to ~830 Mbit/s. Before 4 MB socket buffers (`SO_RCVBUFFORCE` as root) and a larger burst allowance for Windows' ~15 ms timer, the same link lost 10% at 100 Mbit/s and topped out at ~130.
+
+`scripts/bench-local.sh` runs a topology on one machine (several nodes on 127.0.0.1) to measure its CPU ceiling.
 
 ## Lite nodes (ESP32, ESPHome)
 

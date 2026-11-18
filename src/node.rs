@@ -183,6 +183,36 @@ pub struct Node {
     bench_rx: HashMap<u32, BenchRx>,
 }
 
+/// Socket buffers big enough to absorb bursts (the Linux default, ~200 KB,
+/// holds only ~150 packets).
+const SOCK_BUF: usize = 4 << 20;
+
+fn bind_socket(addr: SocketAddr) -> anyhow::Result<std::net::UdpSocket> {
+    use socket2::{Domain, Protocol, Socket, Type};
+    let s = Socket::new(Domain::for_address(addr), Type::DGRAM, Some(Protocol::UDP))?;
+    let _ = s.set_recv_buffer_size(SOCK_BUF);
+    let _ = s.set_send_buffer_size(SOCK_BUF);
+    #[cfg(target_os = "linux")]
+    {
+        // As root, go past net.core.rmem_max/wmem_max, like wireguard-go does.
+        use std::os::fd::AsRawFd;
+        let v = SOCK_BUF as libc::c_int;
+        let len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+        unsafe {
+            let p = &v as *const libc::c_int as *const libc::c_void;
+            libc::setsockopt(s.as_raw_fd(), libc::SOL_SOCKET, libc::SO_RCVBUFFORCE, p, len);
+            libc::setsockopt(s.as_raw_fd(), libc::SOL_SOCKET, libc::SO_SNDBUFFORCE, p, len);
+        }
+    }
+    s.set_nonblocking(true)?;
+    s.bind(&addr.into())?;
+    let rb = s.recv_buffer_size().unwrap_or(0);
+    if rb < SOCK_BUF / 2 {
+        log(format!("receive buffer is only {} KB (raise net.core.rmem_max, or run as root on Linux)", rb / 1024));
+    }
+    Ok(s.into())
+}
+
 fn rand_u64() -> u64 {
     let mut b = [0u8; 8];
     getrandom::getrandom(&mut b).expect("OS entropy");
@@ -244,8 +274,7 @@ fn timers(tunn: &mut Tunn) -> Option<Vec<u8>> {
 
 impl Node {
     pub async fn new(me: Identity, cfg: Config) -> anyhow::Result<Node> {
-        let std_sock = std::net::UdpSocket::bind(cfg.listen)?;
-        std_sock.set_nonblocking(true)?;
+        let std_sock = bind_socket(cfg.listen)?;
         let send_sock = std_sock.try_clone()?;
         let sock = Arc::new(UdpSocket::from_std(std_sock)?);
         let my_hash = me.hash();
@@ -355,7 +384,8 @@ impl Node {
                     let bytes_per_s = self.cfg.bench_rate as f64 * 1_000_000.0 / 8.0;
                     bench_due += bench_last.elapsed().as_secs_f64() * bytes_per_s / BENCH_PAYLOAD as f64;
                     bench_last = Instant::now();
-                    bench_due = bench_due.min(256.0);
+                    // Windows timers tick every ~15 ms, so a tick may owe hundreds of packets.
+                    bench_due = bench_due.min(4096.0);
                     while bench_due >= 1.0 {
                         bench_due -= 1.0;
                         self.bench_send();
