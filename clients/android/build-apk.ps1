@@ -24,7 +24,7 @@ $Api = 26
 function Invoke-Cargo { & cargo.exe @args; if ($LASTEXITCODE -ne 0) { throw "cargo $args failed" } }
 
 # Only the ABIs asked for go into the APK (an arm64-only one for phones is smaller).
-Get-ChildItem "$Here\app\src\main\jniLibs" -Directory -ErrorAction SilentlyContinue |
+Get-ChildItem "$Here\app\src\main\jniLibs", "$Here\net\src\main\jniLibs" -Directory -ErrorAction SilentlyContinue |
     Where-Object { $Abis -notcontains $_.Name } | Remove-Item -Recurse -Force
 
 foreach ($abi in $Abis) {
@@ -45,6 +45,11 @@ foreach ($abi in $Abis) {
     # A program, named as a library so Android extracts it where it may run.
     Copy-Item "$built\vorkd" "$out\libvorkd.so"
     Copy-Item "$built\vork" "$out\libvork.so"
+    # The network app (net/) carries the node alone.
+    $netOut = "$Here\net\src\main\jniLibs\$abi"
+    New-Item -ItemType Directory -Force $netOut | Out-Null
+    Copy-Item "$built\vork" "$netOut\libvork.so"
+    & "$Bin\llvm-strip.exe" "$netOut\libvork.so"
     Remove-Item "$out\libprnsd.so" -ErrorAction SilentlyContinue # from older builds
     & "$Bin\llvm-strip.exe" "$out\libvorkd.so" "$out\libvork.so" "$out\libvork_desktop.so"
 }
@@ -59,5 +64,7 @@ try {
     & .\gradlew.bat --no-daemon $(if ($Release) { "assembleRelease" } else { "assembleDebug" })
     if ($LASTEXITCODE -ne 0) { throw "gradle failed" }
 } finally { Pop-Location }
-$apk = if ($Release) { "$Here\app\build\outputs\apk\release\app-release.apk" } else { "$Here\app\build\outputs\apk\debug\app-debug.apk" }
-"== $apk ({0:N1} MB)" -f ((Get-Item $apk).Length / 1MB)
+foreach ($m in "app", "net") {
+    $apk = if ($Release) { "$Here\$m\build\outputs\apk\release\$m-release.apk" } else { "$Here\$m\build\outputs\apk\debug\$m-debug.apk" }
+    "== $apk ({0:N1} MB)" -f ((Get-Item $apk).Length / 1MB)
+}

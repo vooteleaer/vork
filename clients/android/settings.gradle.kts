@@ -16,3 +16,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "vork"
 include(":app")
+// The network app: the vØrk node, the interface for apps, the devices (no storage).
+include(":net")
