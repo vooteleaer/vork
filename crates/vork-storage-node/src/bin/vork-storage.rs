@@ -310,7 +310,7 @@ Covered ({}): {}", covered.len(), if covered.is_empty() { "none".into() } else {
         }
         "get" => {
             let cap = it.next().unwrap_or_else(|| usage());
-            let (mut from, mut out, mut links, mut batch) = (Vec::new(), PathBuf::from("vork.out"), 4usize, 0usize);
+            let (mut from, mut out, mut links, mut batch) = (Vec::new(), PathBuf::from("vork.out"), 16usize, 0usize);
             while let Some(arg) = it.next() {
                 let mut value = || it.next().unwrap_or_else(|| usage());
                 match arg.as_str() {
