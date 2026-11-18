@@ -61,6 +61,8 @@ Unknown types are dropped.
 
 Sent when a link comes up. Binds the neighbor's WireGuard key (known from the handshake) to its signing key and flags. The receiver checks the signature over `vork/v0/bind ‖ x_pub ‖ flags`, then knows the neighbor's address and whether it relays.
 
+A node that receives a `HELLO` without having sent its own to that neighbor within the last second answers with its `HELLO`, `OBSERVED`, its announce and (full nodes) the announces it knows: the neighbor restarted its side of a link that was already up here.
+
 ### OBSERVED
 
 "I see you at this address." Sent when a link comes up. The receiver may use it as a candidate for direct links. It is a claim, not a proof.
@@ -68,7 +70,7 @@ Sent when a link comes up. Binds the neighbor's WireGuard key (known from the ha
 ### ANNOUNCE
 
 - The address is computed from `ed_pub ‖ x_pub`; the signature is checked over `vork/v0/announce ‖ address ‖ x_pub ‖ seq ‖ flags`.
-- `seq` must increase for each identity (v0: milliseconds since the Unix epoch; v1: any monotonic counter, see open questions).
+- `seq` must strictly increase for each identity. A node stores the last value it used and sends `max(last + 1, Unix time in ms)`: devices without a clock still work, and a clock set back doesn't make announces look old.
 - `hops` is not signed. A forwarder sends it on as `hops + 1`. Announces with `hops ≥ 16` are dropped.
 - A node sends its own announce every **30 s** and when a link comes up.
 - **Routes:** a node keeps, per destination, one route per neighbor it heard the announce from, replaced when that neighbor brings a higher `seq` (or the same `seq` with fewer hops).

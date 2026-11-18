@@ -9,7 +9,7 @@ Decisions still to make. Each names who it blocks.
 
 ## Protocol
 
-3. **Announce sequence numbers.** v0 uses the clock (ms). Devices without a clock need a stored counter. Spec v1: "strictly increasing per identity", with the clock as one way to get it? Blocks: M1, S1.
+3. ~~**Announce sequence numbers.**~~ Decided: strictly increasing per identity; a node stores the last one and uses `max(last + 1, clock in ms)`, so the clock helps but isn't required (implemented in M1).
 4. **Address length.** 16 bytes (128 bits, like RNS). Enough against collisions and grinding for addresses; is it enough for short names (see 9)? Blocks: M12.
 5. **The inner layer on Lite nodes.** Full WireGuard, or a lighter end-to-end layer if S1 shows the stock libraries can't do it? Blocks: M12.
 6. **The layer port (4799) and link addresses (10.89.0.1/2).** Keep, or pick something registered/less likely to clash? Blocks: M12.

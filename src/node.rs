@@ -19,9 +19,13 @@ use crate::wire::{self, Announce, FLAG_RELAY, Msg, wg};
 use boringtun::noise::handshake::parse_handshake_anon;
 use boringtun::noise::{Packet, Tunn, TunnResult};
 use boringtun::x25519::PublicKey;
+use crate::state::{Remembered, State, unix_now};
+use serde_json::json;
 use std::collections::{HashMap, HashSet};
+use std::io::Write as _;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::net::UdpSocket;
 
@@ -71,7 +75,11 @@ struct Neighbor {
     observed_me: Option<SocketAddr>,
     /// When the last authenticated packet arrived.
     last_rx: Option<Instant>,
-    bootstrap: bool,
+    /// Keep dialing while down, this often: bootstrap peers 5 s, remembered ones 60 s.
+    retry: Option<Duration>,
+    last_try: Instant,
+    /// When we last sent this neighbor our HELLO.
+    hello_sent: Option<Instant>,
     up: bool,
 }
 
@@ -133,6 +141,8 @@ pub struct Config {
     pub bench: Option<Hash>,
     /// ...at this rate (Mbit/s).
     pub bench_rate: u64,
+    /// Where the control endpoint listens (`None`: no control endpoint).
+    pub control: Option<String>,
 }
 
 /// What a bench receiver has seen in the current second.
@@ -181,6 +191,8 @@ pub struct Node {
     bench_seq: u64,
     bench_sent: u64,
     bench_rx: HashMap<u32, BenchRx>,
+    state: State,
+    started: Instant,
 }
 
 /// Socket buffers big enough to absorb bursts (the Linux default, ~200 KB,
@@ -219,13 +231,53 @@ fn rand_u64() -> u64 {
     u64::from_le_bytes(b)
 }
 
-fn now_seq() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64
+// ---- logging ---------------------------------------------------------------------
+
+/// 0 warn, 1 info, 2 debug.
+static LOG_LEVEL: AtomicU8 = AtomicU8::new(1);
+static LOG_FILE: Mutex<Option<std::fs::File>> = Mutex::new(None);
+
+/// Sets the level (`warn`, `info`, `debug`) and, optionally, a file to append
+/// to instead of standard error (a Windows service has no console).
+pub fn set_logging(level: &str, file: Option<&std::path::Path>) -> anyhow::Result<()> {
+    let l = match level {
+        "warn" => 0,
+        "info" => 1,
+        "debug" => 2,
+        other => anyhow::bail!("log level must be warn, info or debug, not {other}"),
+    };
+    LOG_LEVEL.store(l, Ordering::Relaxed);
+    if let Some(path) = file {
+        let f = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+        *LOG_FILE.lock().unwrap() = Some(f);
+    }
+    Ok(())
 }
 
-fn log(msg: impl AsRef<str>) {
+fn emit(level: u8, msg: &str) {
+    if level > LOG_LEVEL.load(Ordering::Relaxed) {
+        return;
+    }
     let t = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-    eprintln!("[{}.{:03}] {}", t.as_secs() % 100_000, t.subsec_millis(), msg.as_ref());
+    let line = format!("[{}.{:03}] {}", t.as_secs() % 100_000, t.subsec_millis(), msg);
+    match LOG_FILE.lock().unwrap().as_mut() {
+        Some(f) => {
+            let _ = writeln!(f, "{line}");
+        }
+        None => eprintln!("{line}"),
+    }
+}
+
+pub fn log(msg: impl AsRef<str>) {
+    emit(1, msg.as_ref());
+}
+
+fn debug(msg: impl AsRef<str>) {
+    emit(2, msg.as_ref());
+}
+
+fn warn(msg: impl AsRef<str>) {
+    emit(0, msg.as_ref());
 }
 
 fn ms(d: Duration) -> String {
@@ -273,7 +325,7 @@ fn timers(tunn: &mut Tunn) -> Option<Vec<u8>> {
 }
 
 impl Node {
-    pub async fn new(me: Identity, cfg: Config) -> anyhow::Result<Node> {
+    pub async fn new(me: Identity, cfg: Config, state: State) -> anyhow::Result<Node> {
         let std_sock = bind_socket(cfg.listen)?;
         let send_sock = std_sock.try_clone()?;
         let sock = Arc::new(UdpSocket::from_std(std_sock)?);
@@ -302,6 +354,8 @@ impl Node {
             bench_seq: 0,
             bench_sent: 0,
             bench_rx: HashMap::new(),
+            state,
+            started: Instant::now(),
         })
     }
 
@@ -320,10 +374,13 @@ impl Node {
         Tunn::new(self.me.dh.clone(), PublicKey::from(peer), None, keepalive, id, None)
     }
 
-    fn add_neighbor(&mut self, x_pub: [u8; 32], addr: Option<SocketAddr>, bootstrap: bool) -> u32 {
+    fn add_neighbor(&mut self, x_pub: [u8; 32], addr: Option<SocketAddr>, retry: Option<Duration>) -> u32 {
         let id = self.new_id();
         let tunn = self.new_tunn(x_pub, Some(KEEPALIVE), id);
-        self.neighbors.insert(id, Neighbor { tunn, x_pub, addr, hash: None, flags: None, observed_me: None, last_rx: None, bootstrap, up: false });
+        self.neighbors.insert(
+            id,
+            Neighbor { tunn, x_pub, addr, hash: None, flags: None, observed_me: None, last_rx: None, retry, last_try: Instant::now(), hello_sent: None, up: false },
+        );
         self.neighbor_by_key.insert(x_pub, id);
         id
     }
@@ -345,7 +402,8 @@ impl Node {
         self.neighbors.get(&id).and_then(|n| n.hash).map(|h| short(&h)).unwrap_or_else(|| "?".into())
     }
 
-    pub async fn run(mut self) -> anyhow::Result<()> {
+    /// Runs until Ctrl-C or until `stop` changes (a Windows service stopping).
+    pub async fn run(mut self, mut stop: Option<tokio::sync::watch::Receiver<bool>>) -> anyhow::Result<()> {
         log(format!(
             "node {} listening on {} (x25519 {}){}",
             hex::encode(self.my_hash),
@@ -354,9 +412,38 @@ impl Node {
             if self.cfg.lite { " [lite]" } else { "" }
         ));
         for (addr, key) in self.cfg.peers.clone() {
-            let id = self.add_neighbor(key, Some(addr), true);
+            let id = self.add_neighbor(key, Some(addr), Some(Duration::from_secs(5)));
             self.initiate(id);
         }
+        // Neighbors from earlier runs: reconnect without bootstrap peers.
+        let remembered = self.state.neighbors();
+        let mut dialed = 0;
+        for r in remembered {
+            let Ok(Ok(key)) = hex::decode(&r.key).map(<[u8; 32]>::try_from) else { continue };
+            if self.neighbor_by_key.contains_key(&key) || key == *self.me.x_pub().as_bytes() {
+                continue;
+            }
+            let id = self.add_neighbor(key, Some(r.addr), Some(Duration::from_secs(60)));
+            self.initiate(id);
+            dialed += 1;
+        }
+        if dialed > 0 {
+            log(format!("dialing {dialed} remembered neighbors"));
+        }
+        let mut ctrl_rx = match &self.cfg.control {
+            Some(ep) => match crate::control::listen(ep) {
+                Ok(rx) => {
+                    log(format!("control endpoint {ep}"));
+                    Some(rx)
+                }
+                Err(e) => {
+                    warn(format!("no control endpoint: {e:#}"));
+                    None
+                }
+            },
+            None => None,
+        };
+        let mut last_remember = Instant::now();
         let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
         let mut mapped_rx = None;
         let mut mapper = None;
@@ -398,13 +485,26 @@ impl Node {
                             self.on_datagram(addr, &data);
                         }
                         // e.g. Windows reports an ICMP "port unreachable" from an earlier send this way
-                        Err(e) => log(format!("receive: {e}")),
+                        Err(e) => debug(format!("receive: {e}")),
                     }
                 }
                 Some(ext) = async { match mapped_rx.as_mut() { Some(rx) => rx.recv().await, None => std::future::pending().await } } => {
                     self.mapped = Some(ext);
                 }
+                Some((req, reply)) = async { match ctrl_rx.as_mut() { Some(rx) => rx.recv().await, None => std::future::pending().await } } => {
+                    let _ = reply.send(self.on_control(&req));
+                }
+                _ = async { match stop.as_mut() { Some(s) => { let _ = s.changed().await; } None => std::future::pending().await } } => {
+                    let _ = stop_tx.send(true);
+                    if let Some(m) = mapper {
+                        let _ = tokio::time::timeout(Duration::from_secs(3), m).await;
+                    }
+                    self.remember_neighbors();
+                    log("stopped");
+                    return Ok(());
+                }
                 _ = tokio::signal::ctrl_c() => {
+                    self.remember_neighbors();
                     let _ = stop_tx.send(true);
                     if let Some(m) = mapper {
                         let _ = tokio::time::timeout(Duration::from_secs(3), m).await;
@@ -427,10 +527,16 @@ impl Node {
                         last_ping = Instant::now();
                         self.ping();
                     }
-                    if last_retry.elapsed() >= Duration::from_secs(5) {
+                    if last_retry.elapsed() >= Duration::from_secs(1) {
                         last_retry = Instant::now();
-                        let down: Vec<u32> = self.neighbors.iter().filter(|(_, n)| n.bootstrap && !n.up).map(|(id, _)| *id).collect();
-                        for id in down { self.initiate(id); }
+                        let due: Vec<u32> = self.neighbors.iter()
+                            .filter(|(_, n)| !n.up && n.retry.is_some_and(|r| n.last_try.elapsed() >= r))
+                            .map(|(id, _)| *id).collect();
+                        for id in due { self.initiate(id); }
+                    }
+                    if last_remember.elapsed() >= Duration::from_secs(60) {
+                        last_remember = Instant::now();
+                        self.remember_neighbors();
                     }
                     if last_bench_report.elapsed() >= Duration::from_secs(1) {
                         let secs = last_bench_report.elapsed().as_secs_f64();
@@ -450,12 +556,13 @@ impl Node {
 
     fn send_raw(&self, addr: SocketAddr, p: &[u8]) {
         if let Err(e) = self.send_sock.send_to(p, addr) {
-            log(format!("send to {addr}: {e}"));
+            debug(format!("send to {addr}: {e}"));
         }
     }
 
     fn initiate(&mut self, id: u32) {
         let Some(n) = self.neighbors.get_mut(&id) else { return };
+        n.last_try = Instant::now();
         let mut buf = vec![0u8; PKT_BUF];
         if let TunnResult::WriteToNetwork(p) = n.tunn.format_handshake_initiation(&mut buf, false) {
             let p = p.to_vec();
@@ -489,7 +596,7 @@ impl Node {
                     Some(id) => *id,
                     None => {
                         log(format!("new neighbor at {addr}"));
-                        self.add_neighbor(half.peer_static_public, Some(addr), false)
+                        self.add_neighbor(half.peer_static_public, Some(addr), None)
                     }
                 }
             }
@@ -540,6 +647,7 @@ impl Node {
             let addr = n.addr;
             log(format!("link up: {}", addr.map(|a| a.to_string()).unwrap_or_default()));
             self.on_link_up(id, addr);
+            self.remember_neighbors();
         } else if !fresh && n.up {
             n.up = false;
             log(format!("link down: {}", self.name(id)));
@@ -553,6 +661,9 @@ impl Node {
         bound.push(flags);
         let hello = Msg::Hello { ed_pub: self.me.ed_pub(), flags, sig: self.me.sign(LABEL_BIND, &bound) };
         self.send_msg(id, &hello);
+        if let Some(n) = self.neighbors.get_mut(&id) {
+            n.hello_sent = Some(Instant::now());
+        }
         if let Some(addr) = addr {
             self.send_msg(id, &Msg::Observed { addr });
         }
@@ -611,13 +722,22 @@ impl Node {
         }
         let h = node_hash(&ed_pub, &n.x_pub);
         let first = n.hash.is_none();
+        // A HELLO we didn't just answer means the neighbor (re)started its side
+        // of a link that was already up here: greet it again.
+        let restarted = !first && n.hello_sent.is_none_or(|t| t.elapsed() > Duration::from_secs(1));
         n.hash = Some(h);
         n.flags = Some(flags);
-        if !first {
+        let addr = n.addr;
+        if restarted {
+            debug(format!("neighbor {} said hello again; answering", short(&h)));
+            self.on_link_up(from, addr);
+        } else if !first {
             return;
         }
         let lite = flags & FLAG_RELAY == 0;
-        log(format!("neighbor is {}{}", hex::encode(h), if lite { " [lite]" } else { "" }));
+        if first {
+            log(format!("neighbor is {}{}", hex::encode(h), if lite { " [lite]" } else { "" }));
+        }
         // Hand a full neighbor what we know, so it can reach destinations at
         // once. Lite nodes ask instead.
         if !self.cfg.lite && !lite {
@@ -630,9 +750,9 @@ impl Node {
 
     // ---- announces and routes ----------------------------------------------------
 
-    fn own_announce(&self) -> Announce {
+    fn own_announce(&mut self) -> Announce {
         let x_pub = *self.me.x_pub().as_bytes();
-        let seq = now_seq();
+        let seq = self.state.next_seq();
         let flags = self.my_flags();
         let sig = self.me.sign(LABEL_ANNOUNCE, &Announce::signed_part(&self.my_hash, &x_pub, seq, flags));
         Announce { ed_pub: self.me.ed_pub(), x_pub, seq, flags, sig, hops: 0 }
@@ -1209,7 +1329,7 @@ impl Node {
         let Some(first) = cands.first().copied() else { return };
         let id = match self.neighbor_by_key.get(&peer) {
             Some(id) => *id,
-            None => self.add_neighbor(peer, Some(first), false),
+            None => self.add_neighbor(peer, Some(first), None),
         };
         let mut buf = vec![0u8; PKT_BUF];
         let n = self.neighbors.get_mut(&id).unwrap();
@@ -1255,7 +1375,7 @@ impl Node {
 
     fn status(&self) {
         let up: Vec<String> = self.neighbors.iter().filter(|(_, n)| n.up).map(|(id, _)| self.name(*id)).collect();
-        log(format!(
+        debug(format!(
             "status: neighbors up [{}], destinations {}, sessions {}, relay entries {}, relayed {} packets",
             up.join(" "),
             self.routes.len(),
@@ -1275,7 +1395,84 @@ impl Node {
                 })
                 .collect();
             let who = s.peer_hash.map(|h| short(&h)).unwrap_or_else(|| hex::encode(&s.peer_x[..4]));
-            log(format!("  session {who}: [{}]", paths.join("; ")));
+            debug(format!("  session {who}: [{}]", paths.join("; ")));
         }
+    }
+
+    // ---- state and control ------------------------------------------------------
+
+    /// Stores the neighbors that are up now, so the next run can dial them.
+    fn remember_neighbors(&self) {
+        let now = unix_now();
+        let up: Vec<Remembered> = self
+            .neighbors
+            .values()
+            .filter(|n| n.up)
+            .filter_map(|n| Some(Remembered { addr: n.addr?, key: hex::encode(n.x_pub), seen: now }))
+            .collect();
+        if !up.is_empty() {
+            self.state.remember(&up);
+        }
+    }
+
+    fn on_control(&self, request: &str) -> String {
+        let cmd = serde_json::from_str::<serde_json::Value>(request).ok().and_then(|v| v.get("cmd").and_then(|c| c.as_str()).map(String::from));
+        match cmd.as_deref() {
+            Some("status") => self.status_json().to_string(),
+            _ => json!({ "error": "unknown command; try {\"cmd\":\"status\"}" }).to_string(),
+        }
+    }
+
+    fn status_json(&self) -> serde_json::Value {
+        let neighbors: Vec<serde_json::Value> = self
+            .neighbors
+            .values()
+            .map(|n| {
+                json!({
+                    "address": n.hash.map(hex::encode),
+                    "endpoint": n.addr.map(|a| a.to_string()),
+                    "up": n.up,
+                    "lite": n.flags.map(|f| f & FLAG_RELAY == 0),
+                    "last_rx_s": n.last_rx.map(|t| t.elapsed().as_secs()),
+                })
+            })
+            .collect();
+        let sessions: Vec<serde_json::Value> = self
+            .sessions
+            .iter()
+            .map(|(sid, s)| {
+                let paths: Vec<serde_json::Value> = s
+                    .paths
+                    .iter()
+                    .filter_map(|k| {
+                        let e = self.ends.get(k)?;
+                        Some(json!({
+                            "via": self.neighbors.get(&k.0).and_then(|n| n.hash).map(hex::encode),
+                            "direct": self.is_direct(*sid, *k),
+                            "rtt_ms": e.srtt.map(|d| d.as_secs_f64() * 1000.0),
+                            "confirmed": e.acked,
+                            "received": e.rx,
+                        }))
+                    })
+                    .collect();
+                json!({
+                    "peer": s.peer_hash.map(hex::encode),
+                    "peer_key": hex::encode(s.peer_x),
+                    "paths": paths,
+                })
+            })
+            .collect();
+        json!({
+            "address": hex::encode(self.my_hash),
+            "wg_key": hex::encode(self.me.x_pub().as_bytes()),
+            "listen": self.cfg.listen.to_string(),
+            "lite": self.cfg.lite,
+            "uptime_s": self.started.elapsed().as_secs(),
+            "outside": self.candidates().iter().map(|a| a.to_string()).collect::<Vec<_>>(),
+            "neighbors": neighbors,
+            "destinations": self.routes.len(),
+            "sessions": sessions,
+            "relay": { "paths": self.switch.len() / 2, "packets": self.relayed },
+        })
     }
 }

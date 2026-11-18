@@ -18,11 +18,12 @@ M0 prototype (done)
 
 Links with fresh-handshake liveness, signed announces, path labels swapped per hop, several paths per session with probing and failover, Lite profile, path requests, observed addresses, direct links, router port mapping, ping and bench. Tested on localhost and between a PC and cafa-cloud across a router (~450–500 Mbit/s, CPU-bound on the server).
 
-## M1 Config, service, persistence
+## M1 Config, service, persistence — in progress
 
 - **Goal:** a node that runs 24/7 (cafa-cloud as a public backbone) and survives restarts.
 - **Scope:** a config file (TOML: key path, listen address, bootstrap peers, flags); the announce sequence number as a stored counter instead of the clock (open question 3); remembered neighbors (reconnect after restart without bootstrap); a state directory for what the node chooses once and keeps (sequence counter, neighbors, later the IPv4 alias range and aliases); a systemd unit and a Windows service; log levels; `vork status` over a local control socket.
 - **Done when:** cafa-cloud runs vØrk as a service through a restart and a reboot; a PC reconnects without `--peer` after its first contact.
+- **Status:** implemented and tested locally: `vork init`, `vork.toml`, the state directory (key created on first run, sequence counter, remembered neighbors), reconnecting without bootstrap peers, `vork status` over a Unix socket / named pipe, log levels and a log file, `packaging/vork.service`, `vork service install|uninstall` on Windows. Left: installing on cafa-cloud and the PC.
 - **Depends on:** nothing.
 
 ## S1 ESP32 spike (parallel, early)

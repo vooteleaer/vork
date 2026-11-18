@@ -48,18 +48,22 @@
 Prebuilt static binaries are in `dist/` (Linux x86_64, Linux aarch64 for a Raspberry Pi, Windows x86_64), or `cargo build --release`.
 
 ```sh
-V=dist/vork-linux-x86_64          # or target/release/vork
-$V keygen --out a.key; $V keygen --out b.key; $V keygen --out c.key   # prints address and wg key
-
-$V run --key a.key --listen 0.0.0.0:51820                             # e.g. cafa-cloud (public IP)
-$V run --key b.key --listen 0.0.0.0:51821 --peer HOST:51820@<A wg key>  # home (behind NAT)
-$V run --key c.key --listen 0.0.0.0:51822 --peer HOST:51820@<A wg key> \
-       --no-announce --ping <B address>                                 # laptop, anonymous
+vork init                         # writes vork.toml, creates the identity, prints address and wg key
+                                  # (as root: /etc/vork/vork.toml + /var/lib/vork; Windows: %ProgramData%\vork)
+vork run                          # uses the default vork.toml; or: vork run --config path/to/vork.toml
+vork status                       # asks the running node (neighbors, destinations, sessions, paths)
 ```
 
-Throughput: `--bench <address> --bench-rate <Mbit/s>` sends paced traffic (1200-byte packets) to a node; the receiver logs what arrives each second and the loss. Raise the rate until the loss climbs to find the ceiling. There is no congestion control in the bench: above the ceiling it just loses packets.
+`vork.toml` holds the listening address, bootstrap `peers` (`"host:port@wg key"`), and the options below; command-line flags override it. The node remembers its neighbors in its state directory, so after the first contact `peers` can be empty and it still reconnects after a restart. Everything also works without a file: `vork run --key node.key --peer host:port@key ...`.
 
-Options: `--paths N` (paths per session through different first hops, default 2), `--spread spray|dup` (how packets use them), `--lite` (don't relay, small devices), `--direct` (try a direct link to the far end of a session; reveals your address to it), `--no-announce` (reach others without being findable), `--map-port` (ask the router to open the port, like torrent clients: UPnP, then PCP/NAT-PMP; `--gateway <ip>` if the router isn't x.y.z.1). Stop with Ctrl-C, which also removes the router mapping.
+As a service:
+
+- **Linux:** `packaging/vork.service` (instructions inside): `vork init` as root, install the unit, `systemctl enable --now vork`.
+- **Windows** (as administrator): `vork init`, then `vork service install` (starts at boot; logs to `vork.log` in the state directory), `vork service uninstall` to remove it.
+
+Testing tools: `--ping <address>` once a second; `--bench <address> --bench-rate <Mbit/s>` sends paced traffic (1200-byte packets) and the receiver logs what arrives and the loss each second. There is no congestion control in the bench: above the ceiling it just loses packets.
+
+Options (file or flags): `paths` (paths per session through different first hops, default 2), `spread` (`spray` or `dup`), `lite` (don't relay, small devices), `direct` (try a direct link to the far end of a session; reveals your address to it), `announce = false` / `--no-announce` (reach others without being findable), `map_port` (ask the router to open the port: UPnP, then PCP/NAT-PMP; `gateway` if the router isn't x.y.z.1), `log` (`warn`, `info`, `debug`), `log_file`. Stop with Ctrl-C, which also removes a router mapping.
 
 ### Testing on real machines
 
