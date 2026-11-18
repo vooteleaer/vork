@@ -400,7 +400,7 @@ Covered ({}): {}", covered.len(), if covered.is_empty() { "none".into() } else {
                 if let Some(b) = l.bounds {
                     println!("  area {:.3},{:.3} – {:.3},{:.3}", b[0], b[1], b[2], b[3]);
                 }
-                println!("  join: vork library join NAME {} --lazy", l.address);
+                println!("  join: vork library join NAME {} --from {} --lazy", l.address, l.node);
             }
         }
         "rec" => {
