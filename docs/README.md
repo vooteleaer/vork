@@ -34,3 +34,4 @@ New decisions copy [adr/0000-template.md](adr/0000-template.md). *Accepted* mean
 | [0017](adr/0017-applications.md) | Applications: IPv6 inside sessions, several ways in | proposed |
 | [0018](adr/0018-dns-vork.md) | Names: the .vork DNS domain | accepted |
 | [0019](adr/0019-open-relaying-owner-first.md) | Open relaying, the owner's traffic first | accepted |
+| [0020](adr/0020-shared-node.md) | One shared node per machine | proposed |

@@ -42,8 +42,8 @@ Links with fresh-handshake liveness, signed announces, path labels swapped per h
 ## M3 Daemon API, whois, DNS, identity firewall
 
 - **Goal:** applications know who is on the other end, and names replace addresses.
-- **Scope:** a local IPC API (Unix socket / named pipe): status, peers, `whois(overlay address) → identity`, services; **DNS** (ADR-0018): `<address>.vork` and petnames from a local file, AAAA and PTR, wired into the OS only for its own domain (systemd-resolved routing domain, Windows NRPT, macOS `/etc/resolver`); an **identity firewall**: which identities may reach which ports/services.
-- **Done when:** `ssh nas.vork` works; a service sees the caller's identity through whois; a connection from an identity not on the list is refused.
+- **Scope:** the **shared node** (ADR-0020): one node per machine, the first program starts it, applications attach over a specified, versioned IPC protocol (Unix socket / named pipe) and register their own identities and services; status, peers, `whois(overlay address) → identity`; **DNS** (ADR-0018): `<address>.vork` and petnames from a local file, AAAA and PTR, wired into the OS only for its own domain (systemd-resolved routing domain, Windows NRPT, macOS `/etc/resolver`); an **identity firewall**: which identities may reach which ports/services.
+- **Done when:** `ssh nas.vork` works; a service sees the caller's identity through whois; a connection from an identity not on the list is refused; two programs on one machine, each with its own identity, are reachable through the same node.
 - **Depends on:** M2.
 
 ## M4 Hardening
