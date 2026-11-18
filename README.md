@@ -10,7 +10,7 @@
 - **Proof, not trust.** Identities, announces and permissions are signatures. Where a proof is impossible (whether a relay really forwards), the node measures and routes around it, and never falls back to trusting a central party.
 - **Every node may be hostile.** A hostile node can delay, drop and watch metadata. It can't forge, read or impersonate. Trusted nodes (your own, your island's) are an optimization, never an assumption.
 - **No roles.** Every node runs the same code. Who relays, holds data or reflects addresses follows from measured properties (public address, uptime, bandwidth), not configuration.
-- **Runs on small devices.** An ESP32 running ESPHome must be able to join (see [Leaf devices](#lite-nodes-esp32-esphome)).
+- **Runs on small devices.** An ESP32 running ESPHome must be able to join (see [Lite nodes](#lite-nodes-esp32-esphome)).
 
 ## How phase 1 works
 
