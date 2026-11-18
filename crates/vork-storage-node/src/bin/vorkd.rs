@@ -4456,6 +4456,8 @@ async fn sync_ns(d: &Daemon, ns: &str) -> Result<(), String> {
     let mut floors = if whole { HashMap::new() } else { checkpoint_floors(d, ns) };
     let lazy = d.store.ns_lazy(ns).map_err(|e| e.to_string())?;
     let mut advanced = false;
+    // A peer answered for the library this round.
+    let mut answered = false;
     for peer in peers {
         let link = match d.link_to(&peer).await {
             Ok(l) => l,
@@ -4481,6 +4483,7 @@ async fn sync_ns(d: &Daemon, ns: &str) -> Result<(), String> {
             let raw = match d.ask(link, HEAD_ENDPOINT, [ns_id.as_slice(), &w].concat()).await {
                 Ok(r) => {
                     saw_ns(d, ns);
+                    answered = true;
                     r
                 }
                 Err(e) => {
@@ -4585,6 +4588,13 @@ async fn sync_ns(d: &Daemon, ns: &str) -> Result<(), String> {
                 Err(e) => eprintln!("library {ns}: newer checkpoint from <{}>: {e}", hex(&peer)),
             }
         }
+    }
+    // Joined, but a checkpoint was here already (the join's own first
+    // commit made one), so there was nothing to seek: the first sync is
+    // over once a peer has answered. (It used to stay "looking for its
+    // state" for good.)
+    if !seeking && answered && d.ns_seeking.lock().unwrap().remove(ns) {
+        println!("library {ns}: first sync done");
     }
     if seeking {
         // Every grant holder known after this round has been searched: no
