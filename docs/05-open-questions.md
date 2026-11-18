@@ -22,7 +22,7 @@ Decisions still to make. Each names who it blocks.
 10. **Services: names or ports.** Native API uses names; IP uses ports. How does a name map to a port: per-node config, a convention (hash of the name), or SRV records? Blocks: M3, M9.
 11. **TUN on Windows.** wintun ships a signed driver in a DLL; the Windows service needs admin rights once. Acceptable? Blocks: M2.
 
-19. **The IPv4 alias range** (ADR-0021). `100.64.0.0/10` is Tailscale's and may be in use next to vØrk; `10.0.0.0/8` and `172.16.0.0/12` collide with LANs; `198.18.0.0/15` (reserved for benchmarking) is used by some proxy tools. A default that rarely collides, configurable everywhere. Blocks: M3.
+19. ~~**The IPv4 alias range.**~~ Decided: configurable. Without a setting, the node picks a range that overlaps none of the machine's own routes and interfaces, from a list of candidates (ADR-0021).
 
 ## Network policy
 
