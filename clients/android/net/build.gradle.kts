@@ -63,6 +63,7 @@ dependencies {
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons)
-    // Scanning another device's pairing code (Google's scanner: no camera permission for the app).
-    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
+    // Scanning another device's pairing code inside the app: ZXing (open source,
+    // Apache-2.0, decodes on the phone; no Play services, nothing leaves it).
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
 }

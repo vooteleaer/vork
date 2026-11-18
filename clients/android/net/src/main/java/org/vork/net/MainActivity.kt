@@ -91,25 +91,34 @@ class MainActivity : ComponentActivity() {
         if (data.startsWith("vork-link:")) LinkOpened.uri = data
     }
 
-    /** Scans another device's pairing code (Google's code scanner: no camera permission here). */
+    /** Scans another device's pairing code with the app's own scanner (ZXing, on the phone). */
+    private val scanner = registerForActivityResult(com.journeyapps.barcodescanner.ScanContract()) { result ->
+        val text = result.contents ?: return@registerForActivityResult // cancelled
+        paired(text)
+    }
+
     fun scanCode() {
-        com.google.mlkit.vision.codescanner.GmsBarcodeScanning.getClient(this).startScan()
-            .addOnSuccessListener { code ->
-                val text = code.rawValue ?: return@addOnSuccessListener
-                val link = parseLink(text)
-                if (link == null || !text.startsWith("vork-link:")) {
-                    toast("That isn't a vØrk pairing code")
-                    return@addOnSuccessListener
-                }
-                // Scanned on purpose: paired at once, no second question.
-                val (address, c, name) = link
-                val node = Node(this)
-                Thread {
-                    val r = node.link(address, c)
-                    runOnUiThread { toast(r.optString("error").ifEmpty { "Pairing with ${name.ifEmpty { address.take(8) }}…" }) }
-                }.start()
-            }
-            .addOnFailureListener { e -> toast("Couldn't scan: ${e.message ?: e.javaClass.simpleName}") }
+        val options = com.journeyapps.barcodescanner.ScanOptions()
+            .setDesiredBarcodeFormats(com.journeyapps.barcodescanner.ScanOptions.QR_CODE)
+            .setPrompt("Scan the other device's vØrk pairing code")
+            .setBeepEnabled(false)
+            .setOrientationLocked(false)
+        scanner.launch(options)
+    }
+
+    private fun paired(text: String) {
+        val link = parseLink(text)
+        if (link == null || !text.startsWith("vork-link:")) {
+            toast("That isn't a vØrk pairing code")
+            return
+        }
+        // Scanned on purpose: paired at once, no second question.
+        val (address, c, name) = link
+        val node = Node(this)
+        Thread {
+            val r = node.link(address, c)
+            runOnUiThread { toast(r.optString("error").ifEmpty { "Pairing with ${name.ifEmpty { address.take(8) }}…" }) }
+        }.start()
     }
 
     /** The system's VPN consent first, if it hasn't been given; then the interface. */
