@@ -1,0 +1,287 @@
+{
+  "alice_identity_secret": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+  "chains": [
+    {
+      "commits": [
+        {
+          "encoded": "82a36f70739294a3736574c41002020202020202020202020202020202a47370616dc394a3736574c41002020202020202020202020202020202a6726174696e6704a4766f726ba86e732d6f70732f31",
+          "ops": [
+            [
+              "set",
+              "02020202020202020202020202020202",
+              "spam",
+              {
+                "t": "bool",
+                "v": true
+              }
+            ],
+            [
+              "set",
+              "02020202020202020202020202020202",
+              "rating",
+              {
+                "t": "int",
+                "v": 4
+              }
+            ]
+          ],
+          "seq": 1,
+          "time_ms": 2500
+        },
+        {
+          "encoded": "82a36f70739194a3736574c41002020202020202020202020202020202a6726174696e6701a4766f726ba86e732d6f70732f31",
+          "ops": [
+            [
+              "set",
+              "02020202020202020202020202020202",
+              "rating",
+              {
+                "t": "int",
+                "v": 1
+              }
+            ]
+          ],
+          "seq": 2,
+          "time_ms": 3600
+        }
+      ],
+      "writer": "4e6008b01b74e49e38d8b11392bfaccc7b5bff86ca2048cbb0f783633a61e2dd"
+    },
+    {
+      "commits": [
+        {
+          "encoded": "82a36f70739292a86964656e74697479c4401c78fc71ef01855f670c555c82226397f0e73b0aaf443a491d4110dc22f282365b9437adeaffbe8f41b13d96ed49d2f51cd6c266cd8ecc284b0552ec4912b8dd94a3736574c41002020202020202020202020202020202a763617074696f6eab6279206120726561646572a4766f726ba86e732d6f70732f31",
+          "ops": [
+            [
+              "identity",
+              "1c78fc71ef01855f670c555c82226397f0e73b0aaf443a491d4110dc22f282365b9437adeaffbe8f41b13d96ed49d2f51cd6c266cd8ecc284b0552ec4912b8dd"
+            ],
+            [
+              "set",
+              "02020202020202020202020202020202",
+              "caption",
+              {
+                "t": "str",
+                "v": "by a reader"
+              }
+            ]
+          ],
+          "seq": 1,
+          "time_ms": 2600
+        }
+      ],
+      "writer": "5b9437adeaffbe8f41b13d96ed49d2f51cd6c266cd8ecc284b0552ec4912b8dd"
+    },
+    {
+      "commits": [
+        {
+          "encoded": "82a36f70739692a86964656e74697479c44080e1a53d3eee82b62b3048578cf38c980ddd1131243a1047fe48482942d6b648705fbac01f5519899f437bc42e40255ae9ab54bff00de3433af7d687d9e71ad592a46e6f6465c410b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b194a3736574c41001010101010101010101010101010101a57469746c65ae41207469746c6520627920426f6294a3736574c41001010101010101010101010101010101a47461677391a4686f6d6594a3736574c41002020202020202020202020202020202a474797065a5696d61676593a56772616e74c4204e6008b01b74e49e38d8b11392bfaccc7b5bff86ca2048cbb0f783633a61e2dd91a57772697465a4766f726ba86e732d6f70732f31",
+          "ops": [
+            [
+              "identity",
+              "80e1a53d3eee82b62b3048578cf38c980ddd1131243a1047fe48482942d6b648705fbac01f5519899f437bc42e40255ae9ab54bff00de3433af7d687d9e71ad5"
+            ],
+            [
+              "node",
+              "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1"
+            ],
+            [
+              "set",
+              "01010101010101010101010101010101",
+              "title",
+              {
+                "t": "str",
+                "v": "A title by Bob"
+              }
+            ],
+            [
+              "set",
+              "01010101010101010101010101010101",
+              "tags",
+              {
+                "t": "list",
+                "v": [
+                  {
+                    "t": "str",
+                    "v": "home"
+                  }
+                ]
+              }
+            ],
+            [
+              "set",
+              "02020202020202020202020202020202",
+              "type",
+              {
+                "t": "str",
+                "v": "image"
+              }
+            ],
+            [
+              "grant",
+              "4e6008b01b74e49e38d8b11392bfaccc7b5bff86ca2048cbb0f783633a61e2dd",
+              [
+                "write"
+              ]
+            ]
+          ],
+          "seq": 1,
+          "time_ms": 2000
+        },
+        {
+          "encoded": "82a36f70739192a664656c657465c41001010101010101010101010101010101a4766f726ba86e732d6f70732f31",
+          "ops": [
+            [
+              "delete",
+              "01010101010101010101010101010101"
+            ]
+          ],
+          "seq": 2,
+          "time_ms": 4000
+        }
+      ],
+      "writer": "705fbac01f5519899f437bc42e40255ae9ab54bff00de3433af7d687d9e71ad5"
+    },
+    {
+      "commits": [
+        {
+          "encoded": "82a36f70739892a86964656e74697479c440c306fb0ef2bf8b7f93bad98155fa37daec74db0c4cbeda6c6f1dba9d36558252bc7cbcb5636375fa1d82434d466724d92377f53b980695dd49d26d0ce12205a592a46e6f6465c410a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a093a56772616e74c420705fbac01f5519899f437bc42e40255ae9ab54bff00de3433af7d687d9e71ad591a5777269746594a56772616e74c4204e6008b01b74e49e38d8b11392bfaccc7b5bff86ca2048cbb0f783633a61e2dd91a5777269746582a46b65797391a6726174696e67a5756e74696ccd0dac93a56772616e74c4205b9437adeaffbe8f41b13d96ed49d2f51cd6c266cd8ecc284b0552ec4912b8dd9094a3736574c41001010101010101010101010101010101a470617468a92f696e6465782e6d7593a6626c6f636b73c410010101010101010101010101010101019193c421014ed1f1cb21441f763e14e323e60b0ec5954fdcc5d52890779e0f946413c785d0c4204242424242424242424242424242424242424242424242424242424242424242cd032c94a3736574c41001010101010101010101010101010101a57469746c65a4486f6d65a4766f726ba86e732d6f70732f31",
+          "ops": [
+            [
+              "identity",
+              "c306fb0ef2bf8b7f93bad98155fa37daec74db0c4cbeda6c6f1dba9d36558252bc7cbcb5636375fa1d82434d466724d92377f53b980695dd49d26d0ce12205a5"
+            ],
+            [
+              "node",
+              "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0"
+            ],
+            [
+              "grant",
+              "705fbac01f5519899f437bc42e40255ae9ab54bff00de3433af7d687d9e71ad5",
+              [
+                "write"
+              ]
+            ],
+            [
+              "grant",
+              "4e6008b01b74e49e38d8b11392bfaccc7b5bff86ca2048cbb0f783633a61e2dd",
+              [
+                "write"
+              ],
+              {
+                "keys": [
+                  "rating"
+                ],
+                "until": 3500
+              }
+            ],
+            [
+              "grant",
+              "5b9437adeaffbe8f41b13d96ed49d2f51cd6c266cd8ecc284b0552ec4912b8dd",
+              []
+            ],
+            [
+              "set",
+              "01010101010101010101010101010101",
+              "path",
+              {
+                "t": "str",
+                "v": "/index.mu"
+              }
+            ],
+            [
+              "blocks",
+              "01010101010101010101010101010101",
+              [
+                [
+                  "014ed1f1cb21441f763e14e323e60b0ec5954fdcc5d52890779e0f946413c785d0",
+                  "4242424242424242424242424242424242424242424242424242424242424242",
+                  812
+                ]
+              ]
+            ],
+            [
+              "set",
+              "01010101010101010101010101010101",
+              "title",
+              {
+                "t": "str",
+                "v": "Home"
+              }
+            ]
+          ],
+          "seq": 1,
+          "time_ms": 1000
+        },
+        {
+          "encoded": "82a36f70739494a3736574c41001010101010101010101010101010101a57469746c65aa46726f6e74207061676592a67265766f6b65c420705fbac01f5519899f437bc42e40255ae9ab54bff00de3433af7d687d9e71ad593a572656b6579019192c420bc7cbcb5636375fa1d82434d466724d92377f53b980695dd49d26d0ce12205a5c48004f5f29162c31a8defa18e6e742224ee806fc1718a278be859ba5620402b8f3a323232323232323232323232323232325169b0858c37404bddb837d161d4e58595fbb4b7d4b54a299954aadd0e1e5c307f3fb4b73f37bf00506a0781851050476f0a7f3ff4435c6cce023b5fc3a97aa55e58fa985dd5592bac5e44548aef499492aa636865636b706f696e7493c4210147320987f9a49d5b00119b960f247a956773f57543982b8bfcb6da5bb3afd9efc4204343434343434343434343434343434343434343434343434343434343434343cd0175a4766f726ba86e732d6f70732f31",
+          "ops": [
+            [
+              "set",
+              "01010101010101010101010101010101",
+              "title",
+              {
+                "t": "str",
+                "v": "Front page"
+              }
+            ],
+            [
+              "revoke",
+              "705fbac01f5519899f437bc42e40255ae9ab54bff00de3433af7d687d9e71ad5"
+            ],
+            [
+              "rekey",
+              1,
+              [
+                [
+                  "bc7cbcb5636375fa1d82434d466724d92377f53b980695dd49d26d0ce12205a5",
+                  "04f5f29162c31a8defa18e6e742224ee806fc1718a278be859ba5620402b8f3a323232323232323232323232323232325169b0858c37404bddb837d161d4e58595fbb4b7d4b54a299954aadd0e1e5c307f3fb4b73f37bf00506a0781851050476f0a7f3ff4435c6cce023b5fc3a97aa55e58fa985dd5592bac5e44548aef4994"
+                ]
+              ]
+            ],
+            [
+              "checkpoint",
+              [
+                "0147320987f9a49d5b00119b960f247a956773f57543982b8bfcb6da5bb3afd9ef",
+                "4343434343434343434343434343434343434343434343434343434343434343",
+                373
+              ]
+            ]
+          ],
+          "seq": 2,
+          "time_ms": 3000
+        }
+      ],
+      "writer": "bc7cbcb5636375fa1d82434d466724d92377f53b980695dd49d26d0ce12205a5"
+    }
+  ],
+  "construction": "vork operations v1 (ADR-0017, proposed): ops file canonical msgpack; merge in stamp order (time, writer, seq, index); limited grants (keys, until) narrowed by the granter's",
+  "creator": "bc7cbcb5636375fa1d82434d466724d92377f53b980695dd49d26d0ce12205a5",
+  "identities_after": [
+    "5b9437adeaffbe8f41b13d96ed49d2f51cd6c266cd8ecc284b0552ec4912b8dd",
+    "705fbac01f5519899f437bc42e40255ae9ab54bff00de3433af7d687d9e71ad5",
+    "bc7cbcb5636375fa1d82434d466724d92377f53b980695dd49d26d0ce12205a5"
+  ],
+  "ignored_ops": 5,
+  "limits_after": {
+    "4e6008b01b74e49e38d8b11392bfaccc7b5bff86ca2048cbb0f783633a61e2dd": {
+      "keys": [
+        "rating"
+      ],
+      "until": 3500
+    }
+  },
+  "merged_snapshot": "82a77265636f7264739283a5617474727383a470617468a92f696e6465782e6d75a47461677391a4686f6d65a57469746c65aa46726f6e742070616765a6626c6f636b739193c421014ed1f1cb21441f763e14e323e60b0ec5954fdcc5d52890779e0f946413c785d0c4204242424242424242424242424242424242424242424242424242424242424242cd032ca26964c4100101010101010101010101010101010183a5617474727382a6726174696e6704a474797065a5696d616765a6626c6f636b7390a26964c41002020202020202020202020202020202a4766f726bad6e732d736e617073686f742f31",
+  "nodes_after": {
+    "705fbac01f5519899f437bc42e40255ae9ab54bff00de3433af7d687d9e71ad5": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+    "bc7cbcb5636375fa1d82434d466724d92377f53b980695dd49d26d0ce12205a5": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0"
+  },
+  "now_ms": 10000,
+  "rekey_new_key": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+  "rekeys_after": 1,
+  "writers_after": [
+    "4e6008b01b74e49e38d8b11392bfaccc7b5bff86ca2048cbb0f783633a61e2dd",
+    "5b9437adeaffbe8f41b13d96ed49d2f51cd6c266cd8ecc284b0552ec4912b8dd",
+    "bc7cbcb5636375fa1d82434d466724d92377f53b980695dd49d26d0ce12205a5"
+  ]
+}

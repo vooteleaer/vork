@@ -1,0 +1,34 @@
+vork on Debian, Ubuntu and Raspberry Pi OS
+============================================
+
+This is a prototype. The formats still change and the crypto awaits an
+external review: keep nothing in it you can't lose.
+
+What runs
+---------
+- vorkd, as a systemd user service in every user's session
+  (`systemctl --user status vorkd`). Its store is ~/.local/share/vork.
+- Reticulum: vorkd joins a shared instance on the machine, which this
+  package doesn't bring: install any Reticulum implementation and run its
+  shared instance. vorkd waits for it at start. Its connections are
+  Reticulum's own, in its configuration file (~/.reticulum/config, read by
+  every implementation), e.g. a TCP connection to a node you trust; the
+  vork-desktop utility adds them there, or use your Reticulum's own tools.
+
+First steps
+-----------
+    vork ping                 the daemon and this node's address
+    vork heard                public libraries announced on the network
+    vork library join NAME ADDRESS --lazy
+    vork nodes                storage nodes heard
+    (every library is a folder in ~/vork/NAME: vorkd mounts them itself)
+    vork unmount NAME         takes one down until vorkd starts again
+
+Optional services (systemctl --user enable --now ...):
+    vork-gateway              libraries as websites at http://NAME.localhost:8740/
+    vork-mount@NAME           a library mounted by systemd instead (vorkd --no-mounts)
+    vork-extractd             attributes from files (see the unit for its token)
+
+Settings: ~/.local/share/vork/vork.toml (the daemon writes a commented
+one at first start). Headless machines: `sudo loginctl enable-linger USER`
+keeps the user services running without a login.

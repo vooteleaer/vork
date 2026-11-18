@@ -1,0 +1,179 @@
+//! The transport seam (ADR-0003): vØrk storage talks to Reticulum only through this
+//! trait, so Prns can be swapped or forked, and fetch logic can be tested with
+//! an in-memory network.
+//!
+//! Only the client side is abstracted so far; serving `/vork/get` is still
+//! written against Prns request endpoints in `vorkd`.
+
+use std::{future::Future, time::Duration};
+
+use personal_rns::node_introspection::NodeIntrospection;
+use personal_rns::prelude::*;
+use personal_rns::routing::links::LinkId;
+
+pub trait Transport: Clone + Send + 'static {
+    /// A remote node's address.
+    type Peer: Copy + Send + Sync + 'static;
+    /// An established, encrypted session with a peer.
+    type Link: Copy + Send + Sync + 'static;
+
+    /// Finds a path to `peer` and opens a link.
+    fn connect(&self, peer: Self::Peer) -> impl Future<Output = Result<Self::Link, String>> + Send;
+
+    /// A value both ends of `link` know and no other link shares (the RNS link
+    /// ID). Proofs of access are bound to it so they can't be replayed elsewhere.
+    fn link_nonce(&self, link: Self::Link) -> Vec<u8>;
+
+    /// Sends a request to `endpoint` on `link` and waits for the response.
+    fn request(
+        &self,
+        link: Self::Link,
+        endpoint: &'static str,
+        body: Vec<u8>,
+    ) -> impl Future<Output = Result<Vec<u8>, String>> + Send;
+}
+
+/// Reticulum via a Prns node attached to the local shared instance.
+#[derive(Clone)]
+pub struct PrnsTransport {
+    pub handle: PrnsNodeHandle,
+    pub path_timeout: Duration,
+}
+
+impl PrnsTransport {
+    pub fn new(handle: PrnsNodeHandle) -> Self {
+        PrnsTransport { handle, path_timeout: Duration::from_secs(60) }
+    }
+
+    /// Makes sure a path to `peer` is known: a route already in the table is
+    /// enough (like Python RNS's `has_path`). Only otherwise is a path requested.
+    ///
+    /// Prns 0.3.7's `request_path` settles only on a newly *accepted* announce.
+    /// For a destination whose route is already known, the answer (often the
+    /// shared instance's cached copy of the same announce) is rejected as a
+    /// known-route replay, so the request times out after 15 s unless the
+    /// destination happens to announce again (examples/path_replay.rs).
+    pub async fn ensure_path(&self, peer: DestinationHash) -> Result<(), String> {
+        if self.handle.route(peer).await.is_some() {
+            return Ok(());
+        }
+        self.request_path(peer).await
+    }
+
+    /// How many hops the route to `peer` now has, if one is known.
+    pub async fn hops(&self, peer: DestinationHash) -> Option<u8> {
+        self.handle.route(peer).await.map(|r| r.hops)
+    }
+
+    /// Closes `link` (a request still on it fails).
+    pub fn close(&self, link: LinkId) {
+        let _ = self.handle.close_link(link);
+    }
+
+    /// Asks the network for a fresh path (e.g. after a link over a known route failed).
+    pub async fn request_path(&self, peer: DestinationHash) -> Result<(), String> {
+        let deadline = tokio::time::Instant::now() + self.path_timeout;
+        let mut last = String::from("no attempt");
+        while tokio::time::Instant::now() < deadline {
+            let left = deadline - tokio::time::Instant::now();
+            match tokio::time::timeout(left, self.handle.request_path(peer)).await {
+                Ok(Ok(_found)) => return Ok(()),
+                // The node is stopping: no path will come.
+                Ok(Err(e)) if format!("{e:?}").contains("NodeStopped") => return Err(format!("{e:?}")),
+                Ok(Err(e)) => last = format!("{e:?}"),
+                Err(_) => last = "timed out".into(),
+            }
+        }
+        Err(format!("no path within {:?} (last: {last})", self.path_timeout))
+    }
+
+    /// Forgets the known route to `peer` and asks for a fresh one: a request
+    /// for a route already held is answered with the same announce, which
+    /// Prns rejects as a replay (see [`ensure_path`](Self::ensure_path)), so
+    /// the old route is dropped first. Used after a link over it failed.
+    pub async fn refresh_path(&self, peer: DestinationHash) -> Result<(), String> {
+        use personal_rns::runtime::RoutingControl;
+        let _ = self.handle.drop_route(peer).await;
+        self.request_path(peer).await
+    }
+
+    /// Like [`Transport::request`], with the response awaited up to `timeout`
+    /// rather than the link's default (a long poll outlasts that default).
+    pub async fn request_waiting(&self, link: LinkId, endpoint: &'static str, body: Vec<u8>, timeout: Duration) -> Result<Vec<u8>, String> {
+        use personal_rns::engine::RequestResponseTimeout;
+        let timeout = RequestResponseTimeout::Exact(personal_rns::units::DurationMillis(timeout.as_millis() as u64));
+        let (response, _rtt) = self
+            .handle
+            .request_with_response_timeout(link, RequestEndpointId::of(endpoint), &body, timeout)
+            .await
+            .map_err(|e| format!("{e:?}"))?;
+        Ok(response.as_slice().to_vec())
+    }
+
+    /// A request to any request path (`endpoint` need not be one of
+    /// vØrk storage's own), with the response awaited up to `timeout`: NomadNet pages.
+    pub async fn request_any_path(&self, link: LinkId, path: &str, body: Vec<u8>, timeout: Duration) -> Result<Vec<u8>, String> {
+        use personal_rns::engine::RequestResponseTimeout;
+        let timeout = RequestResponseTimeout::Exact(personal_rns::units::DurationMillis(timeout.as_millis() as u64));
+        let (response, _rtt) = self
+            .handle
+            .request_with_response_timeout(link, RequestEndpointId::of(path), &body, timeout)
+            .await
+            .map_err(|e| format!("{e:?}"))?;
+        Ok(response.as_slice().to_vec())
+    }
+
+    /// Reveals this node's identity (by hash; the node holds the secret) to
+    /// the other end of `link`, so it can tell who is asking.
+    pub async fn identify(&self, link: LinkId, identity_hash: [u8; 16]) -> Result<(), String> {
+        self.handle.identify(link, personal_rns::identity::IdentityHash::new(identity_hash)).await.map_err(|e| format!("identify: {e:?}"))
+    }
+
+    /// Opens a link to a peer whose path is already known.
+    pub async fn link(&self, peer: DestinationHash) -> Result<LinkId, String> {
+        self.link_with_rtt(peer).await.map(|(link, _)| link)
+    }
+
+    /// Like [`link`](Self::link), also returning the link setup round trip in
+    /// milliseconds: the first measure of the path (LoRa takes seconds).
+    pub async fn link_with_rtt(&self, peer: DestinationHash) -> Result<(LinkId, u64), String> {
+        self.handle
+            .establish_link_with_rtt(peer)
+            .await
+            .map(|l| (l.link_id, l.rtt_millis))
+            .map_err(|e| format!("link failed: {e:?}"))
+    }
+}
+
+impl Transport for PrnsTransport {
+    type Peer = DestinationHash;
+    type Link = LinkId;
+
+    fn link_nonce(&self, link: LinkId) -> Vec<u8> {
+        link.as_bytes().to_vec()
+    }
+
+    fn connect(&self, peer: DestinationHash) -> impl Future<Output = Result<LinkId, String>> + Send {
+        let this = self.clone();
+        async move {
+            this.ensure_path(peer).await?;
+            this.link(peer).await
+        }
+    }
+
+    fn request(
+        &self,
+        link: LinkId,
+        endpoint: &'static str,
+        body: Vec<u8>,
+    ) -> impl Future<Output = Result<Vec<u8>, String>> + Send {
+        let handle = self.handle.clone();
+        async move {
+            let (response, _rtt) = handle
+                .request(link, RequestEndpointId::of(endpoint), &body)
+                .await
+                .map_err(|e| format!("{e:?}"))?;
+            Ok(response.as_slice().to_vec())
+        }
+    }
+}

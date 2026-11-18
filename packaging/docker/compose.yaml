@@ -1,0 +1,62 @@
+# vork with Reticulum, in two containers (docker compose up -d).
+#
+# - reticulum: prnsd, the Reticulum shared instance. It owns every interface
+#   (TCP, AutoInterface on the LAN, radios) and keeps its configuration and
+#   identity in the volume `reticulum`.
+# - vork: vorkd, the attribute extractor and the web UI (port 8741). It
+#   joins the shared instance on 127.0.0.1:37428 and keeps its store in the
+#   volume `vork`. It also sees Reticulum's volume, so its web UI can show
+#   Reticulum's state and change its connections and configuration, applied
+#   live through prnsd's control files there. vork never starts Reticulum:
+#   it works the same with any shared instance (leave out `reticulum` and the
+#   volume line to use one running on the host).
+#
+# Both use the host's network: AutoInterface needs the LAN, and listeners
+# added later are reachable without a port mapping each.
+name: vork
+
+x-common: &common
+  network_mode: host
+  restart: unless-stopped
+  user: "65532:65532"  # both: the shared volume's files are theirs
+
+services:
+  reticulum:
+    <<: *common
+    image: vooteleaer/prnsd:0.3.8
+    container_name: reticulum
+    stop_grace_period: 30s
+    command: ["run", "--service", "--config", "/var/lib/prnsd"]
+    volumes:
+      - reticulum:/var/lib/prnsd
+    # Radios: uncomment, and add their /dev/serial/by-id/… links to the
+    # configuration (the web UI's Reticulum page).
+    # devices: ["/dev/ttyACM0"]
+    # group_add: ["20"]  # dialout
+
+  vork:
+    <<: *common
+    image: vooteleaer/vork:latest
+    container_name: vork
+    stop_grace_period: 60s  # vorkd closes its store cleanly on SIGTERM
+    depends_on:
+      reticulum:
+        condition: service_healthy
+    environment:
+      # This device's name for keep rules (default: the host's name).
+      # DEVICE: my-server
+      # Libraries whose files get attributes (photos' dates and places, music tags…).
+      # EXTRACT_NS: photos,music
+      VORK_WEB_LISTEN: 0.0.0.0:8741
+      # Who may open the web UI: this machine and private networks (LAN, Tailscale).
+      VORK_WEB_ALLOW: 127.0.0.1/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10
+      # A browser pairs once with a link from `docker logs vork` (1: on).
+      # Set it to 0 only on a network nobody else uses.
+      VORK_WEB_PAIRING: "1"
+    volumes:
+      - vork:/data/store
+      - reticulum:/var/lib/prnsd
+
+volumes:
+  reticulum:
+  vork:

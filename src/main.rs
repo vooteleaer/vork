@@ -14,7 +14,11 @@ use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
-#[command(name = "vork", about = "vØrk: a serverless, identity-addressed network over WireGuard (prototype)")]
+#[command(
+    name = "vork",
+    about = "vØrk: a serverless, identity-addressed network over WireGuard (prototype)",
+    after_help = "Storage commands (put, get, query, library, mount, ...) are run by vork-storage; `vork help-storage` lists them."
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -282,8 +286,67 @@ fn print_status(v: &serde_json::Value) {
     }
 }
 
+/// The network's own commands; everything else belongs to storage.
+const NETWORK_COMMANDS: &[&str] = &[
+    "init", "keygen", "show", "run", "status", "service", "service-run", "help", "-h", "--help", "-V", "--version",
+];
+
+/// Whether `vork ARGS` is a storage command. `status` is both: on its own
+/// (with flags) it is the network node's, with a capability it is storage's.
+fn is_storage_command(args: &[String]) -> bool {
+    let Some(first) = args.first() else { return false };
+    if first == "status" {
+        let mut rest = args[1..].iter();
+        while let Some(a) = rest.next() {
+            match a.as_str() {
+                "--config" | "--control" => {
+                    rest.next();
+                }
+                a if a.starts_with('-') => {}
+                _ => return true,
+            }
+        }
+        return false;
+    }
+    !NETWORK_COMMANDS.contains(&first.as_str())
+}
+
+/// Hands the command to `vork-storage` (next to this program, else on PATH),
+/// the way git and cargo run their external subcommands.
+fn run_storage(args: &[String]) -> ! {
+    let name = if cfg!(windows) { "vork-storage.exe" } else { "vork-storage" };
+    let beside = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join(name)));
+    let program = beside.filter(|p| p.exists()).unwrap_or_else(|| PathBuf::from(name));
+    let args: Vec<&String> = if args.first().map(String::as_str) == Some("help-storage") { vec![] } else { args.iter().collect() };
+    let mut cmd = std::process::Command::new(&program);
+    cmd.args(args);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let err = cmd.exec();
+        eprintln!("vork: cannot run {}: {err}", program.display());
+        std::process::exit(127);
+    }
+    #[cfg(not(unix))]
+    match cmd.status() {
+        Ok(status) => std::process::exit(status.code().unwrap_or(1)),
+        Err(err) => {
+            eprintln!("vork: cannot run {}: {err}", program.display());
+            std::process::exit(127);
+        }
+    }
+}
+
+fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if is_storage_command(&args) {
+        run_storage(&args);
+    }
+    network_main()
+}
+
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn network_main() -> Result<()> {
     match Cli::parse().cmd {
         Cmd::Init { config: path } => {
             let (default_cfg, default_state) = config::default_paths();
@@ -342,4 +405,27 @@ async fn main() -> Result<()> {
         Cmd::ServiceRun { config } => service::run_dispatcher(config)?,
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_storage_command;
+
+    fn storage(line: &str) -> bool {
+        is_storage_command(&line.split_whitespace().map(String::from).collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn network_and_storage_commands_are_told_apart() {
+        assert!(!storage(""));
+        assert!(!storage("run --peer 1.2.3.4:51820"));
+        assert!(!storage("status"));
+        assert!(!storage("status --config a.toml --json"));
+        assert!(!storage("--help"));
+        assert!(storage("status rc1abc"));
+        assert!(storage("status --json rc1abc"));
+        assert!(storage("put file.txt"));
+        assert!(storage("--store /tmp/s ping"));
+        assert!(storage("help-storage"));
+    }
 }

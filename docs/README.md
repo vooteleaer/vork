@@ -8,6 +8,7 @@
 | [03-threat-model](03-threat-model.md) | the hostile-node invariant, attacks and answers |
 | [04-roadmap](04-roadmap.md) | milestones with scope, approach and acceptance tests |
 | [05-open-questions](05-open-questions.md) | decisions still to make |
+| [storage/](storage/README.md) | vØrk storage (formerly retifs): its own documents and ADRs |
 
 ## Decisions (ADRs)
 
@@ -29,7 +30,7 @@ New decisions copy [adr/0000-template.md](adr/0000-template.md). *Accepted* mean
 | [0012](adr/0012-port-mapping-opt-in.md) | Router port mapping is opt-in | accepted |
 | [0013](adr/0013-identities-on-hardware-keys.md) | Identities on hardware keys; devices are delegated | proposed |
 | [0014](adr/0014-islands.md) | Islands: closed groups inside an open network | proposed |
-| [0015](adr/0015-retifs-storage-layer.md) | retifs is a vØrk application: the storage layer | accepted |
+| [0015](adr/0015-storage.md) | Storage (formerly retifs) is a vØrk application | accepted |
 | [0016](adr/0016-privacy-classes.md) | Privacy classes; nested WireGuard for the strong class | proposed |
 | [0017](adr/0017-applications.md) | Applications: IPv6 inside sessions, several ways in | proposed |
 | [0018](adr/0018-dns-vork.md) | Names: the .vork DNS domain | accepted |

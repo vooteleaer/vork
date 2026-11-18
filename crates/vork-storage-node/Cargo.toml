@@ -1,0 +1,36 @@
+[package]
+name = "vork-storage-node"
+version = "0.6.0"
+description = "vorkd (the storage daemon) and the storage commands of the vork CLI (prototype, unstable)"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "vorkd"
+path = "src/bin/vorkd.rs"
+
+[[bin]]
+name = "vork-storage"
+path = "src/bin/vork-storage.rs"
+
+[dependencies]
+getrandom = "0.3"
+libvork = { path = "../libvork" }
+qrcode = { version = "0.14", default-features = false }
+toml = "0.8"
+redb = "2"
+rmp-serde = "1"
+personal-rns = { path = "../../../Prns-0.3.8/personal-rns", features = ["tokio-host", "tcp", "shared-instance"] }
+vork-core = { path = "../vork-core" }
+vork-storage-net = { path = "../vork-storage-net" }
+vork-store = { path = "../vork-store" }
+sha2 = "0.10"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+tokio = { version = "1", features = ["full"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_Console", "Win32_System_Pipes", "Win32_Security"] }

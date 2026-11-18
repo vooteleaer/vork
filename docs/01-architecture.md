@@ -85,11 +85,11 @@ The default rule: your IP address is never shown to anyone outside your islands 
 
 ## Above the network (planned)
 
-- **Applications** (ADR-0017): sessions carry IPv6 packets between overlay addresses (`fd` + the first 15 bytes of an address). Applications attach through a TUN interface (every existing program), a local daemon API (status, peers, `whois`), a native message API (`connect(identity, "service")`, used by retifs), or an embedded userspace stack (no admin rights; lwIP on an ESP32). The overlay address is a compatibility view; the network never routes by it.
+- **Applications** (ADR-0017): sessions carry IPv6 packets between overlay addresses (`fd` + the first 15 bytes of an address). Applications attach through a TUN interface (every existing program), a local daemon API (status, peers, `whois`), a native message API (`connect(identity, "service")`, used by storage), or an embedded userspace stack (no admin rights; lwIP on an ESP32). The overlay address is a compatibility view; the network never routes by it.
 - **Compatibility addresses** (ADR-0021): every identity has its IPv6 overlay address on the machine's TUN interface; IPv4-only programs get local aliases handed out by DNS and translated at the node. Sessions always carry IPv6.
 - **Shared node** (ADR-0020): one node per machine; the first program starts it and later ones attach over local IPC, each registering its own identities and services, like Reticulum's shared instance but with a specified IPC protocol.
 - **Names** (ADR-0018): DNS for `.vork`: `<address>.vork` and petnames like `nas.vork` resolve to overlay addresses; only `.vork` queries go to the node.
 - **Identity firewall:** rules say which identity may use which service, using `whois`; IP rules have nothing to hold on to.
 - **Identities on hardware keys:** a person's identity on a YubiKey signs short-lived session keys for devices; servers have their own identities, delegated by their owner. See ADR-0013.
 - **Islands:** closed groups (membership by signed invitation) inside the open network. See ADR-0014.
-- **Storage:** retifs over vØrk. See ADR-0015.
+- **Storage:** vØrk storage, an application with its own identity (ADR-0015); crates in `crates/`, documents in [storage/](storage/README.md).

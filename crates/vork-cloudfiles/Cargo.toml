@@ -1,0 +1,21 @@
+[package]
+name = "vork-cloudfiles"
+version = "0.6.0"
+description = "vork-cloudfiles: a namespace as a Windows Cloud Files sync root in Explorer (ADR-0002), prototype"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "vork-cloudfiles"
+path = "src/main.rs"
+
+[dependencies]
+libvork = { path = "../libvork" }
+vork-tree = { path = "../vork-tree" }
+tokio = { version = "1", features = ["rt"] }
+
+[target.'cfg(windows)'.dependencies]
+cloud-filter = "0.0.6"
+nt-time = "0.8"
+windows = { version = "0.58", features = ["Win32_Foundation", "Win32_Storage_CloudFilters", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Registry", "Win32_System_Console", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell"] }

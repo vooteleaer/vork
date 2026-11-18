@@ -1,9 +1,23 @@
+[workspace]
+resolver = "2"
+members = [".", "crates/libvork", "crates/vork-card", "crates/vork-cloudfiles", "crates/vork-core", "crates/vork-extract", "crates/vork-fuse", "crates/vork-gateway", "crates/vork-haikufs", "crates/vork-storage-net", "crates/vork-storage-node", "crates/vork-store", "crates/vork-tree"]
+exclude = ["vendor"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+
+# cloud-filter 0.0.6 with its callbacks not panicking when failing a
+# request Windows already dropped (that aborted vork-cloudfiles).
+[patch.crates-io]
+cloud-filter = { path = "vendor/cloud-filter" }
+
 [package]
 name = "vork"
 version = "0.0.1"
-edition = "2024"
+edition.workspace = true
 description = "Phase-1 prototype: serverless identity-addressed network over WireGuard (boringtun)"
-license = "MIT"
+license.workspace = true
 
 [dependencies]
 anyhow = "1"

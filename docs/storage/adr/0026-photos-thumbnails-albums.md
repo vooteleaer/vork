@@ -1,0 +1,56 @@
+# ADR-0026: Photos: thumbnails, albums, favourites, faces
+
+- **Status:** accepted (prototype)
+- **Date:** 2026-10-25
+- **Irreversible:** no. Attribute conventions on top of the record format; the format itself doesn't change.
+
+## Context
+A photo app in the spirit of Immich (its own repository, like the contacts and calendar apps): a timeline of every photo by date, albums, people, favourites, a viewer. Every device shows a grid of thousands of photos, so it needs small images it can get quickly, not the 4 MB originals. And albums are more than a word on a photo: a photo is in several, an album has a name, a cover and a description, and gets shared.
+
+The API draft (§7) gave each content block a role (`original`, `thumb:256`). The record format (decision 2, [ADR-0016](0016-records-and-snapshots.md)) has an ordered list of blocks and no roles, and changing that is a format change.
+
+## Principles
+- Data is universal, each app shows its part (vision 9): thumbnails and albums are for any app that shows photos, not one app's cache.
+- Records refer to each other by ID ([ADR-0024](0024-people-and-events.md)).
+- The format doesn't change for a convention.
+
+## Decision
+
+### Block roles are attributes
+- `blocks[0]` is the record's content (the original), as always.
+- Other blocks are named by attributes: `block:<role> = <index>` into the list, e.g. `block:thumb = 1`, `block:preview = 2`.
+- `size` is the first block's size (the content's), not all blocks'. Until 2026-11-09 the daemon set it to the sum when blocks were given without a `size`, so file views made each photo look bigger than its content and every read past its end failed; the file tree now takes a file's size from its read-cap.
+- When the content is replaced, the record's blocks become the new content alone: the role attributes point past the list and mean nothing, and whatever made them makes them again (the extractor's `extracted` marker changes, [ADR-0023](0023-attribute-extraction.md)).
+- Writing blocks needs `@content` in an app's key limit (ADR-0023), and storing them first (`Put`) is allowed to such an app.
+
+### Thumbnails
+Made by the attribute producer (`vork-extractd`, ADR-0023) for images:
+
+| Role | Size | Use |
+|---|---|---|
+| `block:thumb` | longest side 320 px, JPEG | grids, lists |
+| `block:preview` | longest side 1600 px, JPEG | the viewer, before (or instead of) the original |
+
+Turned the way the EXIF orientation says, so every app can show them as they are. Each is an encrypted block like any other, synced and placed with the record, so a phone shows a grid without fetching originals. Videos get the same two blocks from a frame (2026-11-11): where `ffmpeg` is installed, `vork-extractd` copies a video (up to 4 GiB) to a temporary file and takes the frame one second in (the first, for a shorter one), turned as the video says. ffmpeg is told to read that file only (`-protocol_whitelist file`, so a crafted file can't make it fetch from the network) and runs inside the extractor's sandbox. Without ffmpeg nothing changes; a video described before ffmpeg was installed gets its thumbnails on the next look.
+
+### Albums are attributes on photos (2026-11-05; at first they were records)
+- A photo is in an album by its `album` attribute: a name, or a list of names. An album exists while some photo is in it; one name, in any case and in any library, is one album. There are no album records.
+- A cover: `cover-of` on the photo, the same way (the album's name, or a list).
+- An album's photos: `album=<name>` (a list matches by any of its names), in any library. Sharing an album is a share of that query ([ADR-0021](0021-shares.md)), kept up to date as photos are added.
+- The album records first made (`type = application/x-vnd.vork.album`, with `album:<album id>` keys on their photos) are moved onto their photos by the apps, and dropped.
+- File views show a file in albums also under `/Albums/<album>/` ([ADR-0002](0002-os-integration.md)); deleting it there takes the file out of the album.
+
+### Favourites and people
+- `favorite = true` marks a favourite.
+- People on a photo: `person:<contact id>` (ADR-0024), tagged in the viewer.
+
+### Faces (later): their own daemon
+Face detection is a separate daemon (`vork-facesd`), apart from the extractor: it carries machine-learning models and wants more CPU or a GPU, so it runs where there's power (a home server), and only if wanted. It's an app with a key limit: it writes face regions and embeddings (`face:*`) and proposals (`person?:<contact id>`), never `person:` itself. The photo app shows proposals; the user's confirmation makes them `person:`.
+
+## Impact on the threat model
+Thumbnails are as private as the originals (same library, same keys). An album's share shows only that album's photos. Face embeddings identify people: they stay in the library, encrypted like everything else, and are never sent anywhere to be matched.
+
+## Consequences
+- Any app, or Find, can show a photo small without the original.
+- Albums can be shared and given covers; an album is its photos' attribute, so renaming one rewrites their `album`.
+- The extractor reads whole images to make thumbnails (it read only their heads before); it does so once per content.

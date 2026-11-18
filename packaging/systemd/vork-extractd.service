@@ -1,0 +1,25 @@
+# Attributes from what's in files (ADR-0023). Its token, from
+#   vork app add extract --ns NS[,NS] --write --keys mime,width,height,taken,camera,geo,duration,'exif.*','audio.*','doc.*','block:*',@content,type,extracted
+# goes in ~/.config/vork/extract.token; then
+#   systemctl --user enable --now vork-extractd
+[Unit]
+Description=vork attribute extractor
+Requires=vorkd.service
+After=vorkd.service
+
+[Service]
+Type=simple
+ExecStart=%h/.cargo/bin/vork-extractd --token-file %h/.config/vork/extract.token
+Restart=on-failure
+RestartSec=10
+# It parses files from other people: no network, a read-only system, nothing new.
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+ProtectSystem=strict
+ProtectHome=read-only
+NoNewPrivileges=yes
+PrivateTmp=yes
+MemoryMax=512M
+
+[Install]
+WantedBy=default.target

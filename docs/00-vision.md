@@ -27,14 +27,14 @@ It is meant to be:
 |---|---|---|
 | L3 Applications | native API (identity + service) and overlay IPv6 for existing software | planned |
 | L2 Islands | closed groups inside the open network | proposed |
-| L1 Storage | retifs: encrypted, content-addressed, replicated | exists separately; integration proposed |
+| L1 Storage | vØrk storage (formerly retifs): encrypted, content-addressed, replicated | prototype, still on Reticulum; moving to vØrk |
 | L0 Network | identities, links, announces, paths, relaying, NAT traversal | prototype |
 
 ## Non-goals
 
 - **Radio links** (LoRa, packet radio). vØrk is IP-only; Reticulum remains the network for radio. A bridge between the two is possible later because both address by key hash.
 - **Resistance to a global passive adversary.** No low-latency network can have strong anonymity, low overhead and low latency at once (the anonymity trilemma). vØrk aims at I2P/Tor-class privacy, not mixnet-class.
-- **A global naming system.** Names are petnames kept by each user (later in retifs), not a registry.
+- **A global naming system.** Names are petnames kept by each user (later in vØrk storage), not a registry.
 - **Exit to the ordinary internet** as a core feature. If it comes, it is a service like any other.
 
 ## Relation to other work
@@ -43,4 +43,4 @@ It is meant to be:
 - **Tailscale, Nebula, ZeroTier:** the same NAT traversal and relaying techniques, without their coordination servers.
 - **Yggdrasil, cjdns:** addresses from keys and overlay IPv6, without privacy-oriented paths.
 - **I2P, Tor:** unidirectional/multi-hop paths and label switching, for the strong privacy class.
-- **retifs:** the storage layer; shares identities, invitations and grants.
+- **retifs:** became vØrk storage (ADR-0015); the original repository stays as it was.

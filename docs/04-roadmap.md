@@ -9,7 +9,7 @@ M0 prototype (done)
  ├─ S1 ESP32 spike (parallel, early) ── M5 ESPHome component
  ├─ M6 performance
  ├─ M7 identities (YubiKey, delegation) ── M8 islands
- ├─ M9 native message API & retifs transport ── M10 embedded stack (no admin rights)
+ ├─ M9 native message API & storage over vØrk ── M10 embedded stack (no admin rights)
  ├─ M11 strong privacy (nested WireGuard)
  └─ M12 protocol v1: spec freeze, test vectors, review
 ```
@@ -78,14 +78,14 @@ Links with fresh-handshake liveness, signed announces, path labels swapped per h
 ## M8 Islands
 
 - **Goal:** closed groups inside the open network (ADR-0014).
-- **Scope:** membership by signed invitations and revocations; island announces encrypted to the members; island policy (direct links allowed, relays preferred among members); later backed by a retifs library.
+- **Scope:** membership by signed invitations and revocations; island announces encrypted to the members; island policy (direct links allowed, relays preferred among members); later backed by a storage library.
 - **Depends on:** M7.
 
-## M9 Native message API and retifs transport
+## M9 Native message API and storage over vØrk
 
-- **Goal:** native applications use identities and named services without IP; retifs runs as a vØrk application with its own identity and no Reticulum ties (ADR-0015).
-- **Scope:** `connect(identity, service)`, request/response, datagrams and a reliable stream over the IPC API and as a Rust crate; retifs moved to vØrk identities and key wrapping, Prns and the Reticulum transport removed; retifs's `Transport` implemented over vØrk with its server side; placement uses measured round trip and direct-vs-relayed instead of hop count.
-- **Done when:** retifs stores and fetches between two machines over vØrk, with no Reticulum code in the build.
+- **Goal:** native applications use identities and named services without IP; storage runs as a vØrk application with its own identity and no Reticulum ties (ADR-0015).
+- **Scope:** `connect(identity, service)`, request/response, datagrams and a reliable stream over the IPC API and as a Rust crate; storage moved to vØrk identities and key wrapping, Prns and the Reticulum transport removed (`vork-storage-net`, `vork-storage-node`); storage's `Transport` implemented over vØrk with its server side; placement uses measured round trip and direct-vs-relayed instead of hop count.
+- **Done when:** vØrk storage stores and fetches between two machines over vØrk, with no Reticulum code in the build.
 - **Depends on:** M3.
 
 ## M10 Embedded stack (no admin rights)

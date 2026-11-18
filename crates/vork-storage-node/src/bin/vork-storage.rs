@@ -1,0 +1,1592 @@
+//! vØrk storage CLI (prototype): a thin client of the local vorkd (libvork).
+//!
+//!     vØrk storage [--store DIR] ping | nodes | stop | nomadnet NODE [PATH] [--var K=V]... | recovery create | recovery restore
+//!     vØrk storage [--store DIR] put FILE [--public] [--compress] [--publish] [--record NAME | --one-off] [--hint]
+//!
+//! `put` treats the file's absolute path as its record by default, so putting
+//! an edited file again stores only the changed chunks (ADR-0008).
+//!     vØrk storage [--store DIR] get READ-CAP [--from NODE]... [-o OUT] [--links N] [--batch N]
+//!     vØrk storage [--store DIR] status READ-CAP
+//!     vØrk storage [--store DIR] want READ-CAP [--from NODE]...
+//!     vØrk storage [--store DIR] replicate READ-CAP --to NODE...
+//!     vØrk storage [--store DIR] forget READ-CAP
+//!     vØrk storage [--store DIR] channel create NAME
+//!     vØrk storage [--store DIR] channel publish NAME FILE [--compress]
+//!     vØrk storage [--store DIR] channel publish-ns NAME LIB
+//!     vØrk storage [--store DIR] follow ADDRESS [--from NODE]...
+//!     vØrk storage [--store DIR] channels
+//!
+//!     vØrk storage [--store DIR] rec add LIB [KEY=VALUE]... [--file PATH]
+//!     vØrk storage [--store DIR] rec set LIB ID [KEY=VALUE]... [--unset KEY]... [--file PATH]
+//!     vØrk storage [--store DIR] rec get LIB ID | rec rm LIB ID
+//!     vØrk storage [--store DIR] rec import LIB < LINES   (one record per line of KEY=VALUE, 500 per transaction)
+//!     vØrk storage [--store DIR] rec history LIB ID
+//!     vØrk storage [--store DIR] query LIB [--at VERSION] [TERM]...
+//!     vØrk storage [--store DIR] query LIB KEY=VALUE... --search NODE   (through a search node's blind index)
+//!     vØrk storage [--store DIR] library search LIB   (publish the blind index; prints the search capability)
+//!
+//!     vØrk storage [--store DIR] library address LIB | library info LIB | library paths LIB
+//!     vØrk storage [--store DIR] library join NAME ADDRESS [--from NODE]... [--lazy]
+//!     vØrk storage [--store DIR] library grant LIB WRITER [--grant] [--keys K1,K2,@content,@delete] [--until YYYY-MM-DD|+30d] [--from NODE]... | library revoke LIB WRITER
+//!     vØrk storage [--store DIR] share create NAME --from LIB [TERM]... [--id ID]... [--omit KEY]... [--keep KEY]... [--qr] | share list LIB | share rm LIB ID
+//!     vØrk storage [--store DIR] share path PATH... [--omit KEY]... [--keep KEY]...
+//!     vØrk storage [--store DIR] library link LIB [--name LABEL] [--q TERMS] [--qr] | open LINK [--as NAME]
+//!     vØrk storage [--store DIR] query LIB[,LIB]|'*' TERM... --save NAME | saved [list] | saved run NAME [--watch] | saved rm NAME
+//!     vØrk storage [--store DIR] mount [LIB [DIR] [--foreground] [--via NODE] | --all] | unmount LIB [--forget]
+//!     vØrk storage [--store DIR] me | me link [--name LABEL] [--qr] | contact add NAME NODE|LINK | contact list | contact rm NAME
+//!     vØrk storage [--store DIR] invite create LIB [--read | --grant] [--keys K1,K2] [--until DATE] [--expires 1d] [--q TERMS] [--name LABEL] [--qr] | invite list LIB | invite cancel LIB ID
+//!
+//! Several writers per library (ADR-0017): a member joins with the address
+//! and shows its writer key; the creator grants it; members sync each other.
+//! Every change to a library is a version (ADR-0006): a signed commit in the
+//! library's own chain. `rec history` shows a record's versions; `--at`
+//! queries the library as it was.
+//!
+//! Channels (ADR-0015): a writer publishes versions; followers keep the latest.
+//! Records (ADR-0016): attributes and content blocks, queried BeFS style:
+//! terms `key=value`, `key>n`, `key>=n`, `key<n`, `key<=n`, `key^=prefix`,
+//! `has:key`, all of which must hold. Values: true/false, integers, decimals,
+//! else strings ("quoted" to force a string); `key=a,b` with --list sets a list.
+//!
+//! `replicate` keeps an own file on other nodes under signed leases (ADR-0011);
+//! `status` then shows how many of them confirmed with a receipt.
+//!
+//! `get` reads from the daemon's local store first, then fetches the rest from
+//! the given nodes; fetched chunks stay cached in the daemon's store.
+
+use std::{collections::HashMap, path::PathBuf};
+
+use libvork::{default_store_dir, Client};
+
+fn usage() -> ! {
+    eprintln!(
+        "vork [--store DIR] ping | nodes | stop | report [TEXT] | nomadnet NODE [PATH] [--var K=V]... | recovery create | recovery restore\n\
+         vork [--store DIR] put FILE [--public] [--compress] [--publish] [--record NAME | --one-off] [--hint]\n\
+         vork [--store DIR] get READ-CAP [--from NODE]... [-o OUT] [--links N] [--batch N]\n\
+         vork [--store DIR] status READ-CAP\n\
+         vork [--store DIR] read READ-CAP [--offset N] [--len N] [--library LIB] [--wait SECONDS]\n\
+         vork [--store DIR] app add NAME --library LIB[,LIB] [--write] [--keys K[,K]] [--device NODE] | app list | app remove NAME\n\
+         vork [--store DIR] --app TOKEN ...   (as an application: only what its token allows)\n\
+         vork [--store DIR] --via NODE ...    (ask own node NODE over a Link; it must have added this node with --device)\n\
+         vork [--store DIR] want READ-CAP [--from NODE]...
+         vork [--store DIR] replicate READ-CAP --to NODE...\n\
+         vork [--store DIR] forget READ-CAP\n\
+         vork [--store DIR] channel create NAME | channel publish NAME FILE [--compress] | channel publish-ns NAME LIB\n\
+         vork [--store DIR] follow ADDRESS [--from NODE]... | channels\n\
+         vork [--store DIR] rec add LIB [KEY=VALUE]... [--file PATH] | rec set LIB ID [KEY=VALUE]... [--unset KEY]... [--file PATH]\n\
+         vork [--store DIR] rec get LIB ID | rec rm LIB ID | rec history LIB ID | rec import LIB < LINES | query LIB[,LIB]... [--at VERSION] [TERM]... [--search NODE]\n\
+         vork [--store DIR] library address LIB | library info LIB | library paths LIB | library checkpoint LIB | library search LIB | library verify LIB | library keep LIB all|rules | library copies LIB [N] | library join NAME ADDRESS [--from NODE]... [--lazy]\n\
+         vork [--store DIR] library announce LIB [off] [--name LABEL] [--about TEXT] | heard | library leave LIB [--mine] | library delete LIB --yes\n\
+         vork [--store DIR] library grant LIB WRITER [--grant] [--from NODE]... | library revoke LIB WRITER\n\
+         vork [--store DIR] share create NAME --from LIB [TERM]... [--id ID]... [--omit KEY]... [--keep KEY]... [--qr] | share list LIB | share rm LIB ID\n\
+         vork [--store DIR] share path PATH... [--omit KEY]... [--keep KEY]...\n\
+         vork [--store DIR] library link LIB [--name LABEL] [--q TERMS] [--qr] | open LINK [--as NAME] | library join NAME LINK\n\
+         vork [--store DIR] query LIB[,LIB]|'*' TERM... --save NAME | saved [list] | saved run NAME [--watch] | saved rm NAME\n\
+         vork [--store DIR] mount [LIB [DIR] [--foreground] [--via NODE] | --all] | unmount LIB [--forget]\n\
+         vork [--store DIR] me | me link [--name LABEL] [--qr] | contact add NAME NODE|LINK | contact list | contact rm NAME\n\
+         vork [--store DIR] invite create LIB [--read | --grant] [--keys K1,K2] [--until DATE] [--expires 1d] [--q TERMS] [--name LABEL] [--qr] | invite list LIB | invite cancel LIB ID"
+    );
+    std::process::exit(2);
+}
+
+#[path = "vork-storage/mounts.rs"]
+mod mounts;
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
+    // Like any command-line tool: a closed pipe (`vork query … | head -1`)
+    // ends the program quietly instead of panicking on the next print.
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let mut store = default_store_dir();
+    if let Some(i) = args.iter().position(|a| a == "--store") {
+        store = args.get(i + 1).cloned().unwrap_or_else(|| usage()).into();
+        args.drain(i..=i + 1);
+    }
+    // As an application (the app socket, limited to what the token allows).
+    let mut app_token = None;
+    if let Some(i) = args.iter().position(|a| a == "--app") {
+        app_token = Some(args.get(i + 1).cloned().unwrap_or_else(|| usage()));
+        args.drain(i..=i + 1);
+    }
+    // Ask one of the user's own nodes instead, over a Link (ADR-0019).
+    let mut via = None;
+    if let Some(i) = args.iter().position(|a| a == "--via") {
+        via = Some(args.get(i + 1).cloned().unwrap_or_else(|| usage()));
+        args.drain(i..=i + 1);
+    }
+    let mut it = args.into_iter();
+    let command = it.next().unwrap_or_else(|| usage());
+    // --via a contact's name: its node.
+    if let Some(v) = via.clone()
+        && !is_node(&v)
+    {
+        let mut c = Client::connect(&store).await.unwrap_or_else(|e| fail(e));
+        match contacts(&mut c).await.into_iter().find(|(n, _, _)| n.eq_ignore_ascii_case(&v)) {
+            Some((_, node, _)) => via = Some(node),
+            None => fail(format!("--via {v}: not a node address, and no contact of that name")),
+        }
+    }
+    // These start and stop the file tree's frontend; no daemon connection
+    // of their own.
+    match command.as_str() {
+        "mount" => return mounts::mount(&store, &it.collect::<Vec<_>>(), via.as_deref()),
+        "unmount" => return mounts::unmount(&store, &it.collect::<Vec<_>>()),
+        _ => {}
+    }
+
+    let mut client = match &app_token {
+        Some(token) => Client::connect_app(&store, token).await,
+        None => Client::connect(&store).await,
+    }
+    .unwrap_or_else(|e| fail(e))
+    .via(via.clone());
+    let via_set = via.is_some();
+    match command.as_str() {
+        "nodes" => {
+            // The storage nodes placement knows: proven holders and the rest.
+            let nodes = match client.call(libvork::Request::StorageNodes).await.unwrap_or_else(|e| fail(e)) {
+                libvork::Response::StorageNodes { nodes } => nodes,
+                libvork::Response::Error { message } => fail(message),
+                _ => fail("unexpected response"),
+            };
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+            let ago = |ms: u64| if ms == 0 { "never".to_string() } else { format!("{} ago", duration(now.saturating_sub(ms) / 1000)) };
+            for n in &nodes {
+                let avoid = if n.avoid_until_ms > now { format!("  avoided for {}", duration((n.avoid_until_ms - now) / 1000)) } else { String::new() };
+                let link = if n.rtt_ms == 0 { "not linked".to_string() } else { format!("rtt {} ms{}", n.rtt_ms, if n.rate_bps > 0 { format!(", {} B/s", n.rate_bps) } else { String::new() }) };
+                let record = if n.ok + n.fail > 0 { format!("  holder {} ok / {} failed", n.ok, n.fail) } else { String::new() };
+                let room = n.room.map(|r| format!("  offers {}", human(r))).unwrap_or_default();
+                println!("{}  {} hop(s)  heard {}  {link}{}{}{room}{record}{avoid}", n.node, n.hops, ago(n.last_heard_ms), if n.slow { " (slow)" } else { "" }, if n.same_site { "  same site" } else { "" });
+            }
+            println!("{} storage node(s)", nodes.len());
+        }
+        // Stops vorkd cleanly (its store closed), as SIGTERM does.
+        // The recovery kit (ADR-0033): 24 words, shown once.
+        "recovery" => match it.next().as_deref() {
+            Some("create") => match client.call(libvork::Request::RecoveryCreate).await.unwrap_or_else(|e| fail(e)) {
+                libvork::Response::RecoveryKit { words, covered, not_covered } => {
+                    println!("Your recovery kit. Write these 24 words down on paper, in order, and keep them");
+                    println!("somewhere safe: whoever has them can open every library below. They are");
+                    println!("shown only this once and kept nowhere.
+");
+                    for (i, chunk) in words.chunks(6).enumerate() {
+                        println!("  {}", chunk.iter().enumerate().map(|(j, w)| format!("{:>2}. {w:<9}", i * 6 + j + 1)).collect::<Vec<_>>().join(" "));
+                    }
+                    println!("
+Covered ({}): {}", covered.len(), if covered.is_empty() { "none".into() } else { covered.join(", ") });
+                    if !not_covered.is_empty() {
+                        println!("Not covered ({}): {} (no device of yours holds grant there)", not_covered.len(), not_covered.join(", "));
+                    }
+                    println!("Libraries made or joined later are added to the kit by themselves.");
+                }
+                libvork::Response::Error { message } => fail(message),
+                _ => fail("unexpected response"),
+            },
+            // The words come on standard input, not as arguments (shells keep arguments).
+            Some("restore") => {
+                eprintln!("Type or paste your 24 recovery words, then press Enter (Ctrl-D/Ctrl-Z if on several lines):");
+                let mut text = String::new();
+                let mut line = String::new();
+                while std::io::stdin().read_line(&mut line).unwrap_or(0) > 0 {
+                    text.push_str(&line);
+                    line.clear();
+                    if text.split_whitespace().count() >= 24 {
+                        break;
+                    }
+                }
+                let words: Vec<String> = text.split_whitespace().map(String::from).collect();
+                eprintln!("Recovering: looking for a node of yours that keeps your keyring; this can take several minutes.");
+                match client.call(libvork::Request::RecoveryRestore { words }).await.unwrap_or_else(|e| fail(e)) {
+                    libvork::Response::RecoveryRestored { libraries } => {
+                        println!("Back on this node ({}): {}", libraries.len(), libraries.join(", "));
+                        println!("Their content arrives in the background. Revoke the devices you lost in each library: vork library info LIB, then vork library revoke LIB WRITER.");
+                    }
+                    libvork::Response::Error { message } => fail(message),
+                    _ => fail("unexpected response"),
+                }
+            }
+            _ => usage(),
+        },
+        // A NomadNet node's page (micron) or file, fetched by vorkd over Reticulum.
+        "nomadnet" => {
+            let node = it.next().unwrap_or_else(|| usage());
+            let (mut path, mut fields) = ("/page/index.mu".to_string(), Vec::new());
+            while let Some(a) = it.next() {
+                match a.as_str() {
+                    // A link's variable, as NomadNet sends it (var_NAME).
+                    "--var" => {
+                        let kv = it.next().unwrap_or_else(|| usage());
+                        let (k, v) = kv.split_once('=').unwrap_or_else(|| usage());
+                        fields.push((format!("var_{k}"), v.to_string()));
+                    }
+                    p => path = p.to_string(),
+                }
+            }
+            match client.call(libvork::Request::NomadNetPage { node, path, fields }).await.unwrap_or_else(|e| fail(e)) {
+                libvork::Response::Page { data } => {
+                    use std::io::Write;
+                    let _ = std::io::stdout().write_all(&data);
+                }
+                libvork::Response::Error { message } => fail(message),
+                _ => fail("unexpected response"),
+            }
+        }
+        "stop" => {
+            client.stop().await.unwrap_or_else(|e| fail(e));
+            println!("vorkd is stopping");
+        }
+        // A report of trouble (ADR-0036): the text, with vorkd's last
+        // output, into the crash library (vork-crashlogs).
+        "report" => {
+            let text: Vec<String> = it.collect();
+            let text = if text.is_empty() { "Reported by the user.".to_string() } else { text.join(" ") };
+            match client.call(libvork::Request::CrashReport { kind: "user".into(), source: "cli".into(), text }).await.unwrap_or_else(|e| fail(e)) {
+                libvork::Response::Done => println!("report kept; it goes into the crash library once this node is in it"),
+                libvork::Response::Error { message } => fail(message),
+                _ => fail("unexpected response"),
+            }
+        }
+        "ping" => {
+            let (node, chunks, usage) = client.ping().await.unwrap_or_else(|e| fail(e));
+            println!("vorkd <{node}>, {chunks} chunks in store");
+            if let Some(u) = usage {
+                println!(
+                    "  own (pinned) {}  promised (leased) {}  of store limit {}\n  cache {} of {}  spare {}\n  volume: {} free of {}, reserve {}",
+                    human(u.pinned), human(u.leased), human(u.store_limit),
+                    human(u.cache), human(u.cache_max), human(u.spare),
+                    human(u.disk_available), human(u.disk_total), human(u.reserve)
+                );
+            }
+        }
+        "put" => {
+            let path: PathBuf = it.next().unwrap_or_else(|| usage()).into();
+            let flags: Vec<String> = it.collect();
+            let public = flags.iter().any(|a| a == "--public");
+            let compress = flags.iter().any(|a| a == "--compress");
+            let publish = flags.iter().any(|a| a == "--publish");
+            let record = if flags.iter().any(|a| a == "--one-off") {
+                None
+            } else if let Some(i) = flags.iter().position(|a| a == "--record") {
+                Some(flags.get(i + 1).cloned().unwrap_or_else(|| usage()))
+            } else {
+                Some(std::path::absolute(&path).unwrap_or_else(|_| path.clone()).to_string_lossy().into_owned())
+            };
+            // On Unix the daemon gets the open file and reads it itself (fd
+            // passing): nothing is copied through the socket. `--copy` sends the bytes.
+            #[cfg(unix)]
+            let by_fd = !flags.iter().any(|a| a == "--copy") && !via_set;
+            // On Windows the daemon takes the open file's handle the same way.
+            #[cfg(windows)]
+            let by_fd = !flags.iter().any(|a| a == "--copy") && !via_set;
+            #[cfg(not(any(unix, windows)))]
+            let by_fd = false;
+            let cap = if by_fd {
+                let f = std::fs::File::open(&path).unwrap_or_else(|e| fail(format!("{}: {e}", path.display())));
+                #[cfg(unix)]
+                let cap = client.put_fd(&f, public, compress, publish, record).await;
+                #[cfg(windows)]
+                let cap = client.put_handle(&f, public, compress, publish, record).await;
+                #[cfg(not(any(unix, windows)))]
+                let cap: Result<String, libvork::ClientError> = unreachable!();
+                cap.unwrap_or_else(|e| fail(e))
+            } else {
+                let data = std::fs::read(&path).unwrap_or_else(|e| fail(format!("{}: {e}", path.display())));
+                client.put(data, public, compress, publish, record).await.unwrap_or_else(|e| fail(e))
+            };
+            // --hint: with this node as a holder hint, so whoever gets the
+            // read-cap knows where to ask (ADR-0010).
+            if flags.iter().any(|a| a == "--hint") {
+                let (node, _, _) = client.ping().await.unwrap_or_else(|e| fail(e));
+                let parsed: vork_core::manifest::FileRef = cap.parse().unwrap_or_else(|e| fail(format!("{e}")));
+                let node: [u8; 16] = vork_storage_net::node::parse_destination(&node).map(|d| *d.as_bytes()).unwrap_or_else(|| fail("bad node address"));
+                println!("{}", parsed.with_hints(&[node]));
+            } else {
+                println!("{cap}");
+            }
+        }
+        "get" => {
+            let cap = it.next().unwrap_or_else(|| usage());
+            let (mut from, mut out, mut links, mut batch) = (Vec::new(), PathBuf::from("vork.out"), 4usize, 0usize);
+            while let Some(arg) = it.next() {
+                let mut value = || it.next().unwrap_or_else(|| usage());
+                match arg.as_str() {
+                    "--from" => from.push(value()),
+                    "-o" | "--out" => out = value().into(),
+                    "--links" => links = value().parse().unwrap_or_else(|_| usage()),
+                    "--batch" => batch = value().parse().unwrap_or_else(|_| usage()),
+                    _ => usage(),
+                }
+            }
+            let (data, s) = client.get(&cap, &from, links, batch).await.unwrap_or_else(|e| fail(e));
+            std::fs::write(&out, &data).unwrap_or_else(|e| fail(format!("{}: {e}", out.display())));
+            let secs = s.millis as f64 / 1000.0;
+            println!(
+                "{} bytes in {:.2} s ({:.1} Mbps) after {:.2} s connecting: {} chunks, {} local, {} requests, {} retries, {} network bytes over {} link(s) -> {}",
+                data.len(), secs, data.len() as f64 * 8.0 / secs.max(1e-6) / 1e6, s.connect_millis as f64 / 1000.0,
+                s.chunks, s.from_local, s.requests, s.retries, s.network_bytes, s.links, out.display()
+            );
+        }
+        "want" => {
+            let cap = it.next().unwrap_or_else(|| usage());
+            let mut from = Vec::new();
+            while let Some(arg) = it.next() {
+                match arg.as_str() {
+                    "--from" => from.push(it.next().unwrap_or_else(|| usage())),
+                    _ => usage(),
+                }
+            }
+            let s = client.want(&cap, &from).await.unwrap_or_else(|e| fail(e));
+            print_status(&s);
+        }
+        "replicate" => {
+            let cap = it.next().unwrap_or_else(|| usage());
+            let mut to = Vec::new();
+            while let Some(arg) = it.next() {
+                match arg.as_str() {
+                    "--to" => to.push(it.next().unwrap_or_else(|| usage())),
+                    _ => usage(),
+                }
+            }
+            if to.is_empty() {
+                usage();
+            }
+            let s = client.replicate(&cap, &to).await.unwrap_or_else(|e| fail(e));
+            print_status(&s);
+        }
+        "channel" => match it.next().as_deref() {
+            Some("create") => {
+                let name = it.next().unwrap_or_else(|| usage());
+                println!("{}", client.channel_create(&name).await.unwrap_or_else(|e| fail(e)));
+            }
+            Some("publish") => {
+                let name = it.next().unwrap_or_else(|| usage());
+                let path: PathBuf = it.next().unwrap_or_else(|| usage()).into();
+                let compress = it.any(|a| a == "--compress");
+                let data = std::fs::read(&path).unwrap_or_else(|e| fail(format!("{}: {e}", path.display())));
+                let (seq, cap) = client.channel_publish(&name, data, compress).await.unwrap_or_else(|e| fail(e));
+                println!("published {name} version {seq}: {cap}");
+            }
+            Some("publish-ns") => {
+                let name = it.next().unwrap_or_else(|| usage());
+                let ns = it.next().unwrap_or_else(|| usage());
+                let req = libvork::Request::ChannelPublishNs { name: name.clone(), ns: ns.clone() };
+                match client.call(req).await.unwrap_or_else(|e| fail(e)) {
+                    libvork::Response::Published { seq, cap } => println!("published library {ns} as {name} version {seq}: {cap}"),
+                    libvork::Response::Error { message } => fail(message),
+                    _ => fail("unexpected response"),
+                }
+            }
+            _ => usage(),
+        },
+        "follow" => {
+            let address = it.next().unwrap_or_else(|| usage());
+            let mut from = Vec::new();
+            while let Some(arg) = it.next() {
+                match arg.as_str() {
+                    "--from" => from.push(it.next().unwrap_or_else(|| usage())),
+                    _ => usage(),
+                }
+            }
+            let (own, follows) = client.follow(&address, &from).await.unwrap_or_else(|e| fail(e));
+            print_channels(&own, &follows);
+        }
+        "channels" => {
+            let (own, follows) = client.channels().await.unwrap_or_else(|e| fail(e));
+            print_channels(&own, &follows);
+        }
+        "heard" => {
+            // Public libraries heard announced (ADR-0029), newest first.
+            let libraries = match client.call(libvork::Request::HeardLibraries).await.unwrap_or_else(|e| fail(e)) {
+                libvork::Response::Heard { libraries } => libraries,
+                libvork::Response::Error { message } => fail(message),
+                _ => fail("unexpected response"),
+            };
+            if libraries.is_empty() {
+                println!("no public libraries heard yet");
+            }
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+            for l in libraries {
+                let ago = now.saturating_sub(l.heard_ms) / 1000;
+                if !l.readable {
+                    println!("(needs a newer vork: announce v{}, format {}) from <{}>, {} hop(s), {ago} s ago", l.v, l.fmt, l.node, l.hops);
+                    continue;
+                }
+                let here = l.here.as_deref().map(|n| format!(" [here as {n}]")).unwrap_or_default();
+                println!("{}{here}: {}", l.name, l.about);
+                println!("  from <{}>, {} hop(s), {ago} s ago, version {}", l.node, l.hops, l.seq);
+                for (t, n) in &l.has {
+                    println!("  {n:>8} {t}");
+                }
+                if let Some(b) = l.bounds {
+                    println!("  area {:.3},{:.3} – {:.3},{:.3}", b[0], b[1], b[2], b[3]);
+                }
+                println!("  join: vork library join NAME {} --lazy", l.address);
+            }
+        }
+        "rec" => {
+            let sub = it.next().unwrap_or_else(|| usage());
+            let ns = it.next().unwrap_or_else(|| usage());
+            let rest: Vec<String> = it.collect();
+            if sub == "import" {
+                // One record per input line (KEY=VALUE pairs, separated by
+                // tabs, or by spaces when there are no tabs), in transactions
+                // of 500: one commit each, not one per record.
+                use std::io::BufRead;
+                let mut steps = Vec::new();
+                let mut total = 0usize;
+                for line in std::io::stdin().lock().lines() {
+                    let line = line.unwrap_or_else(|e| fail(e));
+                    let fields: Vec<&str> = if line.contains('\t') { line.split('\t').collect() } else { line.split_whitespace().collect() };
+                    let attrs: Vec<_> = fields.iter().filter(|f| !f.is_empty()).map(|f| attr(f)).collect();
+                    if attrs.is_empty() {
+                        continue;
+                    }
+                    steps.push(libvork::TxStep::Create { attrs, data: None });
+                    total += 1;
+                    if steps.len() == 500 {
+                        let req = libvork::Request::Transaction { ns: ns.clone(), steps: std::mem::take(&mut steps) };
+                        client.call(req).await.unwrap_or_else(|e| fail(e));
+                    }
+                }
+                if !steps.is_empty() {
+                    client.call(libvork::Request::Transaction { ns: ns.clone(), steps }).await.unwrap_or_else(|e| fail(e));
+                }
+                println!("{total} record(s) imported");
+                return;
+            }
+            let req = match sub.as_str() {
+                "add" => {
+                    let mut attrs = Vec::new();
+                    let mut file: Option<PathBuf> = None;
+                    let mut i = 0;
+                    while i < rest.len() {
+                        if rest[i] == "--file" {
+                            let path: PathBuf = rest.get(i + 1).cloned().unwrap_or_else(|| usage()).into();
+                            file = Some(path.clone());
+                            if !rest.iter().any(|a| a.starts_with("name=")) {
+                                let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                                attrs.push(("name".to_string(), libvork::AttrValue::Str(name)));
+                            }
+                            i += 2;
+                        } else {
+                            attrs.push(attr(&rest[i]));
+                            i += 1;
+                        }
+                    }
+                    match file {
+                        // Large: the record first, then its content through a write session.
+                        Some(path) if file_len(&path) > STREAM_OVER => {
+                            let id = match client.call(libvork::Request::RecordCreate { ns: ns.clone(), attrs, data: None }).await.unwrap_or_else(|e| fail(e)) {
+                                libvork::Response::Records { records } if !records.is_empty() => records[0].id.clone(),
+                                libvork::Response::Error { message } => fail(message),
+                                _ => fail("unexpected response"),
+                            };
+                            write_file(&mut client, &ns, &id, &path, via_set).await;
+                            libvork::Request::RecordGet { ns, id }
+                        }
+                        Some(path) => {
+                            let data = std::fs::read(&path).unwrap_or_else(|e| fail(format!("{}: {e}", path.display())));
+                            libvork::Request::RecordCreate { ns, attrs, data: Some(data) }
+                        }
+                        None => libvork::Request::RecordCreate { ns, attrs, data: None },
+                    }
+                }
+                "set" => {
+                    let id = rest.first().cloned().unwrap_or_else(|| usage());
+                    let (mut attrs, mut unset, mut file) = (Vec::new(), Vec::new(), None);
+                    let mut i = 1;
+                    while i < rest.len() {
+                        if rest[i] == "--unset" {
+                            unset.push(rest.get(i + 1).cloned().unwrap_or_else(|| usage()));
+                            i += 2;
+                        } else if rest[i] == "--file" {
+                            file = Some(std::path::PathBuf::from(rest.get(i + 1).cloned().unwrap_or_else(|| usage())));
+                            i += 2;
+                        } else {
+                            attrs.push(attr(&rest[i]));
+                            i += 1;
+                        }
+                    }
+                    match file {
+                        Some(path) if file_len(&path) > STREAM_OVER => {
+                            if !attrs.is_empty() || !unset.is_empty() {
+                                let req = libvork::Request::RecordSet { ns: ns.clone(), id: id.clone(), attrs, unset, data: None };
+                                if let libvork::Response::Error { message } = client.call(req).await.unwrap_or_else(|e| fail(e)) {
+                                    fail(message);
+                                }
+                            }
+                            write_file(&mut client, &ns, &id, &path, via_set).await;
+                            libvork::Request::RecordGet { ns, id }
+                        }
+                        Some(path) => {
+                            let data = std::fs::read(&path).unwrap_or_else(|e| fail(format!("{}: {e}", path.display())));
+                            libvork::Request::RecordSet { ns, id, attrs, unset, data: Some(data) }
+                        }
+                        None => libvork::Request::RecordSet { ns, id, attrs, unset, data: None },
+                    }
+                }
+                "get" => libvork::Request::RecordGet { ns, id: rest.first().cloned().unwrap_or_else(|| usage()) },
+                "rm" => libvork::Request::RecordDelete { ns, id: rest.first().cloned().unwrap_or_else(|| usage()) },
+                "history" => {
+                    let id = rest.first().cloned().unwrap_or_else(|| usage());
+                    match client.call(libvork::Request::RecordHistory { ns, id }).await.unwrap_or_else(|e| fail(e)) {
+                        libvork::Response::History { entries } => {
+                            let mut last: Option<Option<libvork::RecordView>> = None;
+                            for e in entries.iter().rev() {
+                                if last.as_ref() == Some(&e.record) {
+                                    continue; // unchanged in this version
+                                }
+                                match &e.record {
+                                    Some(r) => {
+                                        let attrs: Vec<String> = r.attrs.iter().map(|(k, v)| format!("{k}={v}")).collect();
+                                        println!("version {}: {}", e.version, attrs.join(" "));
+                                    }
+                                    None => println!("version {}: (absent)", e.version),
+                                }
+                                last = Some(e.record.clone());
+                            }
+                        }
+                        libvork::Response::Error { message } => fail(message),
+                        _ => fail("unexpected response"),
+                    }
+                    return;
+                }
+                _ => usage(),
+            };
+            for r in client.records(req).await.unwrap_or_else(|e| fail(e)) {
+                print_record(&r);
+            }
+        }
+        // `ns` is its name before 0.5.0, kept so scripts go on working.
+        "library" | "ns" => {
+            let sub = it.next().unwrap_or_else(|| usage());
+            let ns = it.next().unwrap_or_else(|| usage());
+            let rest = resolve_froms(&mut client, it.collect()).await;
+            let froms = |rest: &[String]| -> Vec<String> {
+                rest.windows(2).filter(|w| w[0] == "--from").map(|w| w[1].clone()).collect()
+            };
+            // The Reticulum paths to its nodes, as this node sees them now.
+            if sub == "paths" {
+                let paths = match client.call(libvork::Request::NsPaths { ns }).await.unwrap_or_else(|e| fail(e)) {
+                    libvork::Response::Paths { paths } => paths,
+                    libvork::Response::Error { message } => fail(message),
+                    _ => fail("unexpected response"),
+                };
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+                for p in &paths {
+                    let hops = p.hops.map_or("no path".to_string(), |h| format!("{h} hop(s)"));
+                    let link = if p.rtt_ms == 0 { String::new() } else { format!("  rtt {} ms{}", p.rtt_ms, if p.rate_bps > 0 { format!(", {} B/s", p.rate_bps) } else { String::new() }) };
+                    let heard = if p.last_heard_ms == 0 { String::new() } else { format!("  heard {} ago", duration(now.saturating_sub(p.last_heard_ms) / 1000)) };
+                    let who = if p.writer.is_some() { "member" } else { "peer" };
+                    println!("{}  {who}  {hops}{link}{}{}{heard}", p.node, if p.slow { " (slow)" } else { "" }, if p.linked { "  linked" } else { "" });
+                }
+                println!("{} node(s)", paths.len());
+                return;
+            }
+            let req = match sub.as_str() {
+                "address" => libvork::Request::NsAddress { ns },
+                "info" => libvork::Request::NsInfo { ns },
+                "checkpoint" => libvork::Request::NsCheckpoint { ns },
+                "keep" => libvork::Request::NsKeep { ns, mode: rest.first().cloned().unwrap_or_else(|| usage()) },
+                "copies" => {
+                    // The library's own setting, a record every member's node follows.
+                    let find = libvork::Request::Query { ns: ns.clone(), terms: vec![format!("type={}", libvork::PLACEMENT_TYPE)], at: None };
+                    let current = client.records(find).await.unwrap_or_else(|e| fail(e)).into_iter().next();
+                    let copies = |r: &libvork::RecordView| r.attrs.iter().find_map(|(k, v)| match (k.as_str(), v) {
+                        ("copies", libvork::AttrValue::Int(n)) => Some(*n),
+                        _ => None,
+                    });
+                    let Some(n) = rest.first() else {
+                        match current.as_ref().and_then(copies) {
+                            Some(n) => println!("{ns}: {n} copies of each file (its own setting)"),
+                            None => println!("{ns}: each node's default (min_copies in vork.toml, 3 unless set)"),
+                        }
+                        return;
+                    };
+                    let n: i64 = n.parse().ok().filter(|n| *n >= 1).unwrap_or_else(|| fail("copies: a number, 1 or more"));
+                    let attrs = vec![("copies".to_string(), libvork::AttrValue::Int(n))];
+                    let req = match current {
+                        Some(r) => libvork::Request::RecordSet { ns: ns.clone(), id: r.id, attrs, unset: vec![], data: None },
+                        None => {
+                            let mut attrs = attrs;
+                            attrs.push(("type".to_string(), libvork::AttrValue::Str(libvork::PLACEMENT_TYPE.into())));
+                            libvork::Request::RecordCreate { ns: ns.clone(), attrs, data: None }
+                        }
+                    };
+                    if let libvork::Response::Error { message } = client.call(req).await.unwrap_or_else(|e| fail(e)) {
+                        fail(message);
+                    }
+                    println!("{ns}: {n} copies of each file, the writer's own included; every member's node follows it");
+                    return;
+                }
+                "announce" => {
+                    // A public library announced on the network (ADR-0029), or no more.
+                    let opt = |k: &str| rest.windows(2).find(|w| w[0] == k).map(|w| w[1].clone());
+                    let on = rest.first().map(String::as_str) != Some("off");
+                    let req = libvork::Request::NsAnnounce { ns: ns.clone(), on, name: opt("--name"), about: opt("--about") };
+                    match client.call(req).await.unwrap_or_else(|e| fail(e)) {
+                        libvork::Response::Done if on => println!("{ns}: announced as a public library (its address is public to whoever hears it)"),
+                        libvork::Response::Done => println!("{ns}: no longer announced"),
+                        libvork::Response::Error { message } => fail(message),
+                        _ => fail("unexpected response"),
+                    }
+                    return;
+                }
+                "leave" => {
+                    // Off this node: records, keys and settings; others' copies stay.
+                    let req = libvork::Request::NsLeave { ns: ns.clone(), mine: rest.iter().any(|a| a == "--mine") };
+                    match client.call(req).await.unwrap_or_else(|e| fail(e)) {
+                        libvork::Response::Done => println!("left {ns}: gone from view now; its data is removed in the background"),
+                        libvork::Response::Error { message } => fail(message),
+                        _ => fail("unexpected response"),
+                    }
+                    return;
+                }
+                "delete" => {
+                    // Everywhere: every member's node lets it go (ADR-0034).
+                    if !rest.iter().any(|a| a == "--yes") {
+                        fail(format!("this deletes {ns} on every member's device, not only here; repeat with --yes (to drop only this device's copy: ns leave)"));
+                    }
+                    match client.call(libvork::Request::NsDelete { ns: ns.clone() }).await.unwrap_or_else(|e| fail(e)) {
+                        libvork::Response::Done => println!("deleted {ns}: every member's node lets it go as it hears of it"),
+                        libvork::Response::Error { message } => fail(message),
+                        _ => fail("unexpected response"),
+                    }
+                    return;
+                }
+                "verify" => libvork::Request::NsVerify { ns },
+                "search" => libvork::Request::NsSearch { ns },
+                "link" => {
+                    // A read link (ADR-0020): the address, this node to fetch from, a label, a query.
+                    let address = match client.call(libvork::Request::NsAddress { ns: ns.clone() }).await.unwrap_or_else(|e| fail(e)) {
+                        libvork::Response::Channel { address } => address,
+                        libvork::Response::Error { message } => fail(message),
+                        _ => fail("unexpected response"),
+                    };
+                    let (node, _, _) = client.ping().await.unwrap_or_else(|e| fail(e));
+                    let opt = |flag: &str| rest.windows(2).find(|w| w[0] == flag).map(|w| w[1].clone());
+                    let label = opt("--name").unwrap_or_else(|| ns.clone());
+                    let mut link = libvork::link::Link::namespace(&address, &[node], Some(&label));
+                    if let Some(q) = opt("--q") {
+                        link.params.push(("q".into(), q));
+                    }
+                    println!("{link}");
+                    if rest.iter().any(|a| a == "--qr") {
+                        print_qr(&link.to_string());
+                    }
+                    eprintln!("(anyone with this link can read all of {ns}; to give only part of it, make a share)");
+                    return;
+                }
+                "join" => {
+                    let what = rest.first().cloned().unwrap_or_else(|| usage());
+                    let (address, mut from) = match libvork::link::Link::parse(&what) {
+                        Ok(link) => (
+                            link.ns_address().unwrap_or_else(|| fail(format!("a vork:{} link isn't a library", link.kind))),
+                            link.params_named("from").map(String::from).collect::<Vec<_>>(),
+                        ),
+                        Err(_) => (what, Vec::new()),
+                    };
+                    from.extend(froms(&rest));
+                    libvork::Request::NsJoin { ns, address, from, lazy: rest.iter().any(|a| a == "--lazy") }
+                }
+                "grant" => libvork::Request::NsGrant {
+                    ns,
+                    writer: rest.first().cloned().unwrap_or_else(|| usage()),
+                    grant: rest.iter().any(|a| a == "--grant"),
+                    from: froms(&rest),
+                    keys: rest
+                        .windows(2)
+                        .find(|w| w[0] == "--keys")
+                        .map(|w| w[1].split(',').map(|k| k.trim().to_string()).filter(|k| !k.is_empty()).collect())
+                        .unwrap_or_default(),
+                    until: rest.windows(2).find(|w| w[0] == "--until").map(|w| parse_time(&w[1]).unwrap_or_else(|e| fail(e))),
+                },
+                "revoke" => libvork::Request::NsRevoke { ns, writer: rest.first().cloned().unwrap_or_else(|| usage()) },
+                _ => usage(),
+            };
+            match client.call(req).await.unwrap_or_else(|e| fail(e)) {
+                libvork::Response::Channel { address } => println!("{address}"),
+                libvork::Response::Namespace(v) => {
+                    println!("library {}: {} record(s), {} peer node(s)", v.name, v.records, v.peers);
+                    println!("  address    {}", v.address);
+                    println!("  my writer  {}", v.own_writer);
+                    for (w, rights) in &v.writers {
+                        // No rights: a reader (a member invited to read).
+                        println!("  writer     {w}  {}", if rights.is_empty() { "read".to_string() } else { rights.join(",") });
+                    }
+                    if let Some(c) = &v.checkpoint {
+                        println!("  checkpoint {c}");
+                    }
+                    println!("  keeps      {} on device {} ({} of {} file(s) kept here so far)", v.keep, v.device, v.kept_here.unwrap_or(0), v.kept);
+                    if v.syncing {
+                        println!("  syncing    looking for its state (a first sync)");
+                    }
+                    if v.lazy {
+                        println!("  lazy       only records needed are held (fetched on demand)");
+                    }
+                }
+                libvork::Response::Verified { ok, detail } => {
+                    println!("{detail}");
+                    if !ok {
+                        std::process::exit(1);
+                    }
+                }
+                libvork::Response::Error { message } => fail(message),
+                _ => fail("unexpected response"),
+            }
+        }
+        "share" => {
+            let sub = it.next().unwrap_or_else(|| usage());
+            let rest: Vec<String> = it.collect();
+            let opt = |flag: &str| -> Vec<String> { rest.windows(2).filter(|w| w[0] == flag).map(|w| w[1].clone()).collect() };
+            match sub.as_str() {
+                // Files, or one folder, in a mounted library (a file manager's
+                // "Share with vork…"): a share of them, its link printed
+                // and put on the clipboard.
+                "path" => {
+                    let paths: Vec<PathBuf> = rest.iter().filter(|a| !a.starts_with("--")).map(PathBuf::from).collect();
+                    if paths.is_empty() {
+                        usage();
+                    }
+                    let mut source: Option<String> = None;
+                    let (mut terms, mut ids) = (Vec::new(), Vec::new());
+                    for p in &paths {
+                        let (ns, tree) = mounts::library_of(&store, p).unwrap_or_else(|| fail(format!("{} isn't in a vork folder", p.display())));
+                        if source.as_ref().is_some_and(|s| *s != ns) {
+                            fail("these are in different libraries: share them one library at a time");
+                        }
+                        source = Some(ns.clone());
+                        if p.is_dir() {
+                            if paths.len() > 1 {
+                                fail("share one folder at a time, or files");
+                            }
+                            terms.push(format!("path^={}", if tree == "/" { "/".to_string() } else { format!("{tree}/") }));
+                        } else {
+                            let found = match client.call(libvork::Request::Query { ns: ns.clone(), terms: vec![format!("path={tree}")], at: None }).await.unwrap_or_else(|e| fail(e)) {
+                                libvork::Response::Records { records } => records,
+                                libvork::Response::Error { message } => fail(message),
+                                _ => fail("unexpected response"),
+                            };
+                            let r = found.first().unwrap_or_else(|| fail(format!("{} isn't in vork yet, or is shown in a folder of its own (an album): share it from where it is", p.display())));
+                            ids.push(r.id.clone());
+                        }
+                    }
+                    let source = source.unwrap_or_else(|| usage());
+                    let base = paths[0].file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| source.clone());
+                    let taken = match client.call(libvork::Request::Namespaces).await.unwrap_or_else(|e| fail(e)) {
+                        libvork::Response::Names { names } => names,
+                        _ => Vec::new(),
+                    };
+                    let wanted = libvork::link::suggest_name(&base);
+                    let name = (1..).map(|i| if i == 1 { wanted.clone() } else { format!("{wanted}-{i}") }).find(|n| !taken.contains(n)).unwrap();
+                    let omit = [opt("--omit"), opt("--keep").into_iter().map(|k| format!("-{k}")).collect()].concat();
+                    let req = libvork::Request::ShareCreate { source: source.clone(), name, terms, ids, omit };
+                    match client.call(req).await.unwrap_or_else(|e| fail(e)) {
+                        libvork::Response::Namespace(v) => {
+                            let (node, _, _) = client.ping().await.unwrap_or_else(|e| fail(e));
+                            let link = libvork::link::Link::namespace(&v.address, &[node], Some(&base)).to_string();
+                            let copied = copy_to_clipboard(&link);
+                            println!(
+                                "\u{201c}{base}\u{201d} is shared as {} ({} record{}), kept up to date while it changes.\n\nTo give it to someone, send them this link{}:\n\n{link}\n\nThey open it with vork. They can read it; nothing else of {source} is in it.",
+                                v.name,
+                                v.records,
+                                if v.records == 1 { "" } else { "s" },
+                                if copied { " (it's on the clipboard)" } else { "" },
+                            );
+                        }
+                        libvork::Response::Error { message } => fail(message),
+                        _ => fail("unexpected response"),
+                    }
+                }
+                "create" => {
+                    let name = rest.first().cloned().unwrap_or_else(|| usage());
+                    let source = opt("--from").pop().unwrap_or_else(|| usage());
+                    // Terms: what isn't a flag or a flag's value.
+                    let mut terms = Vec::new();
+                    let mut i = 1;
+                    while i < rest.len() {
+                        if rest[i] == "--qr" {
+                            i += 1;
+                        } else if rest[i].starts_with("--") {
+                            i += 2;
+                        } else {
+                            terms.push(rest[i].clone());
+                            i += 1;
+                        }
+                    }
+                    let omit = [opt("--omit"), opt("--keep").into_iter().map(|k| format!("-{k}")).collect()].concat();
+                    let req = libvork::Request::ShareCreate { source, name, terms, ids: opt("--id"), omit };
+                    match client.call(req).await.unwrap_or_else(|e| fail(e)) {
+                        libvork::Response::Namespace(v) => {
+                            let (node, _, _) = client.ping().await.unwrap_or_else(|e| fail(e));
+                            println!("share {}: {} record(s)", v.name, v.records);
+                            let link = libvork::link::Link::namespace(&v.address, &[node], Some(&v.name)).to_string();
+                            println!("  link {link}");
+                            if rest.iter().any(|a| a == "--qr") {
+                                print_qr(&link);
+                            }
+                            println!("  (whoever has the link reads the share: vork open LINK)");
+                        }
+                        libvork::Response::Error { message } => fail(message),
+                        _ => fail("unexpected response"),
+                    }
+                }
+                "list" => {
+                    let source = rest.first().cloned().unwrap_or_else(|| usage());
+                    let req = libvork::Request::Query { ns: source, terms: vec!["type=vork.share".into()], at: None };
+                    let records = client.records(req).await.unwrap_or_else(|e| fail(e));
+                    for r in &records {
+                        let get = |k: &str| r.attrs.iter().find(|(key, _)| key == k).map(|(_, v)| v);
+                        let text = |v: Option<&libvork::AttrValue>| match v {
+                            Some(libvork::AttrValue::Str(s)) => s.clone(),
+                            Some(libvork::AttrValue::List(items)) => items
+                                .iter()
+                                .filter_map(|i| if let libvork::AttrValue::Str(s) = i { Some(s.as_str()) } else { None })
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                            _ => String::new(),
+                        };
+                        let select = match (text(get("select")), text(get("ids"))) {
+                            (q, _) if !q.is_empty() => q,
+                            (_, ids) => format!("records {ids}"),
+                        };
+                        let omit = text(get("omit"));
+                        println!("{}  {}  {select}{}", r.id, text(get("name")), if omit.is_empty() { String::new() } else { format!("  (without {omit})") });
+                    }
+                    println!("{} share(s)", records.len());
+                }
+                "rm" => {
+                    let source = rest.first().cloned().unwrap_or_else(|| usage());
+                    let id = rest.get(1).cloned().unwrap_or_else(|| usage());
+                    match client.call(libvork::Request::ShareDelete { source, id }).await.unwrap_or_else(|e| fail(e)) {
+                        libvork::Response::Done => println!("share ended: its updates stop"),
+                        libvork::Response::Error { message } => fail(message),
+                        _ => fail("unexpected response"),
+                    }
+                }
+                _ => usage(),
+            }
+        }
+        "me" => {
+            // This node, to give to others as a contact (ADR-0020).
+            let rest: Vec<String> = it.collect();
+            let (node, _, _) = client.ping().await.unwrap_or_else(|e| fail(e));
+            let words = node_words(&node);
+            if rest.first().map(String::as_str) == Some("link") {
+                let name = rest.windows(2).find(|w| w[0] == "--name").map(|w| w[1].clone());
+                let link = libvork::link::Link {
+                    kind: "node".into(),
+                    what: node.clone(),
+                    params: name.map(|n| vec![("name".to_string(), n)]).unwrap_or_default(),
+                };
+                println!("{link}");
+                if rest.iter().any(|a| a == "--qr") {
+                    print_qr(&link.to_string());
+                }
+                eprintln!("(they add you with vork open LINK; read these words to each other to be sure: {words})");
+            } else {
+                println!("node   {node}");
+                println!("words  {words}");
+            }
+        }
+        "contact" => {
+            // Petnames (ADR-0020): records in this user's own library `me`,
+            // so every device of the user has the same address book.
+            let sub = it.next().unwrap_or_else(|| usage());
+            let rest: Vec<String> = it.collect();
+            match sub.as_str() {
+                "add" => {
+                    let name = rest.first().cloned().unwrap_or_else(|| usage());
+                    let what = rest.get(1).cloned().unwrap_or_else(|| usage());
+                    let node = match libvork::link::Link::parse(&what) {
+                        Ok(l) if l.kind == "node" => l.what,
+                        Ok(l) => fail(format!("a vork:{} link isn't a node", l.kind)),
+                        Err(_) => what,
+                    };
+                    add_contact(&mut client, &name, &node).await;
+                }
+                "list" => {
+                    let contacts = contacts(&mut client).await;
+                    for (name, node, _) in &contacts {
+                        println!("{name:<16} {node}  {}", node_words(node));
+                    }
+                    println!("{} contact(s)", contacts.len());
+                }
+                "rm" => {
+                    let name = rest.first().cloned().unwrap_or_else(|| usage());
+                    let found: Vec<_> = contacts(&mut client).await.into_iter().filter(|(n, _, _)| n.eq_ignore_ascii_case(&name)).collect();
+                    if found.is_empty() {
+                        fail(format!("no contact {name}"));
+                    }
+                    for (_, _, id) in found {
+                        let req = libvork::Request::RecordDelete { ns: ME.into(), id };
+                        if let libvork::Response::Error { message } = client.call(req).await.unwrap_or_else(|e| fail(e)) {
+                            fail(message);
+                        }
+                    }
+                    println!("removed {name}");
+                }
+                _ => usage(),
+            }
+        }
+        "invite" => {
+            let sub = it.next().unwrap_or_else(|| usage());
+            let ns = it.next().unwrap_or_else(|| usage());
+            let rest: Vec<String> = it.collect();
+            let opt = |flag: &str| rest.windows(2).find(|w| w[0] == flag).map(|w| w[1].clone());
+            let req = match sub.as_str() {
+                "create" => libvork::Request::InviteCreate {
+                    ns: ns.clone(),
+                    read: rest.iter().any(|a| a == "--read"),
+                    grant: rest.iter().any(|a| a == "--grant"),
+                    keys: opt("--keys").map(|k| k.split(',').map(|k| k.trim().to_string()).filter(|k| !k.is_empty()).collect()).unwrap_or_default(),
+                    until: opt("--until").map(|u| parse_time(&u).unwrap_or_else(|e| fail(e))),
+                    expires_ms: opt("--expires").map(|e| parse_duration_ms(&e).unwrap_or_else(|| fail(format!("--expires takes e.g. 30m, 2h or 7d, not {e}")))),
+                    q: opt("--q"),
+                    label: opt("--name"),
+                },
+                "list" => libvork::Request::InviteList { ns: ns.clone() },
+                "cancel" => libvork::Request::InviteCancel { ns: ns.clone(), id: rest.first().cloned().unwrap_or_else(|| usage()) },
+                _ => usage(),
+            };
+            match client.call(req).await.unwrap_or_else(|e| fail(e)) {
+                libvork::Response::Link { link } => {
+                    println!("{link}");
+                    if rest.iter().any(|a| a == "--qr") {
+                        print_qr(&link);
+                    }
+                    eprintln!("(the first to open it becomes a member of {ns}; anyone who sees it can read {ns}: pass it in person or end to end)");
+                }
+                libvork::Response::Invites { invites } => {
+                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+                    for i in &invites {
+                        let state = if i.spent { "used".to_string() } else if i.expires < now { "expired".to_string() } else { format!("pending, {} min left", (i.expires - now) / 60_000) };
+                        let mut rights = if !i.write { "read".to_string() } else if i.grant { "write+grant".to_string() } else { "write".to_string() };
+                        if !i.keys.is_empty() {
+                            rights.push_str(&format!(" keys {}", i.keys.join(",")));
+                        }
+                        println!("{}  {rights}  {state}", i.id);
+                    }
+                    println!("{} invitation(s)", invites.len());
+                }
+                libvork::Response::Done => println!("invitation withdrawn"),
+                libvork::Response::Error { message } => fail(message),
+                _ => fail("unexpected response"),
+            }
+        }
+        "open" => {
+            // Opens a vØrk storage: link (ADR-0020). A library link joins the
+            // library (reading) under the link's name or --as NAME.
+            let text = it.next().unwrap_or_else(|| usage());
+            let rest: Vec<String> = it.collect();
+            let link = libvork::link::Link::parse(&text).unwrap_or_else(|e| fail(e));
+            let name = rest
+                .windows(2)
+                .find(|w| w[0] == "--as")
+                .map(|w| w[1].clone())
+                .unwrap_or_else(|| libvork::link::suggest_name(link.param("name").unwrap_or("shared")));
+            if link.kind == "node" {
+                // A contact: the name as written (a petname), --as first.
+                let petname = rest
+                    .windows(2)
+                    .find(|w| w[0] == "--as")
+                    .map(|w| w[1].clone())
+                    .or_else(|| link.param("name").map(String::from))
+                    .unwrap_or_else(|| fail("this node link has no name: give one with --as NAME"));
+                add_contact(&mut client, &petname, &link.what).await;
+                return;
+            }
+            if link.kind == "invite" {
+                match client.call(libvork::Request::InviteAccept { ns: name.clone(), link: text.clone() }).await.unwrap_or_else(|e| fail(e)) {
+                    libvork::Response::Namespace(v) => {
+                        let can_write = v.writers.iter().any(|(w, r)| *w == v.own_writer && r.iter().any(|r| r == "write"));
+                        let to_read = vork_core::invite::Invitation::from_text(&link.what).is_ok_and(|i| !i.write);
+                        println!(
+                            "joined {name}: {}",
+                            if can_write {
+                                "you may write to it"
+                            } else if to_read {
+                                "reading now (invited to read: a member its owner sees)"
+                            } else {
+                                "reading now; writing once the invitation's node grants it (on its own, when reachable)"
+                            }
+                        );
+                    }
+                    libvork::Response::Error { message } => fail(message),
+                    _ => fail("unexpected response"),
+                }
+                return;
+            }
+            let Some(address) = link.ns_address() else {
+                println!("a vork:{} link ({}); this version of vork opens library links", link.kind, link.what);
+                for (k, v) in &link.params {
+                    println!("  {k} = {v}");
+                }
+                return;
+            };
+            let req = libvork::Request::NsJoin { ns: name.clone(), address, from: link.params_named("from").map(String::from).collect(), lazy: false };
+            match client.call(req).await.unwrap_or_else(|e| fail(e)) {
+                libvork::Response::Namespace(_) | libvork::Response::Done => {}
+                libvork::Response::Error { message } => fail(message),
+                _ => {}
+            }
+            println!("joined {name}: it fills in as it syncs (vork query {name})");
+            if let Some(q) = link.param("q") {
+                println!("the link opens on: vork query {name} {}", q.split(',').map(|t| format!("'{}'", t.trim())).collect::<Vec<_>>().join(" "));
+            }
+        }
+        "app" => {
+            let sub = it.next().unwrap_or_else(|| usage());
+            let rest: Vec<String> = it.collect();
+            let req = match sub.as_str() {
+                "add" => libvork::Request::AppAdd {
+                    name: rest.first().cloned().unwrap_or_else(|| usage()),
+                    namespaces: rest
+                        .windows(2)
+                        .find(|w| w[0] == "--library" || w[0] == "--ns")
+                        .map(|w| w[1].split(',').map(|n| n.trim().to_string()).filter(|n| !n.is_empty()).collect())
+                        .unwrap_or_else(|| usage()),
+                    write: rest.iter().any(|a| a == "--write"),
+                    device: rest.windows(2).find(|w| w[0] == "--device").map(|w| w[1].clone()),
+                    keys: rest
+                        .windows(2)
+                        .find(|w| w[0] == "--keys")
+                        .map(|w| w[1].split(',').map(|k| k.trim().to_string()).filter(|k| !k.is_empty()).collect())
+                        .unwrap_or_default(),
+                },
+                "list" => libvork::Request::AppList,
+                "remove" => libvork::Request::AppRemove { name: rest.first().cloned().unwrap_or_else(|| usage()) },
+                _ => usage(),
+            };
+            match client.call(req).await.unwrap_or_else(|e| fail(e)) {
+                libvork::Response::AppToken { token } => {
+                    println!("{token}");
+                    eprintln!("(shown once: give it to the app; it connects with this token on the app socket)");
+                }
+                libvork::Response::Apps { apps } => {
+                    for a in apps {
+                        println!(
+                            "{}  {}  {}{}{}",
+                            a.name,
+                            if a.write { "read+write" } else { "read" },
+                            a.namespaces.join(","),
+                            if a.keys.is_empty() { String::new() } else { format!("  keys {}", a.keys.join(",")) },
+                            a.exe
+                                .map(|e| format!("  pinned to {e}"))
+                                .or(a.device.map(|n| format!("  device <{n}> over a Link")))
+                                .unwrap_or_default()
+                        );
+                    }
+                }
+                libvork::Response::Done => println!("ok"),
+                libvork::Response::Error { message } => fail(message),
+                _ => fail("unexpected response"),
+            }
+        }
+        "query" => {
+            let ns = it.next().unwrap_or_else(|| usage());
+            let mut terms: Vec<String> = it.collect();
+            let at = terms.iter().position(|t| t == "--at").map(|i| {
+                let v = terms.get(i + 1).and_then(|v| v.parse().ok()).unwrap_or_else(|| usage());
+                terms.drain(i..=i + 1);
+                v
+            });
+            // Through a search node's blind index (ADR-0019).
+            if let Some(i) = terms.iter().position(|t| t == "--search") {
+                let node = terms.get(i + 1).cloned().unwrap_or_else(|| usage());
+                terms.drain(i..=i + 1);
+                match client.call(libvork::Request::SearchQuery { ns, node, terms }).await.unwrap_or_else(|e| fail(e)) {
+                    libvork::Response::Searched { records, unresolved, as_of_ms } => {
+                        for r in &records {
+                            print_record(r);
+                        }
+                        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+                        println!("{} record(s) (index built {} s ago)", records.len(), now.saturating_sub(as_of_ms) / 1000);
+                        if !unresolved.is_empty() {
+                            println!("{} more match(es) not held here yet: {}", unresolved.len(), unresolved.join(" "));
+                        }
+                    }
+                    libvork::Response::Error { message } => fail(message),
+                    _ => fail("unexpected response"),
+                }
+                return;
+            }
+            // Saved as a query of the user's own (in `me`), to run again on
+            // any of their devices.
+            if let Some(i) = terms.iter().position(|t| t == "--save") {
+                let name = terms.get(i + 1).cloned().unwrap_or_else(|| usage());
+                terms.drain(i..=i + 1);
+                save_query(&mut client, &name, &ns, &terms).await;
+                return;
+            }
+            // Several libraries (NS1,NS2): each contributor writes its own,
+            // and a query combines them (instead of record filters in grants).
+            // `*`: every library here but `me`.
+            let names = if ns == "*" { all_namespaces(&mut client).await } else { ns.split(',').map(str::trim).filter(|n| !n.is_empty()).map(String::from).collect() };
+            run_query(&mut client, &names, &terms, at).await;
+        }
+        "saved" => {
+            // Saved queries (`vork query … --save NAME`): records in `me`.
+            let sub = it.next().unwrap_or_else(|| "list".into());
+            let rest: Vec<String> = it.collect();
+            let saved = libvork::saved::list(&mut client).await;
+            let find = |name: &str| saved.iter().find(|q| q.name.eq_ignore_ascii_case(name)).unwrap_or_else(|| fail(format!("no saved query {name} (vork saved lists them)")));
+            match sub.as_str() {
+                "list" => {
+                    let by_writer = libvork::saved::by_creator(&mut client).await.unwrap_or_else(|e| fail(e));
+                    for q in &saved {
+                        let scope = if q.scope.is_empty() {
+                            "every library".to_string()
+                        } else {
+                            q.scope.iter().map(|w| by_writer.get(w).cloned().unwrap_or_else(|| format!("({}… not here)", &w[..8.min(w.len())]))).collect::<Vec<_>>().join(", ")
+                        };
+                        println!("{:<20} {}  in {scope}", q.name, q.query);
+                    }
+                    println!("{} saved query(ies)", saved.len());
+                }
+                "run" => {
+                    let q = find(rest.first().unwrap_or_else(|| usage()));
+                    let (names, missing) = libvork::saved::resolve(&mut client, q).await.unwrap_or_else(|e| fail(e));
+                    for w in &missing {
+                        eprintln!("(a library of this query isn't on this device: {}…)", &w[..8.min(w.len())]);
+                    }
+                    let terms = q.terms();
+                    run_query(&mut client, &names, &terms, None).await;
+                    if rest.iter().any(|a| a == "--watch") {
+                        // Live: run again whenever its answer in one of its
+                        // libraries changes (LiveQuery: not on every write).
+                        let mut since: HashMap<String, String> = HashMap::new();
+                        loop {
+                            let mut changed = false;
+                            for n in &names {
+                                let s = since.get(n).cloned().unwrap_or_default();
+                                let req = libvork::Request::LiveQuery { ns: n.clone(), terms: terms.clone(), since: s.clone(), timeout_ms: 2_000 };
+                                if let Ok(libvork::Response::LiveRecords { digest, .. }) = client.call(req).await
+                                    && digest != s
+                                {
+                                    changed |= !s.is_empty();
+                                    since.insert(n.clone(), digest);
+                                }
+                            }
+                            if changed {
+                                println!("--- changed");
+                                run_query(&mut client, &names, &terms, None).await;
+                            }
+                        }
+                    }
+                }
+                "rm" => {
+                    let q = find(rest.first().unwrap_or_else(|| usage()));
+                    libvork::saved::remove(&mut client, &q.name).await.unwrap_or_else(|e| fail(e));
+                    println!("removed {}", q.name);
+                }
+                _ => usage(),
+            }
+        }
+        "forget" => {
+            let cap = it.next().unwrap_or_else(|| usage());
+            let s = client.forget(&cap).await.unwrap_or_else(|e| fail(e));
+            println!("no longer needed here: its copies elsewhere expire unless others need them");
+            print_status(&s);
+        }
+        "status" => {
+            let cap = it.next().unwrap_or_else(|| usage());
+            let s = client.status(&cap).await.unwrap_or_else(|e| fail(e));
+            print_status(&s);
+        }
+        "read" => {
+            // Part of a file, fetched on demand from a library's peers if it isn't here.
+            let cap = it.next().unwrap_or_else(|| usage());
+            let rest: Vec<String> = it.collect();
+            let opt = |name: &str| rest.windows(2).find(|w| w[0] == name).map(|w| w[1].clone());
+            let num = |name: &str, default: u64| opt(name).map_or(default, |v| v.parse().unwrap_or_else(|_| usage()));
+            // In pieces, each written out as it comes: a whole large file in one
+            // answer would exceed the local API's message limit (and memory).
+            let piece: u64 = if via_set { 512 << 10 } else { 4 << 20 };
+            let mut offset = num("--offset", 0);
+            let mut left = num("--len", u64::MAX);
+            let ns = opt("--library").or_else(|| opt("--ns"));
+            let wait_ms = num("--wait", 30) * 1000;
+            use std::io::Write;
+            let mut stdout = std::io::stdout().lock();
+            while left > 0 {
+                let len = piece.min(left);
+                let req = libvork::Request::ReadRange { cap: cap.clone(), ns: ns.clone(), offset, len, wait_ms };
+                let data = match client.call(req).await.unwrap_or_else(|e| fail(e)) {
+                    libvork::Response::Range { data } => data,
+                    libvork::Response::Error { message } => fail(message),
+                    _ => fail("unexpected response"),
+                };
+                stdout.write_all(&data).unwrap_or_else(|e| fail(e.to_string()));
+                if (data.len() as u64) < len {
+                    break; // the end of the file
+                }
+                offset += len;
+                left -= len;
+            }
+        }
+        _ => usage(),
+    }
+}
+
+fn print_status(s: &libvork::Status) {
+    let total = s.total_chunks.map_or("?".to_string(), |t| t.to_string());
+    println!(
+        "{} bytes: {}/{} chunks local{}{}{}",
+        s.size, s.local_chunks, total,
+        if s.missing_nodes > 0 { format!(", {} manifest node(s) not held locally", s.missing_nodes) } else { String::new() },
+        if s.complete() { " (complete, readable offline)" } else { "" },
+        if s.seeking { format!(", seeking ({} holder(s) known)", s.holders_known) } else { String::new() }
+    );
+    if let Some(secs) = s.slow_link_wait_secs {
+        println!("  rest waits for a faster path (about {} over the slow link)", duration(secs));
+    }
+    if s.holders_seen > 0 {
+        println!("  seen held by {} other node(s) in the last hour", s.holders_seen);
+    }
+    if s.leased_to > 0 {
+        println!("  leased to {} node(s), {} confirmed by receipt", s.leased_to, s.replicas);
+    }
+    for h in &s.holders {
+        println!("    <{}>{}{}", h.node, if h.confirmed { " confirmed" } else { " waiting for its receipt" }, if h.same_site { ", same site" } else { "" });
+    }
+}
+
+/// `key=value` on the command line; `key=a,b,c` with a trailing `,` or more than one comma is a list.
+fn attr(arg: &str) -> (String, libvork::AttrValue) {
+    let (k, v) = arg.split_once('=').unwrap_or_else(|| fail(format!("expected KEY=VALUE, got {arg:?}")));
+    let scalar = |v: &str| -> libvork::AttrValue {
+        if v.len() >= 2 && v.starts_with('"') && v.ends_with('"') {
+            return libvork::AttrValue::Str(v[1..v.len() - 1].to_string());
+        }
+        match v {
+            "true" => libvork::AttrValue::Bool(true),
+            "false" => libvork::AttrValue::Bool(false),
+            _ => v
+                .parse::<i64>()
+                .map(libvork::AttrValue::Int)
+                .or_else(|_| v.parse::<f64>().map(libvork::AttrValue::Float))
+                .unwrap_or_else(|_| libvork::AttrValue::Str(v.to_string())),
+        }
+    };
+    // One comma is part of the text ("Lily, Rosemary and the Jack of Hearts"):
+    // a list needs a trailing comma or more than one.
+    let is_list = !v.starts_with('"') && (v.ends_with(',') || v.matches(',').count() > 1);
+    let value = if is_list {
+        libvork::AttrValue::List(v.split(',').filter(|s| !s.is_empty()).map(scalar).collect())
+    } else {
+        scalar(v)
+    };
+    (k.to_string(), value)
+}
+
+/// A point in time for `--until`: `YYYY-MM-DD` (UTC midnight), `+30d` /
+/// `+12h` / `+90m` from now, or milliseconds since the epoch.
+/// A file larger than this is written through a write session, a piece at
+/// a time, not read whole into one message (which can't exceed MAX_FRAME).
+const STREAM_OVER: u64 = 4 << 20;
+
+fn file_len(path: &std::path::Path) -> u64 {
+    std::fs::metadata(path).map(|m| m.len()).unwrap_or_else(|e| fail(format!("{}: {e}", path.display())))
+}
+
+/// Replaces record `id`'s content with the file at `path` through a write
+/// session: 1 MiB pieces, or 512 KiB through another node (`--via`: a
+/// request over a Link is one RNS Resource, at most 1 MiB with its envelope).
+async fn write_file(client: &mut libvork::Client, ns: &str, id: &str, path: &std::path::Path, via: bool) {
+    use std::io::Read;
+    let piece = if via { 512 << 10 } else { 1 << 20 };
+    let mut f = std::fs::File::open(path).unwrap_or_else(|e| fail(format!("{}: {e}", path.display())));
+    let session = match client.call(libvork::Request::WriteBegin { ns: ns.into(), id: id.into(), truncate: true }).await.unwrap_or_else(|e| fail(e)) {
+        libvork::Response::Session { session, .. } => session,
+        libvork::Response::Error { message } => fail(message),
+        _ => fail("unexpected response"),
+    };
+    let mut buf = vec![0u8; piece];
+    let mut offset = 0u64;
+    loop {
+        let n = f.read(&mut buf).unwrap_or_else(|e| fail(format!("{}: {e}", path.display())));
+        if n == 0 {
+            break;
+        }
+        let req = libvork::Request::WriteAt { session, offset, data: buf[..n].to_vec() };
+        match client.call(req).await {
+            Ok(libvork::Response::Error { message }) => {
+                let _ = client.call(libvork::Request::WriteAbort { session }).await;
+                fail(message)
+            }
+            Err(e) => fail(e),
+            _ => {}
+        }
+        offset += n as u64;
+    }
+    if let libvork::Response::Error { message } = client.call(libvork::Request::WriteCommit { session, attrs: vec![] }).await.unwrap_or_else(|e| fail(e)) {
+        fail(message);
+    }
+}
+
+/// Every library on this device but `me`.
+async fn all_namespaces(client: &mut libvork::Client) -> Vec<String> {
+    libvork::saved::namespaces(client).await.unwrap_or_else(|e| fail(e))
+}
+
+/// Saves (or replaces) query `name`: `terms` over libraries `ns`
+/// (comma-separated, or `*` for all).
+async fn save_query(client: &mut libvork::Client, name: &str, ns: &str, terms: &[String]) {
+    let scope: Vec<String> = if ns == "*" { Vec::new() } else { ns.split(',').map(str::trim).filter(|n| !n.is_empty()).map(String::from).collect() };
+    libvork::saved::save(client, name, &scope, terms).await.unwrap_or_else(|e| fail(e));
+    println!("saved {name}: {} in {ns} (vork saved run {name})", terms.join(", "));
+}
+
+/// Runs `terms` over `names`, printing what matches.
+async fn run_query(client: &mut libvork::Client, names: &[String], terms: &[String], at: Option<u64>) {
+    let mut total = 0;
+    for n in names {
+        let req = libvork::Request::Query { ns: n.clone(), terms: terms.to_vec(), at };
+        let found = client.records(req).await.unwrap_or_else(|e| fail(format!("{n}: {e}")));
+        for r in &found {
+            if names.len() > 1 {
+                print!("{n}/");
+            }
+            print_record(r);
+        }
+        total += found.len();
+    }
+    println!("{total} record(s)");
+}
+
+/// The user's own library: contacts, saved queries, settings (ADR-0020).
+const ME: &str = "me";
+
+/// A node address as fingerprint words, to read aloud when it matters.
+fn node_words(node: &str) -> String {
+    let bytes: Vec<u8> = (0..node.len()).step_by(2).filter_map(|i| node.get(i..i + 2).and_then(|h| u8::from_str_radix(h, 16).ok())).collect();
+    vork_core::words::fingerprint(&bytes, vork_core::words::DEFAULT_WORDS).join(" ")
+}
+
+fn is_node(s: &str) -> bool {
+    s.len() == 32 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// The contacts in `me`: (name, node, record ID). None yet: no `me` yet.
+async fn contacts(client: &mut libvork::Client) -> Vec<(String, String, String)> {
+    // People under their type and the name they had before (ADR-0025).
+    let mut records = Vec::new();
+    for term in libvork::types::terms(libvork::types::PERSON) {
+        let req = libvork::Request::Query { ns: ME.into(), terms: vec![term], at: None };
+        if let Ok(libvork::Response::Records { records: found }) = client.call(req).await {
+            records.extend(found);
+        }
+    }
+    let s = |r: &libvork::RecordView, k: &str| {
+        r.attrs.iter().find_map(|(key, v)| match v {
+            libvork::AttrValue::Str(s) if key == k => Some(s.clone()),
+            _ => None,
+        })
+    };
+    let mut out: Vec<_> = records.iter().filter_map(|r| Some((s(r, "name")?, s(r, "vork:node")?, r.id.clone()))).collect();
+    out.sort();
+    out
+}
+
+/// Adds (or renames) a contact for `node` in `me`.
+async fn add_contact(client: &mut libvork::Client, name: &str, node: &str) {
+    if !is_node(node) {
+        fail(format!("{node} isn't a node address (32 hex digits) or a vork:node link"));
+    }
+    if is_node(name) {
+        fail("a contact's name can't look like a node address");
+    }
+    let existing = contacts(client).await;
+    if existing.iter().any(|(n, other, _)| n.eq_ignore_ascii_case(name) && other != node) {
+        fail(format!("you already have a contact {name}; remove it first or choose another name"));
+    }
+    let attrs = vec![("name".to_string(), libvork::AttrValue::Str(name.into()))];
+    let req = match existing.iter().find(|(_, n, _)| n == node) {
+        Some((_, _, id)) => libvork::Request::RecordSet { ns: ME.into(), id: id.clone(), attrs, unset: vec![], data: None },
+        None => {
+            let mut attrs = attrs;
+            attrs.push(("type".into(), libvork::AttrValue::Str(libvork::types::PERSON.into())));
+            attrs.push(("vork:node".into(), libvork::AttrValue::Str(node.into())));
+            libvork::Request::RecordCreate { ns: ME.into(), attrs, data: None }
+        }
+    };
+    if let libvork::Response::Error { message } = client.call(req).await.unwrap_or_else(|e| fail(e)) {
+        fail(message);
+    }
+    println!("contact {name}: {node}");
+    println!("  words {}  (compare them with what {name}'s vork me shows)", node_words(node));
+}
+
+/// `--from NAME` with a contact's name: its node.
+async fn resolve_froms(client: &mut libvork::Client, mut rest: Vec<String>) -> Vec<String> {
+    let mut known: Option<Vec<(String, String, String)>> = None;
+    for i in 1..rest.len() {
+        if rest[i - 1] == "--from" && !is_node(&rest[i]) {
+            if known.is_none() {
+                known = Some(contacts(client).await);
+            }
+            match known.as_ref().unwrap().iter().find(|(n, _, _)| n.eq_ignore_ascii_case(&rest[i])) {
+                Some((_, node, _)) => rest[i] = node.clone(),
+                None => fail(format!("--from {}: not a node address, and no contact of that name", rest[i])),
+            }
+        }
+    }
+    rest
+}
+
+/// A link as a QR code in the terminal (two rows per line), for showing
+/// on one screen and scanning with another (ADR-0020). Error correction L:
+/// the smallest code, for screens rather than print.
+fn print_qr(text: &str) {
+    use qrcode::{render::unicode::Dense1x2, EcLevel, QrCode};
+    match QrCode::with_error_correction_level(text, EcLevel::L) {
+        Ok(code) => eprintln!("{}", code.render::<Dense1x2>().dark_color(Dense1x2::Light).light_color(Dense1x2::Dark).quiet_zone(true).build()),
+        Err(e) => eprintln!("(no QR code: {e})"),
+    }
+}
+
+/// `30m`, `2h`, `7d` (or plain seconds) as milliseconds.
+fn parse_duration_ms(s: &str) -> Option<u64> {
+    let (n, unit) = s.trim().split_at(s.trim().find(|c: char| !c.is_ascii_digit()).unwrap_or(s.trim().len()));
+    let n: u64 = n.parse().ok()?;
+    let secs = match unit {
+        "" | "s" => 1,
+        "m" => 60,
+        "h" => 3600,
+        "d" => 86_400,
+        _ => return None,
+    };
+    Some(n * secs * 1000)
+}
+
+fn parse_time(s: &str) -> Result<u64, String> {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+    if let Some(rel) = s.strip_prefix('+') {
+        let (n, unit) = rel.split_at(rel.len().saturating_sub(1));
+        let n: u64 = n.parse().map_err(|_| format!("bad duration {s}"))?;
+        let ms = match unit {
+            "d" => 86_400_000,
+            "h" => 3_600_000,
+            "m" => 60_000,
+            _ => return Err(format!("bad duration {s} (d, h or m)")),
+        };
+        return Ok(now + n * ms);
+    }
+    if let [y, m, d] = s.split('-').collect::<Vec<_>>()[..]
+        && let (Ok(y), Ok(m), Ok(d)) = (y.parse::<i64>(), m.parse::<i64>(), d.parse::<i64>())
+    {
+        // Days since 1970-01-01 (civil calendar, Howard Hinnant's algorithm).
+        let y = if m <= 2 { y - 1 } else { y };
+        let era = y.div_euclid(400);
+        let yoe = y - era * 400;
+        let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+        let days = era * 146_097 + doe - 719_468;
+        return u64::try_from(days * 86_400_000).map_err(|_| format!("{s} is before 1970"));
+    }
+    s.parse().map_err(|_| format!("bad time {s}: YYYY-MM-DD, +30d or milliseconds"))
+}
+
+fn print_record(r: &libvork::RecordView) {
+    println!("{}", r.id);
+    for (k, v) in &r.attrs {
+        println!("  {k} = {v}");
+    }
+    for b in &r.blocks {
+        println!("  block {b}");
+    }
+}
+
+fn print_channels(own: &[libvork::ChannelInfo], follows: &[libvork::FollowInfo]) {
+    for c in own {
+        println!("writes {} (version {}): {}", c.name, c.seq, c.address);
+    }
+    for f in follows {
+        let short = f.address.get(..32).unwrap_or(&f.address);
+        match &f.current {
+            Some(cap) => println!(
+                "follows {short}… version {}{}{}: {cap}",
+                f.seq,
+                if f.complete { " (complete)" } else { " (fetching)" },
+                f.namespace.as_ref().map(|n| format!(", library {n}")).unwrap_or_default()
+            ),
+            None => println!("follows {short}… (no version yet)"),
+        }
+    }
+}
+
+fn duration(secs: u64) -> String {
+    match secs {
+        s if s < 120 => format!("{s} s"),
+        s if s < 7200 => format!("{} min", s / 60),
+        s if s < 172_800 => format!("{} h", s / 3600),
+        s => format!("{} days", s / 86_400),
+    }
+}
+
+fn human(b: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let (mut v, mut i) = (b as f64, 0);
+    while v >= 1024.0 && i < UNITS.len() - 1 {
+        v /= 1024.0;
+        i += 1;
+    }
+    if i == 0 { format!("{b} B") } else { format!("{v:.1} {}", UNITS[i]) }
+}
+
+fn fail(e: impl std::fmt::Display) -> ! {
+    eprintln!("vork: {e}");
+    std::process::exit(1);
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn attr_lists_need_two_commas_or_a_trailing_one() {
+        use libvork::AttrValue::{Int, List, Str};
+        let s = |v: &str| Str(v.into());
+        assert_eq!(super::attr("path=/Dylan/07 - Lily, Rosemary.mp3").1, s("/Dylan/07 - Lily, Rosemary.mp3"));
+        assert_eq!(super::attr("tags=a,").1, List(vec![s("a")]));
+        assert_eq!(super::attr("n=1,2,3").1, List(vec![Int(1), Int(2), Int(3)]));
+        assert_eq!(super::attr("q=\"a,b,c\"").1, s("a,b,c"));
+    }
+
+    #[test]
+    fn until_times() {
+        for (s, ms) in [("1970-01-01", 0), ("2000-02-29", 951_782_400_000), ("2026-10-20", 1_792_454_400_000), ("2026-12-31", 1_798_675_200_000), ("2100-03-01", 4_107_542_400_000)] {
+            assert_eq!(super::parse_time(s), Ok(ms), "{s}");
+        }
+        assert_eq!(super::parse_time("1792454400000"), Ok(1_792_454_400_000));
+        let in_a_day = super::parse_time("+1d").unwrap();
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+        assert!(in_a_day >= now + 86_399_000 && in_a_day <= now + 86_401_000);
+        assert!(super::parse_time("+3w").is_err());
+        assert!(super::parse_time("tomorrow").is_err());
+    }
+}
+
+/// Puts `text` on the clipboard with whatever the system has for it; false if nothing did.
+fn copy_to_clipboard(text: &str) -> bool {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let tools: &[(&str, &[&str])] = if cfg!(windows) {
+        &[("clip.exe", &[])]
+    } else if cfg!(target_os = "macos") {
+        &[("pbcopy", &[])]
+    } else {
+        &[("wl-copy", &[]), ("xclip", &["-selection", "clipboard"]), ("xsel", &["--clipboard", "--input"])]
+    };
+    for (tool, args) in tools {
+        let Ok(mut child) = Command::new(tool).args(*args).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() else { continue };
+        let wrote = child.stdin.take().is_some_and(|mut s| s.write_all(text.as_bytes()).is_ok());
+        if wrote && child.wait().is_ok_and(|s| s.success()) {
+            return true;
+        }
+    }
+    false
+}

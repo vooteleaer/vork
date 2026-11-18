@@ -1,0 +1,117 @@
+//! `vork-cloudfiles --all [FOLDER]`: every library as a folder of one Cloud
+//! Files sync root in Explorer (ADR-0002), `%USERPROFILE%\vork` unless
+//! told; `vork-cloudfiles NS FOLDER`: one library as a sync root of its
+//! own. Through `vorkd`'s local API. Windows only.
+
+#[cfg_attr(not(windows), allow(dead_code))]
+mod names;
+
+#[cfg(windows)]
+mod provider;
+#[cfg(windows)]
+mod share_menu;
+
+fn usage() -> ! {
+    eprintln!("vork-cloudfiles [--store DIR] [--wait SECONDS] --all [FOLDER]   (every library, a folder each; default %USERPROFILE%\\vork)");
+    eprintln!("vork-cloudfiles [--store DIR] [--wait SECONDS] [--via NODE] NS FOLDER");
+    eprintln!("vork-cloudfiles --unregister NS | --unregister --all");
+    eprintln!("vork-cloudfiles [--store DIR] --share PATH");
+    eprintln!("vork-cloudfiles [--store DIR] --share-in NS ROOT PATH   (what Explorer's Share with vork runs)");
+    eprintln!("  --wait: how long opening a file waits for content that isn't here yet (default 30)");
+    eprintln!("  --via: the library is on another of your nodes (ADR-0019), not this one");
+    std::process::exit(2)
+}
+
+fn main() {
+    let mut store = libvork::default_store_dir();
+    let mut wait = std::time::Duration::from_secs(30);
+    let mut unregister = false;
+    let mut all = false;
+    let mut share = None;
+    let mut within = None;
+    let mut via = None;
+    let mut rest = Vec::new();
+    let mut args = std::env::args().skip(1);
+    while let Some(a) = args.next() {
+        match a.as_str() {
+            "--store" => store = args.next().unwrap_or_else(|| usage()).into(),
+            "--wait" => wait = std::time::Duration::from_secs(args.next().and_then(|v| v.parse().ok()).unwrap_or_else(|| usage())),
+            "--unregister" => unregister = true,
+            "--all" => all = true,
+            "--via" => via = Some(args.next().unwrap_or_else(|| usage())),
+            "--share" => share = Some(args.next().unwrap_or_else(|| usage())),
+            "--share-in" => {
+                let ns = args.next().unwrap_or_else(|| usage());
+                let root = args.next().unwrap_or_else(|| usage());
+                within = Some((ns, std::path::PathBuf::from(root)));
+                share = Some(args.next().unwrap_or_else(|| usage()));
+            }
+            "-h" | "--help" => usage(),
+            _ => rest.push(a),
+        }
+    }
+    let home = || std::path::PathBuf::from(std::env::var_os("USERPROFILE").unwrap_or_default()).join("vork");
+    let result = match (unregister, all, rest.as_slice()) {
+        _ if share.is_some() => run_share(&store, std::path::Path::new(share.as_deref().unwrap()), within, via),
+        (true, true, []) => run_unregister_all(),
+        (true, false, [ns]) => run_unregister(ns),
+        (false, true, []) if via.is_none() => run_all(&store, &home(), wait),
+        (false, true, [folder]) if via.is_none() => run_all(&store, std::path::Path::new(folder), wait),
+        (false, false, [ns, folder]) => run(&store, ns, std::path::Path::new(folder), wait, via),
+        _ => usage(),
+    };
+    if let Err(e) = result {
+        eprintln!("vork-cloudfiles: {e}");
+        std::process::exit(1);
+    }
+}
+
+#[cfg(windows)]
+fn run(store: &std::path::Path, ns: &str, folder: &std::path::Path, wait: std::time::Duration, via: Option<String>) -> Result<(), String> {
+    provider::run(store, ns, folder, wait, via)
+}
+
+#[cfg(windows)]
+fn run_all(store: &std::path::Path, folder: &std::path::Path, wait: std::time::Duration) -> Result<(), String> {
+    provider::run_all(store, folder, wait)
+}
+
+#[cfg(windows)]
+fn run_unregister(ns: &str) -> Result<(), String> {
+    provider::unregister(ns)
+}
+
+#[cfg(windows)]
+fn run_unregister_all() -> Result<(), String> {
+    provider::unregister(provider::ALL)
+}
+
+#[cfg(windows)]
+fn run_share(store: &std::path::Path, path: &std::path::Path, within: Option<(String, std::path::PathBuf)>, via: Option<String>) -> Result<(), String> {
+    share_menu::share(store, path, within, via)
+}
+
+#[cfg(not(windows))]
+fn run_share(_: &std::path::Path, _: &std::path::Path, _: Option<(String, std::path::PathBuf)>, _: Option<String>) -> Result<(), String> {
+    run(std::path::Path::new(""), "", std::path::Path::new(""), Default::default(), None)
+}
+
+#[cfg(not(windows))]
+fn run(_: &std::path::Path, _: &str, _: &std::path::Path, _: std::time::Duration, _: Option<String>) -> Result<(), String> {
+    Err("the Cloud Files provider is Windows only; on Linux use vork-mount (ADR-0002)".into())
+}
+
+#[cfg(not(windows))]
+fn run_all(_: &std::path::Path, _: &std::path::Path, _: std::time::Duration) -> Result<(), String> {
+    run(std::path::Path::new(""), "", std::path::Path::new(""), Default::default(), None)
+}
+
+#[cfg(not(windows))]
+fn run_unregister(_: &str) -> Result<(), String> {
+    run(std::path::Path::new(""), "", std::path::Path::new(""), Default::default(), None)
+}
+
+#[cfg(not(windows))]
+fn run_unregister_all() -> Result<(), String> {
+    run_unregister("")
+}

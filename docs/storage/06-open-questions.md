@@ -1,0 +1,21 @@
+# Open questions
+
+- **Project name.** `vork` is a working title.
+- **Names:** proposed: petnames in contact records, display names as hints, QR links and one-use invitations ([ADR-0020](adr/0020-sharing-names-invitations.md)). Still open: community libraries (`community/…`).
+- **Discovery:** public libraries are announced (`vork.library`, [ADR-0029](adr/0029-announced-public-libraries.md), in place of ADR-0022's announces); directory channels and public search nodes further are proposed ([ADR-0022](adr/0022-public-namespaces-discovery.md)). Still open for content in general: Bloom filters in announces vs a DHT (the rnfs experience) vs a hybrid.
+- **Scaling:** regional limiting of announces, hierarchy, path requests on demand.
+- **Asymmetric paths (seen 2026-10-23, parked):** over public backbones a node can be reachable one way only: A links to B, B can't link to A (its path is long, stale or missing), so B gets no copies even when it's the only node at another site. LXMF and NomadNet show the same. Considered: (1) using a link B opened (RNS links take requests from their initiator only, so B would have to ask "anything for me?", which tells it whose copies it keeps, against ADR-0014); (2) offers left with a node both can reach, as LXMF propagation nodes do, opaque to it; (3) dropping a stale path and asking again (Prns's `drop_path` needs the shared instance's RPC key, which vØrk storage doesn't hold on purpose). Needs an ADR; meanwhile placement meets the count where it can and says a copy elsewhere is missing.
+- **Relationship with Prns:** upstream contributions vs fork policy, given one dominant maintainer.
+- **Pinning economics:** reciprocity vs an exchange mechanism, for volunteer storage ([ADR-0011](adr/0011-redundancy-by-default.md)).
+- **Default disk budget:** 50 % of the volume and a reserve of max(10 %, 5 GiB) are guesses; tune on real devices ([ADR-0012](adr/0012-disk-budget.md)).
+- **Compression before encryption:** which algorithm (zstd?), and the default per content type; CRIME-style size leaks for mixed-content chunks ([ADR-0013](adr/0013-slow-links.md)).
+- **Spread defaults:** generation ranges and the probabilistic decrement rule, and default radius per class ([ADR-0011](adr/0011-redundancy-by-default.md)).
+- **Default replication target:** e.g. "all my storage nodes, at least 2 copies, one offsite"; how to express it simply.
+- **Spam:** LXMF stamps on announces, pinning requests, attributes.
+- **App identity on Linux:** how to bind a per-app capability to a process reliably without a sandbox. Partly answered: tokens are pinned to the executable path on first use ([ADR-0004](adr/0004-native-record-api.md)). Open: a program replaced at the same path, interpreters (every Python app is `/usr/bin/python3`), Flatpak/portal identity, a user prompt.
+- **Removal race** (also keeps tombstones: a revoked writer whose chain stops before its revoke holds back pruning, [ADR-0018](adr/0018-state-trees.md)): which of a member's writes count when they were made offline, concurrently with that member's removal? Causal rule needed.
+- **Conflict UX:** how to show two heads to the user.
+- **Range/geo queries with a blind index** over the network.
+- **YubiKey PIV vs OpenPGP**: depends on the firmware.
+- **Haiku hardware, YubiKey and Rust support.**
+- **How to relate to rnfs.** Contact the author?

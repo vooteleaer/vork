@@ -1,0 +1,33 @@
+{
+  "about": "ADR-0021: a share copy's record ID = HKDF-SHA256(ikm = source record ID, salt = \"vork/v1/storage/share-record\", info = ns_id of the share)[0..16]; a member's addition written back to the source = HKDF-SHA256(ikm = the member's record ID, salt = \"vork/v1/storage/share-writeback\", info = ns_id of the share)[0..16] (source_record stands for the member's record there); ns_id = SHA-256(\"vork/v1/storage/ns\" || share writer)[0..16]",
+  "cases": [
+    {
+      "share_ns_id": "6baed0804a9c2d890b908d4adbb21c5b",
+      "share_record": "33a0cc3c954da676cd1ef7b26ec66f64",
+      "share_writer": "c86b8e82d64ff7ec813d314d40d2660291ac95316cebb78b9acd4454221818c3",
+      "source_record": "2687130feb5bcfb04c8c1dc786789861",
+      "writeback_record": "c9d8d2e329b9b2d95e0c7552ee166854"
+    },
+    {
+      "share_ns_id": "6baed0804a9c2d890b908d4adbb21c5b",
+      "share_record": "8a8075e0ae21cd91f80c4b38c044901d",
+      "share_writer": "c86b8e82d64ff7ec813d314d40d2660291ac95316cebb78b9acd4454221818c3",
+      "source_record": "36a301f0cbf26f296ac4a031ff967d5c",
+      "writeback_record": "15b868b1872150bb8892c27ebebe1ec7"
+    },
+    {
+      "share_ns_id": "354562c94344a753421e92abb0e044d4",
+      "share_record": "6197901587cd8825f3b7066dcfeaa290",
+      "share_writer": "371c9d645a546b483e66515d7a7776af376a84251f4602b38b2134c4dc55bfed",
+      "source_record": "aad4606bac1654ec07724d76943dbf89",
+      "writeback_record": "94494b6d4b9c8316be49325159f0b98f"
+    },
+    {
+      "share_ns_id": "354562c94344a753421e92abb0e044d4",
+      "share_record": "839ac2686398e75a047952a2b3450ee2",
+      "share_writer": "371c9d645a546b483e66515d7a7776af376a84251f4602b38b2134c4dc55bfed",
+      "source_record": "e4731fca22e4167ae0956f96066cfd57",
+      "writeback_record": "94ba3a36e1ab6b8bc3fbbe98d1de35c5"
+    }
+  ]
+}

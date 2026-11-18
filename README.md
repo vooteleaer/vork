@@ -2,7 +2,7 @@
 
 *Technical name `vork` (crate, binary, folder), since `Ø` breaks shells, URLs and package registries.* A serverless, identity-addressed network over WireGuard: Reticulum's ideas on plain IP, fast, with no central servers. Any node can relay for others, and any node is assumed hostile.
 
-> **Status: prototype (milestone M0 of the [roadmap](docs/04-roadmap.md)).** Not for real use. The wire format will change. Tested on localhost and between two machines across a router.
+> **Status: prototype (milestone M1 of the [roadmap](docs/04-roadmap.md)).** Not for real use. The wire format will change. Tested on localhost and between two machines across a router.
 
 ## Principles
 
@@ -131,6 +131,22 @@ ESPHome's WireGuard component has **one peer and IPv4 only**, and it can't accep
 - **Eclipse resistance:** several bootstrap sources, diverse neighbors, long-lived anchors.
 - **Sybil:** proof-of-work stamps on announces.
 - **boringtun** 0.7.1 is used as-is; it needs payloads framed as IP packets. Check its maintenance status against the forks (defguard, nordisk) before relying on it.
+
+## Storage
+
+vØrk storage (formerly [retifs](https://github.com/vooteleaer/retifs)) is the encrypted, replicated data layer: libraries of records and files, kept on your own devices and blind storage nodes. Its code was copied here and renamed (ADR-0015); it still runs on Reticulum through Prns until it moves onto vØrk (roadmap M9). Building `vork-storage-net` and `vork-storage-node` needs the Prns source at `../Prns-0.3.8`.
+
+| Crate | What |
+|---|---|
+| `vork-core` | chunks, CIDs, manifests, records, leases, channels, recovery |
+| `vork-store` | the local slab store |
+| `vork-storage-net` | the network side (fetching, serving; Reticulum for now) |
+| `vork-storage-node` | `vorkd`, the storage daemon, and `vork-storage`, its commands |
+| `libvork` | client of the daemon's local API |
+| `vork-tree`, `vork-fuse`, `vork-cloudfiles`, `vork-haikufs` | a library as a folder: FUSE (`vork-mount`), Windows Explorer, Haiku |
+| `vork-gateway`, `vork-extract`, `vork-card` | libraries as local websites, attribute extraction, identities on a YubiKey |
+
+`vork put FILE`, `vork query LIB …` and the other storage commands are passed to `vork-storage`; `vork help-storage` lists them. `vork status` on its own is the network node's; `vork status READ-CAP` is storage's. Storage documents: [docs/storage](docs/storage/README.md).
 
 ## Documentation
 

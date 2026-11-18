@@ -1,0 +1,32 @@
+#!/bin/sh
+set -e
+# Every user's session starts vorkd, on Reticulum (any shared instance, installed apart).
+if [ "$1" = configure ] && command -v systemctl >/dev/null; then
+    # Older packages brought a prnsd of their own, enabled for everyone.
+    rm -f /etc/systemd/user/default.target.wants/vork-prnsd.service
+    systemctl --global enable vorkd.service >/dev/null 2>&1 || true
+    # An upgrade: the user services already running are restarted on the new
+    # programs (a gateway or mount left on the old one talks to the new
+    # vorkd in the old way). Only those running: try-restart.
+    if [ -n "$2" ] && command -v loginctl >/dev/null; then
+        for u in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $2}'); do
+            systemctl --user --machine="$u@.host" daemon-reload >/dev/null 2>&1 || continue
+            # One by one: a unit not there (one never set up) fails the whole call.
+            for s in vorkd.service vork-gateway.service vork-extractd.service 'vork-mount@*.service'; do
+                systemctl --user --machine="$u@.host" try-restart "$s" >/dev/null 2>&1 || true
+            done
+            if systemctl --user --machine="$u@.host" is-active --quiet vorkd.service 2>/dev/null; then
+                echo "vork: $u's running vork services restarted on the new version"
+            fi
+        done
+    fi
+    cat <<MSG
+vork is installed. It starts with your next login; to start it now, as yourself:
+    systemctl --user daemon-reload
+    systemctl --user start vorkd
+vork needs a Reticulum shared instance on this machine: any Reticulum implementation will do.
+Then: vork ping, vork heard, vork library join ... (see /usr/share/doc/vork/README.Debian).
+On a machine without a desktop session: sudo loginctl enable-linger USER.
+MSG
+fi
+exit 0
