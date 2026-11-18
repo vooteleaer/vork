@@ -8,6 +8,7 @@ mod portmap;
 mod reach;
 #[cfg(windows)]
 mod service;
+mod settings;
 mod state;
 mod stream;
 mod tun;
@@ -201,7 +202,9 @@ pub struct Settings {
 }
 
 pub fn settings(a: RunArgs) -> Result<Settings> {
-    let file = find_config(a.config)?.map(|(_, c)| c).unwrap_or_default();
+    let found = find_config(a.config)?;
+    let config_path = found.as_ref().map(|(p, _)| p.clone());
+    let file = found.map(|(_, c)| c).unwrap_or_default();
     let state = a.state.or(file.state);
     let key = match a.key.or(file.key) {
         Some(k) => k,
@@ -233,6 +236,7 @@ pub fn settings(a: RunArgs) -> Result<Settings> {
         map_port: !a.no_map_port && (a.map_port || file.map_port.unwrap_or(true)),
         lan: !(a.no_lan || file.lan == Some(false)),
         tun: file.tun.clone().filter(|t| !t.is_empty()),
+        config_path,
         name: file.name.clone().filter(|n| !n.trim().is_empty()).unwrap_or_else(node::machine_name),
         gateway: a.gateway.or(file.gateway),
         paths: a.paths.or(file.paths).unwrap_or(2).max(1),

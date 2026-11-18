@@ -294,6 +294,8 @@ pub struct Config {
     pub tun: Option<String>,
     /// This node's name, in its announce.
     pub name: String,
+    /// The `vork.toml` it was started with: changed by control commands.
+    pub config_path: Option<std::path::PathBuf>,
     /// The router for PCP/NAT-PMP; guessed as x.y.z.1 if not given.
     pub gateway: Option<std::net::Ipv4Addr>,
     /// How many paths (through different first hops) a session opens.
@@ -391,6 +393,8 @@ pub struct Node {
     /// The session IP last came in on from an identity: answers go back on it,
     /// rather than over a second session opened the other way.
     ip_peer: HashMap<Hash, u32>,
+    /// Nodes found on the local network (mDNS), by WireGuard key: when.
+    lan_seen: HashMap<[u8; 32], Instant>,
 }
 
 /// Socket buffers big enough to absorb bursts (the Linux default, ~200 KB,
@@ -566,6 +570,7 @@ impl Node {
             ip_identified: HashSet::new(),
             ip_unknown: HashMap::new(),
             ip_peer: HashMap::new(),
+            lan_seen: HashMap::new(),
         };
         for name in node.cfg.destinations.clone() {
             let me = node.me_arc.clone();
@@ -829,8 +834,8 @@ impl Node {
                 Some(ev) = async { match api_rx.as_mut() { Some(rx) => rx.recv().await, None => std::future::pending().await } } => {
                     self.on_api(ev);
                 }
-                Some((req, reply)) = async { match ctrl_rx.as_mut() { Some(rx) => rx.recv().await, None => std::future::pending().await } } => {
-                    let _ = reply.send(self.on_control(&req));
+                Some((req, owner, reply)) = async { match ctrl_rx.as_mut() { Some(rx) => rx.recv().await, None => std::future::pending().await } } => {
+                    let _ = reply.send(self.on_control(&req, owner));
                 }
                 _ = async { match stop.as_mut() { Some(s) => { let _ = s.changed().await; } None => std::future::pending().await } } => {
                     let _ = stop_tx.send(true);
@@ -1489,6 +1494,7 @@ impl Node {
                     "direct": direct || neighbor,
                     "lite": best.ann.flags & FLAG_RELAY == 0,
                     "device": self.cfg.devices.contains(dest),
+                    "on_lan": self.lan_seen.get(&best.ann.x_pub).is_some_and(|t| t.elapsed() < ROUTE_TTL),
                 }))
             })
             .collect();
@@ -2336,6 +2342,7 @@ impl Node {
         if key == *self.me.x_pub().as_bytes() {
             return;
         }
+        self.lan_seen.insert(key, Instant::now());
         // The addresses our socket can use; loopback only if it's all there is
         // (another node on this machine).
         let v4 = self.cfg.listen.is_ipv4();
@@ -2482,10 +2489,18 @@ impl Node {
         }
     }
 
-    fn on_control(&mut self, request: &str) -> String {
+    fn on_control(&mut self, request: &str, owner: bool) -> String {
         let v = serde_json::from_str::<serde_json::Value>(request).unwrap_or_default();
-        match v.get("cmd").and_then(|c| c.as_str()) {
+        let cmd = v.get("cmd").and_then(|c| c.as_str()).unwrap_or_default();
+        if !matches!(cmd, "status") && !owner {
+            return json!({ "error": "only the node's own user (or root) may change it" }).to_string();
+        }
+        match Some(cmd) {
             Some("status") => self.status_json().to_string(),
+            Some("set" | "peer_add" | "peer_remove" | "device_add" | "device_remove") => match self.change_settings(cmd, &v) {
+                Ok(restart) => json!({ "ok": true, "restart": restart }).to_string(),
+                Err(e) => json!({ "error": e }).to_string(),
+            },
             // Connect to a neighbor now: "HOST:PORT" (its key asked for) or "HOST:PORT@KEY".
             Some("peer") => {
                 let Some(text) = v.get("addr").and_then(|a| a.as_str()) else { return json!({ "error": "peer needs addr" }).to_string() };
@@ -2506,6 +2521,102 @@ impl Node {
             }
             _ => json!({ "error": "unknown command; try {\"cmd\":\"status\"}" }).to_string(),
         }
+    }
+
+    /// What the network app shows and changes: from `vork.toml` and as running.
+    fn settings_json(&self) -> serde_json::Value {
+        let text = self.cfg.config_path.as_ref().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
+        json!({
+            "file": self.cfg.config_path.as_ref().map(|p| p.display().to_string()),
+            "peers": crate::settings::list(&text, "peers"),
+            "peers_off": crate::settings::list(&text, "peers_off"),
+            "devices": self.cfg.devices.iter().map(hex::encode).collect::<Vec<_>>(),
+            "direct": self.cfg.direct,
+            "lan": self.cfg.lan,
+            "map_port": self.cfg.map_port,
+            "announce": self.cfg.announce,
+            "port": self.cfg.listen.port(),
+        })
+    }
+
+    /// Changes `vork.toml` and what can be applied at once. Ok(true): the rest
+    /// takes effect at the next start.
+    fn change_settings(&mut self, cmd: &str, v: &serde_json::Value) -> Result<bool, String> {
+        let path = self.cfg.config_path.clone().ok_or("this node runs without a configuration file")?;
+        let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let arg = |k: &str| v.get(k).and_then(|x| x.as_str()).map(str::trim).filter(|s| !s.is_empty()).ok_or(format!("{cmd} needs {k}"));
+        let mut restart = false;
+        let new = match cmd {
+            "set" => {
+                let key = arg("key")?;
+                let value = v.get("value").ok_or("set needs value")?;
+                match key {
+                    "name" => {
+                        let name = value.as_str().map(str::trim).filter(|s| !s.is_empty()).ok_or("a name is text")?;
+                        let name: String = name.chars().take(64).collect();
+                        self.cfg.name = name.clone();
+                        self.announce_self();
+                        crate::settings::set_value(&text, "name", &format!("\"{}\"", crate::settings::escape(&name)))
+                    }
+                    "direct" => {
+                        let on = value.as_bool().ok_or("direct is true or false")?;
+                        self.cfg.direct = on;
+                        crate::settings::set_value(&text, "direct", &on.to_string())
+                    }
+                    "lan" | "map_port" | "announce" => {
+                        let on = value.as_bool().ok_or(format!("{key} is true or false"))?;
+                        restart = true;
+                        crate::settings::set_value(&text, key, &on.to_string())
+                    }
+                    _ => return Err(format!("{key} can't be set this way")),
+                }
+            }
+            "peer_add" => {
+                let addr = arg("addr")?;
+                let (sock, key) = parse_peer_text(addr)?;
+                match key {
+                    Some(k) if !self.neighbor_by_key.contains_key(&k) => {
+                        let id = self.add_neighbor(k, Some(sock), Some(RETRY_MIN));
+                        self.initiate(id);
+                    }
+                    Some(_) => {}
+                    None => self.ask_key(sock),
+                }
+                let mut peers = crate::settings::list(&text, "peers");
+                if !peers.iter().any(|p| p == addr) {
+                    peers.push(addr.to_string());
+                }
+                crate::settings::set_list(&text, "peers", &peers)
+            }
+            "peer_remove" => {
+                let addr = arg("addr")?;
+                let peers: Vec<String> = crate::settings::list(&text, "peers").into_iter().filter(|p| p != addr).collect();
+                let off: Vec<String> = crate::settings::list(&text, "peers_off").into_iter().filter(|p| p != addr).collect();
+                restart = true; // a neighbor already up stays until the next start
+                crate::settings::set_list(&crate::settings::set_list(&text, "peers", &peers), "peers_off", &off)
+            }
+            "device_add" | "device_remove" => {
+                let address = arg("address")?.to_ascii_lowercase();
+                let hash: Hash = hex::decode(&address).ok().and_then(|b| b.try_into().ok()).ok_or("a device is a node address (32 hex digits)")?;
+                let mut devices = crate::settings::list(&text, "devices");
+                devices.retain(|d| !d.eq_ignore_ascii_case(&address));
+                self.cfg.devices.retain(|d| *d != hash);
+                if cmd == "device_add" {
+                    devices.push(address.clone());
+                    self.cfg.devices.push(hash);
+                }
+                for s in self.sessions.values_mut() {
+                    s.direct_considered = false;
+                }
+                crate::settings::set_list(&text, "devices", &devices)
+            }
+            _ => unreachable!(),
+        };
+        // Through a temporary file: a crash leaves the old file or the new one.
+        let tmp = path.with_extension("toml.new");
+        std::fs::write(&tmp, &new).and_then(|()| std::fs::rename(&tmp, &path)).map_err(|e| format!("{}: {e}", path.display()))?;
+        log(format!("settings changed ({cmd})"));
+        Ok(restart)
     }
 
     // ---- neighbors known by address only ------------------------------------------
@@ -2611,6 +2722,7 @@ impl Node {
             "relay": { "paths": self.switch.len() / 2, "packets": self.relayed },
             "name": self.cfg.name,
             "ip": crate::tun::overlay(&self.my_hash).to_string(),
+            "settings": self.settings_json(),
             // Every node known by its announce, as Tailscale lists a tailnet's machines.
             "nodes": self.known_nodes(),
             // The interface for ordinary programs (M2), if there is one: this node's address on it.

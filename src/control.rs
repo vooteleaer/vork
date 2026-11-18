@@ -9,14 +9,26 @@ use anyhow::{Context, Result};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot};
 
-pub type Request = (String, oneshot::Sender<String>);
+/// A request line, whether it may change the node (its owner or root asked),
+/// and where the answer goes.
+pub type Request = (String, bool, oneshot::Sender<String>);
 
-async fn serve_conn<S: AsyncRead + AsyncWrite + Unpin>(conn: S, to_node: mpsc::Sender<Request>) {
+/// Whether the other end of a Unix socket is the node's own user or root:
+/// they may change settings; anyone else may only look.
+#[cfg(unix)]
+fn is_owner(conn: &tokio::net::UnixStream) -> bool {
+    match conn.peer_cred() {
+        Ok(c) => c.uid() == 0 || c.uid() == unsafe { libc::geteuid() },
+        Err(_) => false,
+    }
+}
+
+async fn serve_conn<S: AsyncRead + AsyncWrite + Unpin>(conn: S, owner: bool, to_node: mpsc::Sender<Request>) {
     let (r, mut w) = tokio::io::split(conn);
     let mut lines = BufReader::new(r).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         let (tx, rx) = oneshot::channel();
-        if to_node.send((line, tx)).await.is_err() {
+        if to_node.send((line, owner, tx)).await.is_err() {
             return;
         }
         let Ok(mut answer) = rx.await else { return };
@@ -43,7 +55,8 @@ pub fn listen(endpoint: &str) -> Result<mpsc::Receiver<Request>> {
     let (tx, rx) = mpsc::channel(16);
     tokio::spawn(async move {
         while let Ok((conn, _)) = listener.accept().await {
-            tokio::spawn(serve_conn(conn, tx.clone()));
+            let owner = is_owner(&conn);
+            tokio::spawn(serve_conn(conn, owner, tx.clone()));
         }
     });
     Ok(rx)
@@ -65,7 +78,8 @@ pub fn listen(endpoint: &str) -> Result<mpsc::Receiver<Request>> {
                 Ok(s) => s,
                 Err(_) => return,
             };
-            tokio::spawn(serve_conn(conn, tx.clone()));
+            // The pipe's default ACL: administrators, SYSTEM and its creator.
+            tokio::spawn(serve_conn(conn, true, tx.clone()));
         }
     });
     Ok(rx)
