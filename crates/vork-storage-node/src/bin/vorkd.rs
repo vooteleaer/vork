@@ -1646,6 +1646,20 @@ async fn update_holders(d: &Daemon, ns: &str) -> Result<(), String> {
     transaction(d, ns, vec![step]).await.map(|_| ())
 }
 
+/// The owner's other devices are the keyring's members (ADR-0033): their
+/// nodes go to the vØrk node, which gives sessions with them direct links
+/// (vØrk ADR-0011).
+fn tell_devices(d: &Daemon) {
+    let Ok(merged) = materialize(d, KEYRING) else { return };
+    let mut nodes: Vec<PeerId> = merged.nodes.values().copied().filter(|n| *n != d.node_id).collect();
+    nodes.sort();
+    nodes.dedup();
+    let list = nodes.into_iter().map(vork_storage_net::node::DestinationHash).collect();
+    if let Err(e) = d.transport.net.set_devices(list) {
+        eprintln!("devices: {e}");
+    }
+}
+
 /// Every library: a node that may write keeps its holders record up to
 /// date; a reader that keeps some of it says so (again daily); and the
 /// readers named become nodes to sync with.
@@ -1653,6 +1667,7 @@ async fn holders_keeper(d: Arc<Daemon>) {
     tokio::time::sleep(Duration::from_secs(60)).await;
     let mut said: HashMap<String, u64> = HashMap::new();
     loop {
+        tell_devices(&d);
         for ns in visible_namespaces(&d).unwrap_or_default() {
             if ns.starts_with("ch-") {
                 continue;

@@ -56,6 +56,10 @@ pub enum ToNode {
     Respond { token: u64, status: u8, body: Vec<u8> },
     /// Every announce the node hears is passed on as `Heard`.
     Subscribe,
+    /// The owner's other devices, as destinations or identities: sessions
+    /// with them get direct links (ADR-0011). Replaces what this client said
+    /// before; forgotten when it disconnects.
+    Devices { devices: Vec<Hash> },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -167,6 +171,13 @@ impl ToNode {
             ToNode::Close { session } => w.u8(9).u32(*session),
             ToNode::Respond { token, status, body } => w.u8(10).u64(*token).u8(*status).raw(body),
             ToNode::Subscribe => w.u8(11),
+            ToNode::Devices { devices } => {
+                w.u8(12);
+                for d in devices {
+                    w.raw(d);
+                }
+                &mut w
+            }
         };
         w.0
     }
@@ -185,6 +196,7 @@ impl ToNode {
             9 => ToNode::Close { session: r.u32()? },
             10 => ToNode::Respond { token: r.u64()?, status: r.u8()?, body: r.rest() },
             11 => ToNode::Subscribe,
+            12 => ToNode::Devices { devices: r.rest().chunks_exact(16).map(|c| c.try_into().unwrap()).collect() },
             k => return Err(bad(k)),
         })
     }
@@ -480,6 +492,11 @@ impl Client {
         self.send(ToNode::Subscribe)
     }
 
+    /// Tells the node the owner's other devices (destinations or identities).
+    pub fn devices(&self, devices: Vec<Hash>) -> io::Result<()> {
+        self.send(ToNode::Devices { devices })
+    }
+
     pub async fn recall(&self, dest: Hash) -> io::Result<Option<Known>> {
         match self.ask(|req| ToNode::Recall { req, dest }).await? {
             FromNode::Known { known, .. } => Ok(known),
@@ -543,6 +560,8 @@ mod tests {
             ToNode::Close { session: 4 },
             ToNode::Respond { token: 99, status: 0, body: vec![1] },
             ToNode::Subscribe,
+            ToNode::Devices { devices: vec![[1; 16], [2; 16]] },
+            ToNode::Devices { devices: vec![] },
         ];
         for f in to {
             assert_eq!(ToNode::decode(&f.encode()).unwrap(), f);

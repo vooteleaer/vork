@@ -197,6 +197,8 @@ struct LocalDest {
 struct ApiClient {
     tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     subscribed: bool,
+    /// The owner's other devices it named (destinations or identities).
+    devices: Vec<Hash>,
 }
 
 impl Session {
@@ -1350,8 +1352,16 @@ impl Node {
             return true;
         }
         let Some(s) = self.sessions.get(&sid) else { return false };
-        let who = s.peer_identity.or_else(|| s.peer_hash.and_then(|d| self.dest_identity(&d).or(Some(d))));
-        who.is_some_and(|w| self.cfg.devices.contains(&w))
+        // Named in the config (identities), or by an application (its
+        // destinations or identities): storage knows the owner's devices.
+        let named = |h: &Hash| self.cfg.devices.contains(h) || self.clients.values().any(|c| c.devices.contains(h));
+        if s.peer_hash.is_some_and(|d| named(&d)) {
+            return true;
+        }
+        let who = s.peer_identity.or_else(|| s.peer_hash.and_then(|d| self.dest_identity(&d)));
+        let Some(who) = who else { return false };
+        named(&who)
+            || self.clients.values().flat_map(|c| c.devices.iter()).any(|d| self.dest_identity(d) == Some(who))
     }
 
     fn dest_identity(&self, dest: &Hash) -> Option<Hash> {
@@ -1835,7 +1845,7 @@ impl Node {
         use vork_api::{FromNode, ToNode};
         match ev {
             crate::api::Event::Connected { client, tx } => {
-                self.clients.insert(client, ApiClient { tx, subscribed: false });
+                self.clients.insert(client, ApiClient { tx, subscribed: false, devices: Vec::new() });
             }
             crate::api::Event::Gone { client } => {
                 self.clients.remove(&client);
@@ -1900,6 +1910,15 @@ impl Node {
                 ToNode::Subscribe => {
                     if let Some(c) = self.clients.get_mut(&client) {
                         c.subscribed = true;
+                    }
+                }
+                ToNode::Devices { devices } => {
+                    if let Some(c) = self.clients.get_mut(&client) {
+                        c.devices = devices;
+                    }
+                    // Sessions already open get another look.
+                    for s in self.sessions.values_mut() {
+                        s.direct_considered = false;
                     }
                 }
             },

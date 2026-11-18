@@ -27,6 +27,7 @@ Application → node:
 | 9 | `CLOSE session[4]` | — |
 | 10 | `RESPOND token[8] status[1] body` — answer an `INCOMING` | — |
 | 11 | `SUBSCRIBE` — pass on every announce heard | `HEARD`s |
+| 12 | `DEVICES` `hash[16]…` — the owner's other devices (destinations or identities); sessions with them get direct links (ADR-0011). Replaces the client's earlier list; dropped when it disconnects | — |
 
 Node → application:
 
