@@ -476,3 +476,38 @@ mod sim {
         }
     }
 }
+
+#[cfg(test)]
+mod speed {
+    use super::*;
+
+    /// CPU cost of the stream alone: 64 MiB through two streams, no loss.
+    #[test]
+    #[ignore]
+    fn stream_cpu() {
+        let (mut a, mut b) = (Stream::default(), Stream::default());
+        let msg = vec![1u8; 460_000];
+        let t = std::time::Instant::now();
+        let mut now = Instant::now();
+        let mut got = 0usize;
+        for _ in 0..146 {
+            a.send(&msg);
+        }
+        while got < 146 {
+            now += Duration::from_micros(200);
+            for o in a.poll(now) {
+                if let Out::Seg { seq, data } = o {
+                    b.on_seg(seq, &data, now);
+                }
+            }
+            for o in b.poll(now) {
+                if let Out::Ack { next, ranges } = o {
+                    a.on_ack(next, &ranges, now);
+                }
+            }
+            got += b.messages().unwrap().len();
+        }
+        let s = t.elapsed().as_secs_f64();
+        println!("64 MiB through the stream in {s:.2} s: {:.0} Mbit/s of CPU", 146.0 * 460_000.0 * 8.0 / s / 1e6);
+    }
+}

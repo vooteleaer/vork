@@ -100,6 +100,19 @@ A Windows PC (10.10.10.238) and cafa-cloud (Debian 13, Xeon E5-2650 from 2012, a
 
 The ping round trip was 2–4 ms. The ceiling, **about 450–500 Mbit/s**, is cafa-cloud's receiving side: an old CPU where Meltdown/MDS mitigations make every system call expensive, and vØrk makes one or more per packet. The PC sent up to ~830 Mbit/s. Before 4 MB socket buffers (`SO_RCVBUFFORCE` as root) and a larger burst allowance for Windows' ~15 ms timer, the same link lost 10% at 100 Mbit/s and topped out at ~130.
 
+### Storage: vØrk against Reticulum (2026-11-18)
+
+The same 200 MiB file (same read-cap: the storage format is the same) fetched by a fresh store on the PC from a store on cafa-cloud, both sides throwaway stores:
+
+| Network | Time | Throughput |
+|---|---|---|
+| Reticulum: retifs over Prns (`prnsd` on both machines) | 54.7 s | 30.7 Mbit/s |
+| vØrk, 4 links (the default) | 44.5–47.9 s | 35–38 Mbit/s |
+| vØrk, 16 links | 22.2–24.6 s | 68–76 Mbit/s |
+| vØrk stream alone, 32 MiB requests on the same link | 1.3–1.4 s each | ~200 Mbit/s |
+
+Storage on vØrk is limited by storage's request pattern (about 460 KB per request, a few in flight) and by CPU on cafa-cloud (its vØrk node near 140 %, `vorkd` near 110 % during the 16-link run), not by the link. Both are M6 work.
+
 `scripts/bench-local.sh` runs a topology on one machine (several nodes on 127.0.0.1) to measure its CPU ceiling.
 
 ## Lite nodes (ESP32, ESPHome)

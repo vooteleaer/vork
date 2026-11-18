@@ -68,6 +68,7 @@ Links with fresh-handshake liveness, signed announces, path labels swapped per h
 - **Goal:** the CPU stops being the limit on ordinary hardware.
 - **Scope:** batched socket calls (`sendmmsg`/`recvmmsg`, UDP GSO/GRO on Linux), buffer reuse without per-packet allocation, several threads (sharded by neighbor); the bench as a regression test.
 - **Done when:** at least 2× the M0 numbers on cafa-cloud and on the 2-core VM, measured with `scripts/bench-local.sh` and between machines.
+- **Storage (measured 2026-11-18, README):** 200 MiB PC ← cafa-cloud took 45 s over vØrk (4 links) against 55 s over Reticulum; 16 links halve it; the stream alone does ~200 Mbit/s. Next: more requests in flight by default, fewer copies between storage and the node (the local API carries every byte twice), and why cafa-cloud's node uses 1.4 cores at 75 Mbit/s.
 - **Depends on:** nothing (can run alongside).
 
 ## M7 Identities

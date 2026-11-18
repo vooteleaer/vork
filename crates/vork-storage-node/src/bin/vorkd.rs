@@ -2342,9 +2342,41 @@ async fn serve(store: Arc<SlabStore>, identity: node::IdentitySecret, endpoint: 
     println!("attached to the vØrk node <{}> at {api_endpoint}", hex(&net.node_address()));
     // What the node passes on: announces heard, requests to our destinations,
     // its return after a restart. Answered on a thread of its own.
-    let ev_net = net.clone();
-    let ev_shared = shared.clone();
     let ev_daemon = daemon.clone();
+    // Requests are answered by a few threads at once: a `get` reads and
+    // proves dozens of chunks, and one at a time left the link idle.
+    let (work_tx, work_rx) = std::sync::mpsc::channel::<Incoming>();
+    let work_rx = Arc::new(Mutex::new(work_rx));
+    for i in 0..SERVE_THREADS {
+        let (rx, n, s) = (work_rx.clone(), net.clone(), shared.clone());
+        std::thread::Builder::new()
+            .name(format!("serve {i}"))
+            .stack_size(16 << 20)
+            .spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
+                loop {
+                    let Ok(req) = rx.lock().unwrap().recv() else { return };
+                    rt.block_on(async {
+                        let (n, s) = (&n, &s);
+                        let served = dispatch::<_, Get>(n, s, &req).await
+                            || dispatch::<_, Have>(n, s, &req).await
+                            || dispatch::<_, LeaseEndpoint>(n, s, &req).await
+                            || dispatch::<_, ReceiptEndpoint>(n, s, &req).await
+                            || dispatch::<_, ProveEndpoint>(n, s, &req).await
+                            || dispatch::<_, PutEndpoint>(n, s, &req).await
+                            || dispatch::<_, HeadEndpoint>(n, s, &req).await
+                            || dispatch::<_, ApiEndpoint>(n, s, &req).await
+                            || dispatch::<_, QueryEndpoint>(n, s, &req).await
+                            || dispatch::<_, InviteEndpoint>(n, s, &req).await
+                            || dispatch::<_, ReaderEndpoint>(n, s, &req).await;
+                        if !served {
+                            n.respond(req.token, vork_api::STATUS_NO_PATH, Vec::new());
+                        }
+                    });
+                }
+            })
+            .expect("serve thread");
+    }
     std::thread::Builder::new()
         .name("network events".into())
         .stack_size(16 << 20)
@@ -2369,22 +2401,7 @@ async fn serve(store: Arc<SlabStore>, identity: node::IdentitySecret, endpoint: 
                             }
                         }
                         NetEvent::Incoming { token, session, nonce, requester, path, body, .. } => {
-                            let req = Incoming { token, session, nonce, requester, path, body };
-                            let (n, s) = (&ev_net, &ev_shared);
-                            let served = dispatch::<_, Get>(n, s, &req).await
-                                || dispatch::<_, Have>(n, s, &req).await
-                                || dispatch::<_, LeaseEndpoint>(n, s, &req).await
-                                || dispatch::<_, ReceiptEndpoint>(n, s, &req).await
-                                || dispatch::<_, ProveEndpoint>(n, s, &req).await
-                                || dispatch::<_, PutEndpoint>(n, s, &req).await
-                                || dispatch::<_, HeadEndpoint>(n, s, &req).await
-                                || dispatch::<_, ApiEndpoint>(n, s, &req).await
-                                || dispatch::<_, QueryEndpoint>(n, s, &req).await
-                                || dispatch::<_, InviteEndpoint>(n, s, &req).await
-                                || dispatch::<_, ReaderEndpoint>(n, s, &req).await;
-                            if !served {
-                                n.respond(req.token, vork_api::STATUS_NO_PATH, Vec::new());
-                            }
+                            let _ = work_tx.send(Incoming { token, session, nonce, requester, path, body });
                         }
                         NetEvent::Reconnected => {
                             // The node restarted: sessions over it are gone; be found again.
@@ -6014,6 +6031,9 @@ async fn fetch_spread(d: &Daemon, root: &Cid, missing: &[(Cid, vork_core::Seed)]
     Ok(progressed)
 }
 
+
+/// Threads answering requests from other nodes.
+const SERVE_THREADS: usize = 8;
 
 /// Wakes `crash_reports` (a new report).
 static CRASH_WAKE: Notify = Notify::const_new();
