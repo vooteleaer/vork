@@ -1,5 +1,6 @@
 mod identity;
 mod node;
+mod portmap;
 mod wire;
 
 use anyhow::{Context, Result, bail};
@@ -8,7 +9,7 @@ use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(about = "vork: a serverless, identity-addressed network over WireGuard (phase-1 prototype)")]
+#[command(name = "vork", about = "vØrk: a serverless, identity-addressed network over WireGuard (prototype)")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -47,6 +48,12 @@ enum Cmd {
         /// Offer and accept direct links (reveals this node's addresses to the peer).
         #[arg(long)]
         direct: bool,
+        /// Ask the router to open the port (UPnP, then PCP/NAT-PMP), like torrent clients do.
+        #[arg(long)]
+        map_port: bool,
+        /// Router address for PCP/NAT-PMP (default: x.y.z.1 of this machine's address).
+        #[arg(long)]
+        gateway: Option<std::net::Ipv4Addr>,
     },
 }
 
@@ -74,14 +81,14 @@ async fn main() -> Result<()> {
             print_identity(&id);
         }
         Cmd::Show { key } => print_identity(&identity::Identity::load(&key)?),
-        Cmd::Run { key, listen, peers, no_announce, ping, lite, direct } => {
+        Cmd::Run { key, listen, peers, no_announce, ping, lite, direct, map_port, gateway } => {
             let me = identity::Identity::load(&key)?;
             let peers = peers.iter().map(|p| parse_peer(p)).collect::<Result<Vec<_>>>()?;
             let ping = match ping {
                 Some(h) => Some(hex::decode(&h)?.try_into().map_err(|_| anyhow::anyhow!("address must be 16 bytes"))?),
                 None => None,
             };
-            let cfg = node::Config { listen, peers, announce: !no_announce, ping, lite, direct };
+            let cfg = node::Config { listen, peers, announce: !no_announce, ping, lite, direct, map_port, gateway };
             node::Node::new(me, cfg).await?.run().await?;
         }
     }

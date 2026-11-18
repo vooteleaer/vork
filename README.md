@@ -1,6 +1,6 @@
-# vork
+# vØrk
 
-*Working name.* A serverless, identity-addressed network over WireGuard: Reticulum's ideas on plain IP, fast, with no central servers. Any node can relay for others, and any node is assumed hostile.
+*Technical name `vork` (crate, binary, folder), since `Ø` breaks shells, URLs and package registries.* A serverless, identity-addressed network over WireGuard: Reticulum's ideas on plain IP, fast, with no central servers. Any node can relay for others, and any node is assumed hostile.
 
 > **Status: prototype (phase 1 done, phase 2 in progress).** Not for real use. The wire format will change. Tested only on one machine so far (localhost).
 
@@ -53,7 +53,7 @@ $V run --key c.key --listen 0.0.0.0:51822 --peer HOST:51820@<A wg key> \
        --no-announce --ping <B address>                                 # laptop, anonymous
 ```
 
-Options: `--lite` (don't relay, small devices), `--direct` (try a direct link to the far end of a session; reveals your address to it), `--no-announce` (reach others without being findable).
+Options: `--lite` (don't relay, small devices), `--direct` (try a direct link to the far end of a session; reveals your address to it), `--no-announce` (reach others without being findable), `--map-port` (ask the router to open the port, like torrent clients: UPnP, then PCP/NAT-PMP; `--gateway <ip>` if the router isn't x.y.z.1). Stop with Ctrl-C, which also removes the router mapping.
 
 ### Testing on real machines
 
@@ -88,6 +88,7 @@ ESPHome's WireGuard component has **one peer and IPv4 only**, and it can't accep
 - **A responder can't start a handshake to an anonymous initiator** (it has no address to route to). The initiator rekeys, so it works in practice; path labels like RNS link IDs would fix it properly.
 - **Index collisions:** relays switch on 24-bit random WireGuard indices. Collisions are rare but possible; the switch key could include a short path label.
 - **Route choice** still uses the advertised hop count. Next: score paths by measured delivery (otherwise a hostile node can attract traffic as a sinkhole).
+- **Router port mapping** (`--map-port`) is untested against a real router. It detects a second NAT beyond the router (CGNAT) and gives up there, but it doesn't yet ask a neighbor to confirm the mapped address is reachable from outside.
 - **Direct links are untested through real NATs.** Candidates are the addresses neighbors observe plus the listening address if it is a specific one; a node listening on `0.0.0.0` doesn't yet offer its LAN addresses, and observed addresses aren't yet cross-checked by several neighbors (a hostile neighbor could report a wrong one).
 - **Eclipse resistance:** several bootstrap sources, diverse neighbors, long-lived anchors.
 - **Sybil:** proof-of-work stamps on announces.
@@ -96,7 +97,7 @@ ESPHome's WireGuard component has **one peer and IPv4 only**, and it can't accep
 ## Phases
 
 1. **Links, gossip, hash routing, forwarding** (this).
-2. NAT: addresses observed by peers, hole punching, path requests, Lite profile. *(First version done; needs testing on real networks.)*
+2. NAT: addresses observed by peers, hole punching, router port mapping, path requests, Lite profile. *(First version done; needs testing on real networks.)*
 3. Overlay IPv6 as a compatibility view (TUN): SSH, SMB and browsers by identity.
 4. retifs as the storage layer (its `Transport` trait over this network).
 5. YubiKey identities, device delegation, islands.

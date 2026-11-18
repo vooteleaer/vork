@@ -66,6 +66,10 @@ pub struct Config {
     /// Offer and accept direct links with the far end of a session. Reveals
     /// this node's addresses to that peer, so it's opt-in.
     pub direct: bool,
+    /// Ask the router to open our port (UPnP, then PCP/NAT-PMP).
+    pub map_port: bool,
+    /// The router for PCP/NAT-PMP; guessed as x.y.z.1 if not given.
+    pub gateway: Option<std::net::Ipv4Addr>,
 }
 
 enum Out {
@@ -99,6 +103,8 @@ pub struct Node {
     asked: HashMap<Hash, Instant>,
     /// Sessions in which our direct-link candidates were already sent.
     punched: HashSet<u32>,
+    /// Our outside address from a router port mapping.
+    mapped: Option<SocketAddr>,
 }
 
 fn rand_u64() -> u64 {
@@ -182,6 +188,7 @@ impl Node {
             seen_req: HashSet::new(),
             asked: HashMap::new(),
             punched: HashSet::new(),
+            mapped: None,
         })
     }
 
@@ -230,6 +237,14 @@ impl Node {
             let id = self.add_neighbor(key, Some(addr), true);
             self.initiate(id);
         }
+        let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+        let mut mapped_rx = None;
+        let mut mapper = None;
+        if self.cfg.map_port {
+            let (tx, rx) = tokio::sync::mpsc::channel(1);
+            mapped_rx = Some(rx);
+            mapper = Some(tokio::spawn(crate::portmap::run(self.cfg.listen, self.cfg.gateway, tx, stop_rx)));
+        }
         let mut buf = vec![0u8; BUF];
         let mut tick = tokio::time::interval(Duration::from_millis(100));
         let mut last_announce = Instant::now() - ANNOUNCE_EVERY;
@@ -239,9 +254,25 @@ impl Node {
         loop {
             tokio::select! {
                 r = self.sock.recv_from(&mut buf) => {
-                    let (n, addr) = r?;
-                    let data = buf[..n].to_vec();
-                    self.on_datagram(addr, &data);
+                    match r {
+                        Ok((n, addr)) => {
+                            let data = buf[..n].to_vec();
+                            self.on_datagram(addr, &data);
+                        }
+                        // e.g. Windows reports an ICMP "port unreachable" from an earlier send this way
+                        Err(e) => log(format!("receive: {e}")),
+                    }
+                }
+                Some(ext) = async { match mapped_rx.as_mut() { Some(rx) => rx.recv().await, None => std::future::pending().await } } => {
+                    self.mapped = Some(ext);
+                }
+                _ = tokio::signal::ctrl_c() => {
+                    let _ = stop_tx.send(true);
+                    if let Some(m) = mapper {
+                        let _ = tokio::time::timeout(Duration::from_secs(3), m).await;
+                    }
+                    log("stopped");
+                    return Ok(());
                 }
                 _ = tick.tick() => {
                     self.on_timers();
@@ -749,10 +780,12 @@ impl Node {
 
     // ---- direct links ----------------------------------------------------------
 
-    /// Where others might reach us: the addresses our neighbors see us at, and
-    /// our own listening address if it is a specific one (a LAN address).
+    /// Where others might reach us: the addresses our neighbors see us at, the
+    /// router mapping if we have one, and our own listening address if it is a
+    /// specific one (a LAN address).
     fn candidates(&self) -> Vec<SocketAddr> {
         let mut c: Vec<SocketAddr> = self.neighbors.values().filter_map(|n| n.observed_me).collect();
+        c.extend(self.mapped);
         if !self.cfg.listen.ip().is_unspecified() {
             c.push(self.cfg.listen);
         }
