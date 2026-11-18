@@ -58,6 +58,7 @@ class VorkVpn : VpnService() {
             try {
                 val n = JSONObject(Core.network())
                 val address = n.optString("address")
+                val before = state
                 when {
                     !n.optBoolean("running") || address.length != 32 -> state = "waiting for the vØrk node"
                     else -> {
@@ -73,15 +74,22 @@ class VorkVpn : VpnService() {
                         }
                     }
                 }
+                if (state != before) say(state ?: "Apps reach vØrk addresses now")
                 Thread.sleep(if (state == null) 5_000 else 2_000)
             } catch (e: InterruptedException) {
                 return
             } catch (e: Exception) {
                 state = "error: ${e.message ?: e.javaClass.simpleName}"
                 android.util.Log.w("vork", "vpn", e)
+                say("vØrk interface: ${state}")
                 try { Thread.sleep(10_000) } catch (stop: InterruptedException) { return }
             }
         }
+    }
+
+    /** Says it on screen too (the service has no window of its own). */
+    private fun say(text: String) {
+        android.os.Handler(mainLooper).post { android.widget.Toast.makeText(applicationContext, "vØrk: $text", android.widget.Toast.LENGTH_SHORT).show() }
     }
 
     private fun establish(address: String): ParcelFileDescriptor? {
