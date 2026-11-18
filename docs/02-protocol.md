@@ -75,6 +75,10 @@ A node that receives a `HELLO` without having sent its own to that neighbor with
 
 "I dialed these cold and they answered" (ADR-0023): a node sends its own proofs on link up and every 10 minutes. A dial is cold when nothing came from that neighbor for 150 s; the handshake answer must come from the dialed address within 10 s. Only relaying nodes are reported; a private or shared (100.64/10) address only to a neighbor reached at the same kind of address. The receiver ignores the entry about the sender, notes the entry about itself (others reach it), and keeps the rest as leads. With fewer than 2 relaying neighbors up, a node dials the best lead every 30 s; one not up within 20 s isn't tried again for 10 minutes. Leads are kept in `reachable.json`.
 
+### Local network (mDNS)
+
+Not a message: every node registers the DNS-SD service `_vork._udp.local.` (instance: the first 8 bytes of its address in hex; port: its listening port; TXT `k` = its WireGuard key in hex, `v` = `0`) and browses for the others. One handshake initiation goes to every address a found node registered (IPv6 link-local skipped; loopback only if nothing else); the link takes the address the answer came from. A found node that doesn't come up within 20 s is let go and found again later.
+
 ### ANNOUNCE
 
 - An announce is for one **destination** of an identity: the identity itself (`name_hash` all zero; destination = its address) or a named service (destination = `SHA-256(name_hash ‖ address)[0..16]`, `name_hash = SHA-256(name)[0..10]`). Names themselves never travel. The address is computed from `x_pub ‖ ed_pub`; the signature is checked over `vork/v0/announce ‖ destination ‖ x_pub ‖ name_hash ‖ seq ‖ flags ‖ app_data`.

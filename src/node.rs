@@ -249,6 +249,8 @@ pub struct Config {
     pub direct: bool,
     /// Ask the router to open our port (UPnP, then PCP/NAT-PMP).
     pub map_port: bool,
+    /// Find other nodes on the local network: mDNS (ADR-0023).
+    pub lan: bool,
     /// The router for PCP/NAT-PMP; guessed as x.y.z.1 if not given.
     pub gateway: Option<std::net::Ipv4Addr>,
     /// How many paths (through different first hops) a session opens.
@@ -632,6 +634,23 @@ impl Node {
             },
             None => None,
         };
+        // Local network discovery (mDNS): this node registered, the others browsed for.
+        let (lan_tx, mut lan_rx) = tokio::sync::mpsc::channel(64);
+        let mdns = if self.cfg.lan {
+            match crate::lan::start(&hex::encode(&self.my_hash[..8]), self.me.x_pub().as_bytes(), self.cfg.listen.port(), lan_tx) {
+                Ok(d) => {
+                    log(format!("looking for nodes on the local network (mDNS {})", crate::lan::SERVICE));
+                    Some(d)
+                }
+                Err(e) => {
+                    warn(format!("no local network discovery: {e:#}"));
+                    None
+                }
+            }
+        } else {
+            drop(lan_tx);
+            None
+        };
         let mut last_remember = Instant::now();
         let mut last_seek = Instant::now();
         let mut sought = false;
@@ -691,6 +710,9 @@ impl Node {
                         Err(e) => debug(format!("receive: {e}")),
                     }
                 }
+                Some(found) = lan_rx.recv(), if mdns.is_some() => {
+                    self.on_lan_found(found);
+                }
                 Some(ext) = async { match mapped_rx.as_mut() { Some(rx) => rx.recv().await, None => std::future::pending().await } } => {
                     self.mapped = Some(ext);
                 }
@@ -707,6 +729,9 @@ impl Node {
                     }
                     self.remember_neighbors();
                     self.reach.save();
+                    if let Some(m) = &mdns {
+                        let _ = m.shutdown();
+                    }
                     log("stopped");
                     return Ok(());
                 }
@@ -2043,6 +2068,52 @@ impl Node {
             if let Some(n) = self.neighbors.remove(&id) {
                 self.neighbor_by_key.remove(&n.x_pub);
                 debug(format!("learned node {} didn't answer", n.addr.map(|a| a.to_string()).unwrap_or_default()));
+            }
+        }
+    }
+
+    // ---- local network discovery ----------------------------------------------------
+
+    /// A node on the local network: dial it at the address it registered
+    /// (one our socket can reach), unless it's a neighbor already up.
+    fn on_lan_found(&mut self, found: crate::lan::Found) {
+        let key = found.key;
+        if key == *self.me.x_pub().as_bytes() {
+            return;
+        }
+        // The addresses our socket can use; loopback only if it's all there is
+        // (another node on this machine).
+        let v4 = self.cfg.listen.is_ipv4();
+        let usable: Vec<SocketAddr> = found.addrs.iter().copied().filter(|a| a.is_ipv4() || !v4).collect();
+        let outside: Vec<SocketAddr> = usable.iter().copied().filter(|a| !a.ip().is_loopback()).collect();
+        let cands = if outside.is_empty() { usable } else { outside };
+        let Some(first) = cands.first().copied() else { return };
+        let id = match self.neighbor_by_key.get(&key).copied() {
+            Some(id) => {
+                let Some(n) = self.neighbors.get_mut(&id) else { return };
+                if n.up || n.last_try.elapsed() < Duration::from_secs(10) {
+                    return;
+                }
+                id
+            }
+            None => {
+                log(format!("found a node on the local network at {}", cands.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", ")));
+                let id = self.add_neighbor(key, Some(first), None);
+                if let Some(n) = self.neighbors.get_mut(&id) {
+                    n.trial = Some(Instant::now());
+                }
+                id
+            }
+        };
+        // One handshake to every address it gave: the one that answers is
+        // where it is (the link takes the address the answer came from).
+        let mut buf = vec![0u8; PKT_BUF];
+        let n = self.neighbors.get_mut(&id).unwrap();
+        n.last_try = Instant::now();
+        if let TunnResult::WriteToNetwork(p) = n.tunn.format_handshake_initiation(&mut buf, false) {
+            let p = p.to_vec();
+            for c in &cands {
+                self.send_raw(*c, &p);
             }
         }
     }

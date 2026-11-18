@@ -24,6 +24,8 @@ pub struct FileConfig {
     pub lite: Option<bool>,
     pub direct: Option<bool>,
     pub map_port: Option<bool>,
+    /// Find other nodes on the local network (multicast beacons).
+    pub lan: Option<bool>,
     pub gateway: Option<std::net::Ipv4Addr>,
     pub paths: Option<usize>,
     pub spread: Option<String>,
@@ -134,8 +136,13 @@ lite = false
 # Offer and accept direct links (reveals this node's address to the peer).
 direct = false
 
-# Ask the router to open the port (UPnP, then PCP/NAT-PMP).
-map_port = false
+# Ask the router to open a port to this node (UPnP, then PCP/NAT-PMP). Any
+# free outside port will do: others learn where they reached it.
+map_port = true
+
+# Find other vØrk nodes on the local network by themselves (mDNS,
+# _vork._udp.local, which tells them this node's key and port).
+lan = true
 # gateway = "192.168.1.1"
 
 # Paths per session through different first hops, and how packets use them.

@@ -4,8 +4,10 @@
 //! without a hand-made port forward.
 //!
 //! Opening a port is safe here: WireGuard answers nothing to a packet that
-//! isn't a valid handshake for our key. It is still opt-in (`--map-port`),
-//! because it changes the router's configuration.
+//! isn't a valid handshake for our key. It's on by default (`map_port = false`
+//! or `--no-map-port` to leave the router alone); the outside port needn't be
+//! the node's own: when it's taken, the router picks one, and others learn
+//! where they reached the node (ADR-0023).
 
 use crab_nat::{GatewayAddress, InternetProtocol, PortMapping, PortMappingOptions, PortMappingType};
 use igd_next::aio::tokio::search_gateway;

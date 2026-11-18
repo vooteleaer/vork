@@ -23,6 +23,8 @@ import java.io.File
 class VorkService : Service() {
     private var vorkd: Process? = null
     private var node: Process? = null
+    /** Lets multicast in while the node runs, for mDNS on the local network. */
+    private var multicast: android.net.wifi.WifiManager.MulticastLock? = null
     @Volatile private var running = false
     /** Wakes the supervisor before its next round (Restart). */
     private val wake = java.util.concurrent.Semaphore(0)
@@ -60,6 +62,10 @@ class VorkService : Service() {
             startForeground(NOTIFICATION, notification)
         }
         running = true
+        multicast = runCatching {
+            (applicationContext.getSystemService(WIFI_SERVICE) as android.net.wifi.WifiManager)
+                .createMulticastLock("vork-mdns").apply { setReferenceCounted(false); acquire() }
+        }.getOrNull()
         supervisor = Thread(::supervise, "vork-supervisor").apply { start() }
         watcher = Thread(::watchLibraries, "vork-library-watch").apply { start() }
         // The address books in the system's Contacts, after a boot or an
@@ -76,6 +82,7 @@ class VorkService : Service() {
     override fun onDestroy() {
         running = false
         daemonAlive = false
+        multicast?.release()
         supervisor?.interrupt()
         watcher?.interrupt()
         vorkd?.destroy()
