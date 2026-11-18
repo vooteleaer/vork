@@ -100,6 +100,10 @@ class VorkVpn : VpnService() {
             .setSession("vØrk")
             .addAddress(InetAddress.getByAddress(bytes), 128)
             .addRoute("fd00::", 8)
+            // Without this, Android blocks every family the VPN has no route
+            // for: IPv4 (the phone's internet) went dark when it came on.
+            .allowFamily(android.system.OsConstants.AF_INET)
+            .allowFamily(android.system.OsConstants.AF_INET6)
             .setMtu(1280)
             .establish()
     }

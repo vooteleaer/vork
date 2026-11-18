@@ -85,6 +85,7 @@ class MainActivity : ComponentActivity() {
             val ask = android.net.VpnService.prepare(this)
             if (ask != null) {
                 toast("Android asks whether vØrk may set up a VPN (fd00::/8 only)")
+                asked = System.currentTimeMillis()
                 @Suppress("DEPRECATION")
                 startActivityForResult(ask, REQUEST_VPN)
             } else {
@@ -94,6 +95,8 @@ class MainActivity : ComponentActivity() {
             toast("Couldn't turn it on: ${e.message ?: e.javaClass.simpleName}")
         }
     }
+
+    private var asked = 0L
 
     private fun vpnAllowed() {
         getSharedPreferences("vork", MODE_PRIVATE).edit().putBoolean("vpn", true).apply()
@@ -108,7 +111,12 @@ class MainActivity : ComponentActivity() {
         @Suppress("DEPRECATION")
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQUEST_VPN) {
-            if (resultCode == RESULT_OK) vpnAllowed() else toast("The VPN wasn't allowed, so apps can't reach vØrk addresses")
+            when {
+                resultCode == RESULT_OK -> vpnAllowed()
+                // Refused before anyone could answer: another app holds an always-on VPN.
+                System.currentTimeMillis() - asked < 1_500 -> toast("Another VPN app is set to always-on, and Android allows one VPN at a time: turn always-on off for it (Settings → VPN), then Turn on again")
+                else -> toast("The VPN wasn't allowed, so apps can't reach vØrk addresses")
+            }
         }
     }
 
