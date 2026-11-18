@@ -125,6 +125,9 @@ struct Session {
     /// Known to both ends and to no other session: what proofs are bound to.
     nonce: [u8; 32],
     stream: Stream,
+    /// A session between two destinations of this node: the other end's
+    /// session, to which messages go directly, without WireGuard.
+    looped: Option<u32>,
     /// Our requests waiting for an answer: id → (path, sent, the API client and its request id).
     waiting: HashMap<u32, (String, Instant, Option<(u32, u32)>)>,
     next_req: u32,
@@ -165,6 +168,7 @@ impl Session {
             peer_identity,
             nonce,
             stream: Stream::default(),
+            looped: None,
             waiting: HashMap::new(),
             next_req: 0,
             paths: vec![],
@@ -1367,10 +1371,40 @@ impl Node {
 
     fn send_app(&mut self, sid: u32, body: &[u8]) {
         let Some(s) = self.sessions.get_mut(&sid) else { return };
+        if let Some(other) = s.looped {
+            return self.on_app(other, (0, 0), body);
+        }
         let framed = wire::frame(body);
         if let Some(p) = encap(&mut s.tunn, &framed) {
             self.send_inner(sid, p);
         }
+    }
+
+    /// A session to one of this node's own destinations: two ends joined in
+    /// memory, with a nonce like any session's.
+    fn loop_session(&mut self, dest: Hash) -> u32 {
+        let ident = self.local_identity(Some(&dest));
+        let mut seed = [0u8; 32];
+        getrandom::getrandom(&mut seed).expect("OS entropy");
+        let opener = StaticSecret::from(seed);
+        let opener_pub = *PublicKey::from(&opener).as_bytes();
+        let nonce = session_nonce(&opener_pub, ident.x_pub().as_bytes());
+        let a = self.new_id();
+        let mut b = self.new_id();
+        while b == a {
+            b = self.new_id();
+        }
+        let ta = Self::session_tunn(opener, *ident.x_pub().as_bytes(), a);
+        let tb = Self::session_tunn(ident.dh.clone(), opener_pub, b);
+        let mut sa = Session::new(ta, *ident.x_pub().as_bytes(), Some(dest), None, Some(ident.hash()), nonce);
+        let mut sb = Session::new(tb, opener_pub, None, Some(dest), None, nonce);
+        sa.looped = Some(b);
+        sb.looped = Some(a);
+        self.sessions.insert(a, sa);
+        self.sessions.insert(b, sb);
+        self.session_by_dest.insert(dest, a);
+        log(format!("session {} to our own {}", hex::encode(&nonce[..4]), short(&dest)));
+        a
     }
 
     // ---- a tiny application: ping ------------------------------------------------
@@ -1378,6 +1412,9 @@ impl Node {
     fn session_to(&mut self, dest: Hash) -> Option<u32> {
         if let Some(sid) = self.session_by_dest.get(&dest) {
             return Some(*sid);
+        }
+        if self.local_dest(&dest).is_some() {
+            return Some(self.loop_session(dest));
         }
         let ann = self.routes.get(&dest)?.values().map(|r| r.ann.clone()).next()?;
         if self.first_hops(&dest).is_empty() {
@@ -1616,6 +1653,12 @@ impl Node {
     }
 
     fn known(&self, dest: &Hash) -> Option<vork_api::Known> {
+        if let Some(d) = self.local.get(dest) {
+            let mut public = [0u8; 64];
+            public[..32].copy_from_slice(d.identity.x_pub().as_bytes());
+            public[32..].copy_from_slice(&d.identity.ed_pub());
+            return Some(vork_api::Known { public, name_hash: d.name_hash, hops: 0, app_data: d.app_data.clone() });
+        }
         let r = self.routes.get(dest)?.values().min_by_key(|r| r.hops)?;
         let a = &r.ann;
         let mut public = [0u8; 64];
