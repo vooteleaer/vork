@@ -39,6 +39,7 @@ Links with fresh-handshake liveness, signed announces, path labels swapped per h
 
 - **Goal:** ordinary applications reach peers by identity.
 - **Scope:** sessions carry IPv6 packets between overlay addresses (ADR-0017, ADR-0021), one per identity, all of a machine's identities on its TUN interface, source checked against the session's identity; the ping/bench/candidate functions move to a control service on the overlay; a TUN interface (Linux `/dev/net/tun`; Windows wintun); the node drops packets whose overlay source doesn't match the session's identity; **flow pinning** (a TCP/UDP flow stays on one path, chosen by hash of its 5-tuple; spray stays for bulk native traffic); MTU set so both layers fit in 1500 (inner MTU about 1360, to be measured).
+- **First part done (2026-11-18):** Linux TUN (`tun = "vork0"`), the node's identity as `fd…`/128 and `fd00::/8` routed to the interface, IPv6 as session datagrams with the source checked against the identified far end, answers on the session they came in on. Two nodes in separate network namespaces: ping6 0.2–0.3 ms, HTTP over `fd…`, 20 MB at ~1.1 Gbit/s. Left: Windows (wintun), Android (VpnService), applications' identities on the interface, flow pinning, the MTU measured.
 - **Done when:** `ssh` to `fd…` (a home machine) from a laptop behind another NAT works through relays and then over a direct link; an `iperf3` TCP test runs without reordering trouble over two paths.
 - **Depends on:** M1, M9 (sessions).
 

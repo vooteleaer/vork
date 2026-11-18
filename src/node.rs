@@ -59,6 +59,8 @@ const MAX_HOPS: u8 = 16;
 // Session messages (inside WireGuard): datagrams 1–4, the stream 8–9.
 const APP_SEG: u8 = 8;
 const APP_ACK: u8 = 9;
+/// An IPv6 packet between overlay addresses (M2), as a datagram.
+const APP_IP: u8 = 5;
 // Messages on the stream.
 const MSG_REQUEST: u8 = 1;
 const MSG_RESPONSE: u8 = 2;
@@ -256,6 +258,8 @@ pub struct Config {
     pub map_port: bool,
     /// Find other nodes on the local network: mDNS (ADR-0023).
     pub lan: bool,
+    /// The TUN interface to create (M2).
+    pub tun: Option<String>,
     /// The router for PCP/NAT-PMP; guessed as x.y.z.1 if not given.
     pub gateway: Option<std::net::Ipv4Addr>,
     /// How many paths (through different first hops) a session opens.
@@ -344,6 +348,15 @@ pub struct Node {
     reach: Reach,
     /// Learned nodes dialed, by key: when.
     tried: HashMap<[u8; 32], Instant>,
+    /// The TUN interface (M2).
+    tun: Option<Arc<crate::tun::Tun>>,
+    /// Sessions opened for IP in which we identified (the far end checks sources by identity).
+    ip_identified: HashSet<u32>,
+    /// Overlay destinations no node is known for: when last logged.
+    ip_unknown: HashMap<[u8; 15], Instant>,
+    /// The session IP last came in on from an identity: answers go back on it,
+    /// rather than over a second session opened the other way.
+    ip_peer: HashMap<Hash, u32>,
 }
 
 /// Socket buffers big enough to absorb bursts (the Linux default, ~200 KB,
@@ -515,6 +528,10 @@ impl Node {
             state,
             started: Instant::now(),
             tried: HashMap::new(),
+            tun: None,
+            ip_identified: HashSet::new(),
+            ip_unknown: HashMap::new(),
+            ip_peer: HashMap::new(),
         };
         for name in node.cfg.destinations.clone() {
             let me = node.me_arc.clone();
@@ -658,6 +675,18 @@ impl Node {
             drop(lan_tx);
             None
         };
+        if let Some(name) = self.cfg.tun.clone() {
+            let addr = crate::tun::overlay(&self.my_hash);
+            match crate::tun::Tun::open(&name, addr, crate::tun::MTU) {
+                Ok(t) => {
+                    log(format!("interface {} up: this node is {addr}", t.name));
+                    self.tun = Some(Arc::new(t));
+                }
+                Err(e) => warn(format!("no interface: {e:#}")),
+            }
+        }
+        let tun = self.tun.clone();
+        let mut tun_buf = vec![0u8; 65536];
         let mut last_remember = Instant::now();
         let mut last_seek = Instant::now();
         let mut sought = false;
@@ -715,6 +744,15 @@ impl Node {
                         }
                         // e.g. Windows reports an ICMP "port unreachable" from an earlier send this way
                         Err(e) => debug(format!("receive: {e}")),
+                    }
+                }
+                r = async { match tun.as_ref() { Some(t) => t.recv(&mut tun_buf).await, None => std::future::pending().await } } => {
+                    match r {
+                        Ok(n) => {
+                            let p = tun_buf[..n].to_vec();
+                            self.on_tun_packet(&p);
+                        }
+                        Err(e) => debug(format!("interface: {e}")),
                     }
                 }
                 Some(found) = lan_rx.recv(), if mdns.is_some() => {
@@ -1609,6 +1647,57 @@ impl Node {
         self.send_app(sid, &body);
     }
 
+    // ---- IP over sessions (M2) ---------------------------------------------------------
+
+    /// A packet from the interface: to the node whose identity the overlay
+    /// destination names, over a session to it (opened, and identified in,
+    /// on the first packet).
+    fn on_tun_packet(&mut self, p: &[u8]) {
+        let Some((src, dst)) = crate::tun::v6_ends(p) else { return };
+        if src != crate::tun::overlay(&self.my_hash).octets() {
+            return; // only this node's own address goes out
+        }
+        let Some(prefix) = crate::tun::prefix_of(&dst) else { return };
+        let dest = self
+            .routes
+            .iter()
+            .filter(|(d, r)| d[..15] == prefix && r.values().any(|x| x.ann.name_hash == wire::NO_NAME))
+            .map(|(d, _)| *d)
+            .next();
+        let Some(dest) = dest else {
+            if self.ip_unknown.get(&prefix).is_none_or(|t| t.elapsed() > Duration::from_secs(30)) {
+                self.ip_unknown.insert(prefix, Instant::now());
+                log(format!("no node known for {}", std::net::Ipv6Addr::from(dst)));
+            }
+            return;
+        };
+        let came_in = self.ip_peer.get(&dest).copied().filter(|s| self.sessions.contains_key(s));
+        let Some(sid) = came_in.or_else(|| self.session_to(dest)) else { return };
+        if came_in.is_none() && self.ip_identified.insert(sid) {
+            let me = self.me_arc.clone();
+            self.identify(sid, &me);
+        }
+        let mut body = Vec::with_capacity(p.len() + 1);
+        body.push(APP_IP);
+        body.extend_from_slice(p);
+        self.send_app(sid, &body);
+    }
+
+    /// A packet from a session: onto the interface if its source is the far
+    /// end's own overlay address and it is for ours.
+    fn on_ip(&mut self, sid: u32, p: &[u8]) {
+        let Some(tun) = self.tun.clone() else { return };
+        let Some((src, dst)) = crate::tun::v6_ends(p) else { return };
+        let Some(who) = self.sessions.get(&sid).and_then(|s| s.peer_identity) else {
+            return debug("IP from a session that hasn't identified: dropped");
+        };
+        if src != crate::tun::overlay(&who).octets() || dst != crate::tun::overlay(&self.my_hash).octets() {
+            return debug(format!("IP with source {} from {}: dropped", std::net::Ipv6Addr::from(src), short(&who)));
+        }
+        self.ip_peer.insert(who, sid);
+        tun.send(p);
+    }
+
     fn on_app(&mut self, sid: u32, key: (u32, u64), body: &[u8]) {
         // The session works: offer a direct link, once, if this peer may have
         // one (considered again when it identifies).
@@ -1638,6 +1727,7 @@ impl Node {
                     self.send_punch(sid);
                 }
             }
+            Some(&APP_IP) => self.on_ip(sid, &body[1..]),
             Some(3) => match wire::decode_addrs(&body[1..]) {
                 Ok(cands) => self.on_punch(sid, cands),
                 Err(e) => log(format!("bad direct-link offer: {e}")),

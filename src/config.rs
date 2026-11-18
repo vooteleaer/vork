@@ -26,6 +26,8 @@ pub struct FileConfig {
     pub map_port: Option<bool>,
     /// Find other nodes on the local network (multicast beacons).
     pub lan: Option<bool>,
+    /// The TUN interface to create (M2): programs reach other nodes at `fd…` addresses.
+    pub tun: Option<String>,
     pub gateway: Option<std::net::Ipv4Addr>,
     pub paths: Option<usize>,
     pub spread: Option<String>,
@@ -141,6 +143,10 @@ lite = false
 direct = false
 # Your other devices (their addresses): direct links with them always.
 devices = []
+
+# An interface for ordinary programs (Linux; needs CAP_NET_ADMIN): this node
+# is fd<its address> there, and every node it knows is fd<theirs>.
+# tun = "vork0"
 
 # Ask the router to open a port to this node (UPnP, then PCP/NAT-PMP). Any
 # free outside port will do: others learn where they reached it.

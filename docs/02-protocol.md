@@ -138,10 +138,13 @@ The session carries IPv4/UDP datagrams to port 4799 framed as in §2, with an ap
 | 2 | pong: `nonce[8]` |
 | 3 | direct-link candidates: `count[1]` then addresses as in `OBSERVED` |
 | 4 | bench: `seq[8]` then padding |
+| 5 | IPv6 packet between overlay addresses (M2): the whole packet, as a datagram |
 | 8 | stream segment: `seq[4]` then up to 1180 bytes |
 | 9 | stream acknowledgment: `next[4]` `count[1]` then `count` (≤ 8) ranges `start[4]` `end[4]` |
 
-Bytes 1–4 are a stand-in. From milestone M2 the session also carries **IPv6 packets between overlay addresses** (ADR-0017), and ping, bench and candidates move into a control service.
+Bytes 1–4 are a stand-in; ping, bench and candidates move into a control service later.
+
+**IP (byte 5).** A node with an interface (`tun = "vork0"`, Linux) is `fd` ‖ its address[0..15] there, with `fd00::/8` routed to the interface. A packet from the interface must have the node's own overlay source; its destination's 15 bytes name a node identity known from announces (its unnamed destination), and the packet goes over a session to it, opened on the first packet, in which the node identifies itself. The receiving node puts a packet on its interface only if the session's far end is identified (the destination's identity, or the opener after `IDENTIFY`), the source is that identity's overlay address and the destination is its own; answers go back on the session the traffic came in on. Inner MTU 1280.
 
 ### Stream (reliable messages)
 
