@@ -17,14 +17,16 @@
 ```
 [ outer WireGuard: neighbor <-> neighbor ]   proves the link works both ways
   [ IPv4/UDP to port 4799 ]                  any WireGuard implementation can carry it
-    [ HELLO | OBSERVED | ANNOUNCE | FWD ]
-      FWD: [ inner WireGuard: end <-> end ]  relays hold no keys for it
+    [ HELLO | OBSERVED | ANNOUNCE | PATH_* | DATA | PROBE ]
+      DATA: [ label ][ inner WireGuard: end <-> end ]   relays hold no keys for it
 ```
 
 - **Identity:** Ed25519 (signing) + X25519 (the WireGuard key). `address = SHA-256(ed_pub ‖ x_pub)[:16]`.
 - **Links:** a neighbor is *up* only while its WireGuard handshake is fresh (< 180 s), so every link used is proven to work in both directions. This avoids RNS's asymmetric-link problem.
 - **Announces** are signed (`vork/v0/announce`, sequence number), flooded only over up links, and carry no IP address. The hop count is a hint, not trusted.
-- **Forwarding:** an inner handshake initiation is forwarded by destination address. Each relay remembers where it came from, keyed by the initiator's WireGuard index. Every later packet is switched by its receiver index alone, so **no packet carries a source, and only the first carries a destination**.
+- **Paths:** a session runs over one or more paths. `PATH_OPEN` is routed by destination address; every hop swaps the label for a fresh random one on the next link and remembers the pair. After that, `DATA` carries only a label: **no packet carries a source, only the opening message carries a destination, and a label means something on one link only**, so colluding relays can't match packets by it.
+- **Several paths per session** (`--paths N`, default 2): a node keeps a route per neighbor it heard an announce from, and opens paths through different first hops. The origin probes every path each second (round-trip time, loss); a path that misses 3 probes is dropped and that first hop rests (5 s, doubling to 60 s) before it is tried again. Packets go out by `--spread spray` (one path each, weighted by round-trip time) or `--spread dup` (every packet on every path; WireGuard drops the second copy). A healthy direct link is used alone, sparing the relays. The far end answers on the paths it heard from in the last 3 s, so it can also start a new handshake to an initiator that never announced itself.
+- **Silent neighbors:** a neighbor that sends nothing for 35 s (it keepalives every 25 s) is down, and every path through it is torn down hop by hop with `PATH_ERR`.
 - **Anonymous initiators:** a node needn't announce itself to reach others (`--no-announce`). The destination learns its key, not its address or location.
 - **Roaming:** a neighbor's endpoint is wherever its last authenticated packet came from.
 - **Lite nodes** (`--lite`) never relay, receive no floods and ask for the paths they need (`PATH_REQ`). Nobody routes through a Lite node unless it is the destination.
@@ -38,6 +40,8 @@
 | C → D through A and B (2 relays), 193 s | 184 pings, 0 lost, survives the inner rekey at 120 s; each relay switched 356 packets with 0 sessions |
 | Lite node L behind A pings B; C pings L | both work; L learned only the 2 destinations it asked for and relayed nothing |
 | C and B with `--direct`, meeting through A | 1 ping relayed, then 20 direct; A stopped at 7 relayed packets |
+| C → B over two relays A and E (`--paths 2`, spray), A killed after 12 s, 57 s run | first 11 pings split 6/5 between A and E; A's path dropped 3 s after the kill, then all traffic on E; 51 of about 55 pings answered; A retried after 5 s and 10 s, given up when its link went silent |
+| Same with `--spread dup` | every ping on both paths, no errors; each relay carried about half the packets |
 
 ## Try it
 
@@ -53,7 +57,7 @@ $V run --key c.key --listen 0.0.0.0:51822 --peer HOST:51820@<A wg key> \
        --no-announce --ping <B address>                                 # laptop, anonymous
 ```
 
-Options: `--lite` (don't relay, small devices), `--direct` (try a direct link to the far end of a session; reveals your address to it), `--no-announce` (reach others without being findable), `--map-port` (ask the router to open the port, like torrent clients: UPnP, then PCP/NAT-PMP; `--gateway <ip>` if the router isn't x.y.z.1). Stop with Ctrl-C, which also removes the router mapping.
+Options: `--paths N` (paths per session through different first hops, default 2), `--spread spray|dup` (how packets use them), `--lite` (don't relay, small devices), `--direct` (try a direct link to the far end of a session; reveals your address to it), `--no-announce` (reach others without being findable), `--map-port` (ask the router to open the port, like torrent clients: UPnP, then PCP/NAT-PMP; `--gateway <ip>` if the router isn't x.y.z.1). Stop with Ctrl-C, which also removes the router mapping.
 
 ### Testing on real machines
 
@@ -85,9 +89,9 @@ ESPHome's WireGuard component has **one peer and IPv4 only**, and it can't accep
 ## Known limits and next steps
 
 - **Sequence numbers** are wall-clock milliseconds here. The spec must say only "monotonic per identity" so devices without a clock can use a persisted counter.
-- **A responder can't start a handshake to an anonymous initiator** (it has no address to route to). The initiator rekeys, so it works in practice; path labels like RNS link IDs would fix it properly.
-- **Index collisions:** relays switch on 24-bit random WireGuard indices. Collisions are rare but possible; the switch key could include a short path label.
-- **Route choice** still uses the advertised hop count. Next: score paths by measured delivery (otherwise a hostile node can attract traffic as a sinkhole).
+- **First hops are chosen by advertised hop count**, which isn't proven; once open, paths are weighted by measured round trip and dropped when they stop answering, so a sinkhole costs a few seconds, not the session. Paths through different first hops may still share later hops (distance-vector routing can't see them).
+- **Spraying one TCP connection over paths with different latency reorders it.** Pinning each flow to a path comes with the TUN interface (phase 3), where flows exist.
+- **Several local uplinks at once** (Wi-Fi + 4G) aren't used yet: that needs a socket per interface, with the same path machinery on top.
 - **Router port mapping** (`--map-port`) is untested against a real router. It detects a second NAT beyond the router (CGNAT) and gives up there, but it doesn't yet ask a neighbor to confirm the mapped address is reachable from outside.
 - **Direct links are untested through real NATs.** Candidates are the addresses neighbors observe plus the listening address if it is a specific one; a node listening on `0.0.0.0` doesn't yet offer its LAN addresses, and observed addresses aren't yet cross-checked by several neighbors (a hostile neighbor could report a wrong one).
 - **Eclipse resistance:** several bootstrap sources, diverse neighbors, long-lived anchors.
@@ -97,7 +101,7 @@ ESPHome's WireGuard component has **one peer and IPv4 only**, and it can't accep
 ## Phases
 
 1. **Links, gossip, hash routing, forwarding** (this).
-2. NAT: addresses observed by peers, hole punching, router port mapping, path requests, Lite profile. *(First version done; needs testing on real networks.)*
+2. NAT: addresses observed by peers, hole punching, router port mapping, path requests, Lite profile; path labels and several paths per session. *(First version done; needs testing on real networks.)*
 3. Overlay IPv6 as a compatibility view (TUN): SSH, SMB and browsers by identity.
 4. retifs as the storage layer (its `Transport` trait over this network).
 5. YubiKey identities, device delegation, islands.

@@ -54,6 +54,12 @@ enum Cmd {
         /// Router address for PCP/NAT-PMP (default: x.y.z.1 of this machine's address).
         #[arg(long)]
         gateway: Option<std::net::Ipv4Addr>,
+        /// Paths per session, through different first hops (a direct link comes on top).
+        #[arg(long, default_value_t = 2)]
+        paths: usize,
+        /// How packets use the paths: spray (by round-trip time) or dup (every packet on every path).
+        #[arg(long, default_value = "spray")]
+        spread: String,
     },
 }
 
@@ -81,14 +87,19 @@ async fn main() -> Result<()> {
             print_identity(&id);
         }
         Cmd::Show { key } => print_identity(&identity::Identity::load(&key)?),
-        Cmd::Run { key, listen, peers, no_announce, ping, lite, direct, map_port, gateway } => {
+        Cmd::Run { key, listen, peers, no_announce, ping, lite, direct, map_port, gateway, paths, spread } => {
+            let spread = match spread.as_str() {
+                "spray" => node::Spread::Spray,
+                "dup" => node::Spread::Dup,
+                s => bail!("--spread must be spray or dup, not {s}"),
+            };
             let me = identity::Identity::load(&key)?;
             let peers = peers.iter().map(|p| parse_peer(p)).collect::<Result<Vec<_>>>()?;
             let ping = match ping {
                 Some(h) => Some(hex::decode(&h)?.try_into().map_err(|_| anyhow::anyhow!("address must be 16 bytes"))?),
                 None => None,
             };
-            let cfg = node::Config { listen, peers, announce: !no_announce, ping, lite, direct, map_port, gateway };
+            let cfg = node::Config { listen, peers, announce: !no_announce, ping, lite, direct, map_port, gateway, paths: paths.max(1), spread };
             node::Node::new(me, cfg).await?.run().await?;
         }
     }

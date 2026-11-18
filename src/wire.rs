@@ -73,11 +73,18 @@ pub enum Msg {
     /// A destination's signed announce; `hops` is added by forwarders and is
     /// only a hint (it isn't signed and is never trusted on its own).
     Announce(Announce),
-    /// Something for a destination further away. `dest` is set only on an
-    /// inner handshake initiation; everything after it is switched by the
-    /// inner WireGuard receiver index, so relays don't see the destination
-    /// in every packet, and no packet carries a source.
-    Fwd { ttl: u8, dest: Option<Hash>, inner: Vec<u8> },
+    /// Opens a path toward `dest`. Each hop picks a fresh label for the next
+    /// link and remembers the pair, so a label means something only on one
+    /// link and colluding relays can't match packets by it.
+    PathOpen { label: u64, dest: Hash, ttl: u8 },
+    /// The destination's answer, travelling back along the path.
+    PathAck { label: u64 },
+    /// The path is broken at some hop; sent toward the end that can act on it.
+    PathErr { label: u64 },
+    /// End-to-end traffic (inner WireGuard) on a path. No source, no destination.
+    Data { label: u64, inner: Vec<u8> },
+    /// Path health: the origin sends, the far end echoes (`reply`).
+    Probe { label: u64, nonce: u64, reply: bool },
     /// "Where is `dest`?" Lite nodes don't receive floods; they ask. Answered
     /// with the destination's announce.
     PathReq { dest: Hash, nonce: u64 },
@@ -108,8 +115,12 @@ impl Announce {
 const T_HELLO: u8 = 1;
 const T_OBSERVED: u8 = 2;
 const T_ANNOUNCE: u8 = 3;
-const T_FWD: u8 = 4;
 const T_PATH_REQ: u8 = 5;
+const T_PATH_OPEN: u8 = 6;
+const T_PATH_ACK: u8 = 7;
+const T_PATH_ERR: u8 = 8;
+const T_DATA: u8 = 9;
+const T_PROBE: u8 = 10;
 
 impl Msg {
     pub fn encode(&self) -> Vec<u8> {
@@ -134,17 +145,30 @@ impl Msg {
                 b.extend_from_slice(&a.sig);
                 b.push(a.hops);
             }
-            Msg::Fwd { ttl, dest, inner } => {
-                b.push(T_FWD);
+            Msg::PathOpen { label, dest, ttl } => {
+                b.push(T_PATH_OPEN);
+                b.extend_from_slice(&label.to_be_bytes());
+                b.extend_from_slice(dest);
                 b.push(*ttl);
-                match dest {
-                    Some(d) => {
-                        b.push(1);
-                        b.extend_from_slice(d);
-                    }
-                    None => b.push(0),
-                }
+            }
+            Msg::PathAck { label } => {
+                b.push(T_PATH_ACK);
+                b.extend_from_slice(&label.to_be_bytes());
+            }
+            Msg::PathErr { label } => {
+                b.push(T_PATH_ERR);
+                b.extend_from_slice(&label.to_be_bytes());
+            }
+            Msg::Data { label, inner } => {
+                b.push(T_DATA);
+                b.extend_from_slice(&label.to_be_bytes());
                 b.extend_from_slice(inner);
+            }
+            Msg::Probe { label, nonce, reply } => {
+                b.push(T_PROBE);
+                b.extend_from_slice(&label.to_be_bytes());
+                b.extend_from_slice(&nonce.to_be_bytes());
+                b.push(*reply as u8);
             }
             Msg::PathReq { dest, nonce } => {
                 b.push(T_PATH_REQ);
@@ -168,15 +192,11 @@ impl Msg {
                 sig: r.arr()?,
                 hops: r.u8()?,
             }),
-            T_FWD => {
-                let ttl = r.u8()?;
-                let dest = match r.u8()? {
-                    0 => None,
-                    1 => Some(r.arr::<HASH_LEN>()?),
-                    _ => bail!("bad dest flag"),
-                };
-                Msg::Fwd { ttl, dest, inner: r.rest().to_vec() }
-            }
+            T_PATH_OPEN => Msg::PathOpen { label: r.u64()?, dest: r.arr::<HASH_LEN>()?, ttl: r.u8()? },
+            T_PATH_ACK => Msg::PathAck { label: r.u64()? },
+            T_PATH_ERR => Msg::PathErr { label: r.u64()? },
+            T_DATA => Msg::Data { label: r.u64()?, inner: r.rest().to_vec() },
+            T_PROBE => Msg::Probe { label: r.u64()?, nonce: r.u64()?, reply: r.u8()? != 0 },
             T_PATH_REQ => Msg::PathReq { dest: r.arr()?, nonce: u64::from_be_bytes(r.arr()?) },
             t => bail!("unknown message type {t}"),
         })
@@ -230,6 +250,9 @@ impl Reader<'_> {
     fn u8(&mut self) -> Result<u8> {
         Ok(self.arr::<1>()?[0])
     }
+    fn u64(&mut self) -> Result<u64> {
+        Ok(u64::from_be_bytes(self.arr()?))
+    }
     fn arr<const N: usize>(&mut self) -> Result<[u8; N]> {
         let Some(s) = self.b.get(self.i..self.i + N) else { bail!("message too short") };
         self.i += N;
@@ -242,8 +265,8 @@ impl Reader<'_> {
     }
 }
 
-/// WireGuard message fields that relays and endpoints read in the clear to
-/// switch packets (type and indices; never anything encrypted).
+/// WireGuard message fields that endpoints read in the clear to find the
+/// session a packet belongs to (type and receiver index; nothing encrypted).
 pub mod wg {
     pub const INIT: u32 = 1;
     pub const RESP: u32 = 2;
@@ -255,13 +278,6 @@ pub mod wg {
     }
     fn u32_at(p: &[u8], at: usize) -> Option<u32> {
         Some(u32::from_le_bytes(p.get(at..at + 4)?.try_into().ok()?))
-    }
-    /// The sender's index (initiation and response).
-    pub fn sender_idx(p: &[u8]) -> Option<u32> {
-        match kind(p)? {
-            INIT | RESP => u32_at(p, 4),
-            _ => None,
-        }
     }
     /// The index of the session at the receiving end (all but initiation).
     pub fn receiver_idx(p: &[u8]) -> Option<u32> {
@@ -285,8 +301,12 @@ mod tests {
             Msg::Observed { addr: "1.2.3.4:5678".parse().unwrap() },
             Msg::Observed { addr: "[2001:db8::1]:51820".parse().unwrap() },
             Msg::Announce(Announce { ed_pub: [3; 32], x_pub: [4; 32], seq: 7, flags: 1, sig: [5; 64], hops: 2 }),
-            Msg::Fwd { ttl: 9, dest: Some([6; 16]), inner: vec![1, 2, 3] },
-            Msg::Fwd { ttl: 9, dest: None, inner: vec![] },
+            Msg::PathOpen { label: 1, dest: [6; 16], ttl: 9 },
+            Msg::PathAck { label: 2 },
+            Msg::PathErr { label: 3 },
+            Msg::Data { label: 4, inner: vec![1, 2, 3] },
+            Msg::Data { label: 5, inner: vec![] },
+            Msg::Probe { label: 6, nonce: 7, reply: true },
         ];
         for m in msgs {
             let back = Msg::decode(&m.encode()).unwrap();
