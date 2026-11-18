@@ -322,7 +322,9 @@ fun Network(n: JSONObject, said: (String) -> Unit) {
         if (r.resultCode == android.app.Activity.RESULT_OK) {
             context.getSharedPreferences("vork", android.content.Context.MODE_PRIVATE).edit().putBoolean("vpn", true).apply()
             VorkVpn.startIfAllowed(context)
-            said("Apps can reach vØrk nodes now")
+            said("Turning on…")
+        } else {
+            said("The VPN wasn't allowed, so apps can't reach vØrk addresses")
         }
     }
     Card(Modifier.fillMaxWidth()) {
@@ -357,16 +359,22 @@ fun Network(n: JSONObject, said: (String) -> Unit) {
                 )
                 if (ip == null) {
                     TextButton(onClick = {
-                        val ask = android.net.VpnService.prepare(context)
-                        if (ask != null) allowVpn.launch(ask) else {
-                            context.getSharedPreferences("vork", android.content.Context.MODE_PRIVATE).edit().putBoolean("vpn", true).apply()
-                            VorkVpn.startIfAllowed(context)
+                        try {
+                            val ask = android.net.VpnService.prepare(context)
+                            if (ask != null) allowVpn.launch(ask) else {
+                                context.getSharedPreferences("vork", android.content.Context.MODE_PRIVATE).edit().putBoolean("vpn", true).apply()
+                                VorkVpn.startIfAllowed(context)
+                                said("Turning on…")
+                            }
+                        } catch (e: Exception) {
+                            said("Couldn't turn it on: ${e.message ?: e.javaClass.simpleName}")
                         }
                     }) { Text("Turn on") }
                 } else {
                     TextButton(onClick = { VorkVpn.stop(context); said("Apps no longer reach vØrk addresses") }) { Text("Turn off") }
                 }
             }
+            VorkVpn.state?.let { if (ip == null) Text("Interface: $it", style = small) }
             if (n.optInt("reached_by") > 0) {
                 Text("Reachable directly: ${n.optInt("reached_by")} node(s) reached this phone", style = small)
             }

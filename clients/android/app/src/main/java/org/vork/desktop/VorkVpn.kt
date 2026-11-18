@@ -29,6 +29,7 @@ class VorkVpn : VpnService() {
             return START_NOT_STICKY
         }
         if (running) return START_STICKY
+        state = "starting"
         Core.ready(this)
         running = true
         keeper = Thread(::keep, "vork-vpn").apply { start() }
@@ -42,6 +43,7 @@ class VorkVpn : VpnService() {
     }
 
     override fun onDestroy() {
+        state = null
         running = false
         keeper?.interrupt()
         iface?.close()
@@ -56,14 +58,27 @@ class VorkVpn : VpnService() {
             try {
                 val n = JSONObject(Core.network())
                 val address = n.optString("address")
-                if (n.optBoolean("running") && address.length == 32) {
-                    val pfd = iface ?: establish(address)?.also { iface = it }
-                    if (pfd != null && n.isNull("ip") && sock.exists()) hand(pfd, sock)
+                when {
+                    !n.optBoolean("running") || address.length != 32 -> state = "waiting for the vØrk node"
+                    else -> {
+                        val pfd = iface ?: establish(address)?.also { iface = it }
+                        when {
+                            pfd == null -> state = "Android didn't make the interface (is another VPN always on?)"
+                            !n.isNull("ip") -> state = null
+                            !sock.exists() -> state = "the node isn't waiting for an interface (restart the app)"
+                            else -> {
+                                state = "handing the interface to the node"
+                                hand(pfd, sock)
+                            }
+                        }
+                    }
                 }
-                Thread.sleep(5_000)
+                Thread.sleep(if (state == null) 5_000 else 2_000)
             } catch (e: InterruptedException) {
                 return
             } catch (e: Exception) {
+                state = "error: ${e.message ?: e.javaClass.simpleName}"
+                android.util.Log.w("vork", "vpn", e)
                 try { Thread.sleep(10_000) } catch (stop: InterruptedException) { return }
             }
         }
@@ -96,12 +111,18 @@ class VorkVpn : VpnService() {
     companion object {
         const val ACTION_STOP = "org.vork.desktop.VPN_STOP"
 
+        /** What it's doing or what went wrong, for the app to show (null: running, or off). */
+        @Volatile var state: String? = null
+
         /** Starts it if the user allowed it before (no dialog needed now). */
         fun startIfAllowed(context: Context) {
             val wanted = context.getSharedPreferences("vork", MODE_PRIVATE).getBoolean("vpn", false)
-            if (wanted && prepare(context) == null) {
-                context.startService(Intent(context, VorkVpn::class.java))
+            if (!wanted) return
+            if (prepare(context) != null) {
+                state = "Android hasn't allowed the VPN yet: Turn on again"
+                return
             }
+            context.startService(Intent(context, VorkVpn::class.java))
         }
 
         fun stop(context: Context) {
