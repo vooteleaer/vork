@@ -1,0 +1,21 @@
+[package]
+name = "vork-desktop-jni"
+description = "vork-desktop for Android: the shared core to Kotlin, through JNI, as JSON"
+version.workspace = true
+edition = "2021"
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "vork_desktop"
+crate-type = ["cdylib"]
+
+[dependencies]
+vork-desktop-core = { path = "../../core" }
+jni = { version = "0.21", default-features = false }
+# The DocumentsProvider's listings
+serde_json = "1"
+# The contacts sync adapter (Android's own Contacts): vork-contacts' records.
+retifs-contacts-core = { path = "../../../../retifs-contacts/core" }  # not ported to vØrk yet
+# The calendar sync adapter (Android's own Calendar): vork-calendar's events.
+retifs-calendar-core = { path = "../../../../retifs-calendar/core" }  # not ported to vØrk yet

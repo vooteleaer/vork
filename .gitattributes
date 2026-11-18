@@ -2,3 +2,6 @@ crates/vork-core/src/bip39-english.txt text eol=lf
 *.sh text eol=lf
 packaging/** text eol=lf
 crates/vork-core/test-vectors/*.py text eol=lf
+clients/packaging/** text eol=lf
+clients/android/gradlew text eol=lf
+clients/haiku/** text eol=lf

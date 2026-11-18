@@ -1,0 +1,18 @@
+[package]
+name = "vork-web"
+description = "vork' web UI, for nodes without a screen (a NAS, a container): one node's libraries, Announces and reports (vork ADR-0037)"
+version.workspace = true
+edition = "2021"
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "vork-web"
+path = "src/main.rs"
+
+[dependencies]
+vork-desktop-core = { path = "../core" }
+serde_json = "1"
+tiny_http = "0.12"
+getrandom = "0.3"
+sha2 = "0.10"

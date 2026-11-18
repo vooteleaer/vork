@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=vork
+Comment=vork in the tray
+Exec=vork-desktop --hidden
+Icon=org.vork.Desktop
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
