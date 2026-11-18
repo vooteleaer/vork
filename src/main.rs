@@ -60,6 +60,12 @@ enum Cmd {
         /// How packets use the paths: spray (by round-trip time) or dup (every packet on every path).
         #[arg(long, default_value = "spray")]
         spread: String,
+        /// Measure throughput: send to this address (hex); the receiver logs what arrives each second.
+        #[arg(long)]
+        bench: Option<String>,
+        /// Bench sending rate in Mbit/s.
+        #[arg(long, default_value_t = 100)]
+        bench_rate: u64,
     },
 }
 
@@ -87,7 +93,7 @@ async fn main() -> Result<()> {
             print_identity(&id);
         }
         Cmd::Show { key } => print_identity(&identity::Identity::load(&key)?),
-        Cmd::Run { key, listen, peers, no_announce, ping, lite, direct, map_port, gateway, paths, spread } => {
+        Cmd::Run { key, listen, peers, no_announce, ping, lite, direct, map_port, gateway, paths, spread, bench, bench_rate } => {
             let spread = match spread.as_str() {
                 "spray" => node::Spread::Spray,
                 "dup" => node::Spread::Dup,
@@ -95,11 +101,15 @@ async fn main() -> Result<()> {
             };
             let me = identity::Identity::load(&key)?;
             let peers = peers.iter().map(|p| parse_peer(p)).collect::<Result<Vec<_>>>()?;
-            let ping = match ping {
-                Some(h) => Some(hex::decode(&h)?.try_into().map_err(|_| anyhow::anyhow!("address must be 16 bytes"))?),
-                None => None,
+            let addr = |h: Option<String>| -> Result<Option<[u8; 16]>> {
+                match h {
+                    Some(h) => Ok(Some(hex::decode(&h)?.try_into().map_err(|_| anyhow::anyhow!("address must be 16 bytes"))?)),
+                    None => Ok(None),
+                }
             };
-            let cfg = node::Config { listen, peers, announce: !no_announce, ping, lite, direct, map_port, gateway, paths: paths.max(1), spread };
+            let ping = addr(ping)?;
+            let bench = addr(bench)?;
+            let cfg = node::Config { listen, peers, announce: !no_announce, ping, lite, direct, map_port, gateway, paths: paths.max(1), spread, bench, bench_rate };
             node::Node::new(me, cfg).await?.run().await?;
         }
     }

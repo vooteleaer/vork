@@ -57,6 +57,8 @@ $V run --key c.key --listen 0.0.0.0:51822 --peer HOST:51820@<A wg key> \
        --no-announce --ping <B address>                                 # laptop, anonymous
 ```
 
+Throughput: `--bench <address> --bench-rate <Mbit/s>` sends paced traffic (1200-byte packets) to a node; the receiver logs what arrives each second and the loss. Raise the rate until the loss climbs to find the ceiling. There is no congestion control in the bench: above the ceiling it just loses packets.
+
 Options: `--paths N` (paths per session through different first hops, default 2), `--spread spray|dup` (how packets use them), `--lite` (don't relay, small devices), `--direct` (try a direct link to the far end of a session; reveals your address to it), `--no-announce` (reach others without being findable), `--map-port` (ask the router to open the port, like torrent clients: UPnP, then PCP/NAT-PMP; `--gateway <ip>` if the router isn't x.y.z.1). Stop with Ctrl-C, which also removes the router mapping.
 
 ### Testing on real machines
@@ -67,6 +69,19 @@ Options: `--paths N` (paths per session through different first hops, default 2)
 4. A Lite node anywhere with `--lite`.
 
 Watch the logs for `link up`, `a neighbor sees us at` (your public address as others see it), `dialing … directly`, `session … now goes direct`, and the `(relayed)` / `(direct)` tag on each pong.
+
+### Throughput (localhost, 2-core VM)
+
+All nodes ran on one machine with two CPU cores, so every relay competes with the endpoints for CPU. These are CPU limits of this prototype, not network limits:
+
+| Topology | Ceiling (received, low loss) |
+|---|---|
+| Direct (2 processes) | about 700–1000 Mbit/s |
+| 1 relay (3 processes) | about 300–400 Mbit/s |
+| 2 relays in a chain (4 processes) | about 300 Mbit/s |
+| 2 parallel paths over 2 relays (4 processes) | about 400–470 Mbit/s |
+
+One node is a single thread doing two layers of WireGuard in userspace, so it handles roughly 1 Gbit/s of traffic on one core of this VM. On separate machines each relay has its own CPU, and the limit is usually the slowest uplink on the path. Room to grow: reuse buffers instead of allocating per packet, batch socket calls (`recvmmsg`/GSO), and spread work across threads.
 
 ## Lite nodes (ESP32, ESPHome)
 

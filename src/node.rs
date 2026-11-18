@@ -25,7 +25,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::net::UdpSocket;
 
+/// Receive buffer (the largest UDP datagram).
 const BUF: usize = 65536;
+/// Output buffer for one WireGuard operation: our packets stay under the MTU.
+const PKT_BUF: usize = 4096;
+/// Bench payload per packet: with both WireGuard layers and headers this stays under a 1500-byte MTU.
+const BENCH_PAYLOAD: usize = 1200;
 const KEEPALIVE: u16 = 25;
 /// A neighbor whose last handshake is older than this is down (WireGuard's REJECT_AFTER_TIME).
 const LINK_FRESH: Duration = Duration::from_secs(180);
@@ -124,6 +129,19 @@ pub struct Config {
     /// How many paths (through different first hops) a session opens.
     pub paths: usize,
     pub spread: Spread,
+    /// Send bench traffic to this destination...
+    pub bench: Option<Hash>,
+    /// ...at this rate (Mbit/s).
+    pub bench_rate: u64,
+}
+
+/// What a bench receiver has seen in the current second.
+#[derive(Default)]
+struct BenchRx {
+    bytes: u64,
+    packets: u64,
+    first_seq: Option<u64>,
+    max_seq: u64,
 }
 
 enum Out {
@@ -160,6 +178,9 @@ pub struct Node {
     punched: HashSet<u32>,
     /// Our outside address from a router port mapping.
     mapped: Option<SocketAddr>,
+    bench_seq: u64,
+    bench_sent: u64,
+    bench_rx: HashMap<u32, BenchRx>,
 }
 
 fn rand_u64() -> u64 {
@@ -183,7 +204,7 @@ fn ms(d: Duration) -> String {
 
 /// Runs a datagram through a tunnel, draining queued packets (see boringtun's decapsulate).
 fn decap(tunn: &mut Tunn, src: Option<std::net::IpAddr>, data: &[u8]) -> Vec<Out> {
-    let mut buf = vec![0u8; BUF];
+    let mut buf = vec![0u8; PKT_BUF.max(data.len() + 64)];
     let mut outs = Vec::new();
     let mut first = true;
     loop {
@@ -206,7 +227,7 @@ fn decap(tunn: &mut Tunn, src: Option<std::net::IpAddr>, data: &[u8]) -> Vec<Out
 }
 
 fn encap(tunn: &mut Tunn, payload: &[u8]) -> Option<Vec<u8>> {
-    let mut buf = vec![0u8; BUF];
+    let mut buf = vec![0u8; PKT_BUF.max(payload.len() + 64)];
     match tunn.encapsulate(payload, &mut buf) {
         TunnResult::WriteToNetwork(p) => Some(p.to_vec()),
         _ => None,
@@ -214,7 +235,7 @@ fn encap(tunn: &mut Tunn, payload: &[u8]) -> Option<Vec<u8>> {
 }
 
 fn timers(tunn: &mut Tunn) -> Option<Vec<u8>> {
-    let mut buf = vec![0u8; BUF];
+    let mut buf = vec![0u8; PKT_BUF];
     match tunn.update_timers(&mut buf) {
         TunnResult::WriteToNetwork(p) => Some(p.to_vec()),
         _ => None,
@@ -249,6 +270,9 @@ impl Node {
             asked: HashMap::new(),
             punched: HashSet::new(),
             mapped: None,
+            bench_seq: 0,
+            bench_sent: 0,
+            bench_rx: HashMap::new(),
         })
     }
 
@@ -319,8 +343,24 @@ impl Node {
         let mut last_probe = Instant::now();
         let mut last_status = Instant::now();
         let mut last_retry = Instant::now();
+        let mut bench_tick = tokio::time::interval(Duration::from_millis(1));
+        bench_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut last_bench_report = Instant::now();
+        let mut bench_due = 0.0f64;
+        let mut bench_last = Instant::now();
         loop {
             tokio::select! {
+                _ = bench_tick.tick(), if self.cfg.bench.is_some() => {
+                    // Pace by elapsed time, so a late tick sends what it owes.
+                    let bytes_per_s = self.cfg.bench_rate as f64 * 1_000_000.0 / 8.0;
+                    bench_due += bench_last.elapsed().as_secs_f64() * bytes_per_s / BENCH_PAYLOAD as f64;
+                    bench_last = Instant::now();
+                    bench_due = bench_due.min(256.0);
+                    while bench_due >= 1.0 {
+                        bench_due -= 1.0;
+                        self.bench_send();
+                    }
+                }
                 r = self.sock.recv_from(&mut buf) => {
                     match r {
                         Ok((n, addr)) => {
@@ -362,6 +402,11 @@ impl Node {
                         let down: Vec<u32> = self.neighbors.iter().filter(|(_, n)| n.bootstrap && !n.up).map(|(id, _)| *id).collect();
                         for id in down { self.initiate(id); }
                     }
+                    if last_bench_report.elapsed() >= Duration::from_secs(1) {
+                        let secs = last_bench_report.elapsed().as_secs_f64();
+                        last_bench_report = Instant::now();
+                        self.bench_report(secs);
+                    }
                     if last_status.elapsed() >= Duration::from_secs(10) {
                         last_status = Instant::now();
                         self.status();
@@ -381,7 +426,7 @@ impl Node {
 
     fn initiate(&mut self, id: u32) {
         let Some(n) = self.neighbors.get_mut(&id) else { return };
-        let mut buf = vec![0u8; BUF];
+        let mut buf = vec![0u8; PKT_BUF];
         if let TunnResult::WriteToNetwork(p) = n.tunn.format_handshake_initiation(&mut buf, false) {
             let p = p.to_vec();
             if let Some(addr) = n.addr {
@@ -1033,7 +1078,60 @@ impl Node {
                 Ok(cands) => self.on_punch(sid, cands),
                 Err(e) => log(format!("bad direct-link offer: {e}")),
             },
+            Some(4) if body.len() >= 9 => {
+                let seq = u64::from_be_bytes(body[1..9].try_into().unwrap());
+                let r = self.bench_rx.entry(sid).or_default();
+                r.bytes += body.len() as u64;
+                r.packets += 1;
+                r.first_seq.get_or_insert(seq);
+                r.max_seq = r.max_seq.max(seq);
+            }
             _ => {}
+        }
+    }
+
+    // ---- bench: throughput -------------------------------------------------------
+
+    fn bench_send(&mut self) {
+        let dest = self.cfg.bench.unwrap();
+        let Some(x_pub) = self.routes.get(&dest).and_then(|r| r.values().next()).map(|r| r.ann.x_pub) else {
+            return self.request_path(dest);
+        };
+        let sid = match self.session_by_key.get(&x_pub) {
+            Some(sid) => *sid,
+            None => match self.session_to(dest) {
+                Some(sid) => sid,
+                None => return,
+            },
+        };
+        // Only once the session and a path are confirmed, so the first second isn't all loss.
+        let ready = self.sessions[&sid].tunn.time_since_last_handshake().is_some()
+            && self.sessions[&sid].paths.iter().any(|k| self.ends.get(k).is_some_and(|e| e.acked));
+        if !ready {
+            if self.bench_seq == 0 {
+                self.bench_seq = 1;
+                self.send_app(sid, &[0u8]); // starts the handshake
+            }
+            return;
+        }
+        let mut body = vec![0u8; BENCH_PAYLOAD];
+        body[0] = 4;
+        body[1..9].copy_from_slice(&self.bench_seq.to_be_bytes());
+        self.bench_seq += 1;
+        self.bench_sent += BENCH_PAYLOAD as u64;
+        self.send_app(sid, &body);
+    }
+
+    fn bench_report(&mut self, secs: f64) {
+        if self.cfg.bench.is_some() && self.bench_sent > 0 {
+            log(format!("bench sent {:.1} Mbit/s", self.bench_sent as f64 * 8.0 / secs / 1e6));
+            self.bench_sent = 0;
+        }
+        for (sid, r) in self.bench_rx.drain() {
+            let expected = r.first_seq.map_or(0, |f| r.max_seq - f + 1);
+            let loss = if expected > 0 { 100.0 * (1.0 - r.packets as f64 / expected as f64) } else { 0.0 };
+            let who = self.sessions.get(&sid).map(|s| hex::encode(&s.peer_x[..4])).unwrap_or_default();
+            log(format!("bench from {who}: {:.1} Mbit/s received, loss {:.1}%", r.bytes as f64 * 8.0 / secs / 1e6, loss.max(0.0)));
         }
     }
 
@@ -1083,7 +1181,7 @@ impl Node {
             Some(id) => *id,
             None => self.add_neighbor(peer, Some(first), false),
         };
-        let mut buf = vec![0u8; BUF];
+        let mut buf = vec![0u8; PKT_BUF];
         let n = self.neighbors.get_mut(&id).unwrap();
         if let TunnResult::WriteToNetwork(p) = n.tunn.format_handshake_initiation(&mut buf, true) {
             let p = p.to_vec();
