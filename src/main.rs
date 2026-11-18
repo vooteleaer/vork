@@ -4,6 +4,7 @@ mod control;
 mod identity;
 mod node;
 mod lan;
+mod links;
 mod portmap;
 mod reach;
 #[cfg(windows)]
@@ -62,6 +63,54 @@ enum Cmd {
         /// Print the raw JSON.
         #[arg(long)]
         json: bool,
+    },
+    /// Link another node as one of your devices (ADR-0024): it asks the other
+    /// side, whose owner allows it (or a code from its QR code links at once).
+    Link {
+        /// Its address (32 hex digits), or a `vork:link/…` from its QR code.
+        address: String,
+        #[arg(long)]
+        code: Option<String>,
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
+    /// A link and its QR code, as Resilio's: a device that opens it is linked
+    /// (at once, or once you allow it with --approve).
+    LinkCode {
+        /// How long it works: 10m, 3d… (default 10m, at most 30d).
+        #[arg(long = "for", default_value = "10m")]
+        valid: String,
+        /// How many devices may use it (0: any) [default: 1].
+        #[arg(long, default_value_t = 1)]
+        uses: u64,
+        /// Ask me for each device that uses it.
+        #[arg(long)]
+        approve: bool,
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
+    /// Who asks to be linked, and whom this node asked.
+    Requests {
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
+    /// Allow a node that asked to be linked.
+    Allow {
+        address: String,
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
+    /// Dismiss a node that asked to be linked.
+    Dismiss {
+        address: String,
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
+    /// No longer one of your devices (the other side is told).
+    Unlink {
+        address: String,
+        #[arg(long)]
+        config: Option<PathBuf>,
     },
     /// Install or remove the Windows service.
     #[cfg(windows)]
@@ -297,6 +346,31 @@ pub async fn run_node(s: Settings, stop: Option<tokio::sync::watch::Receiver<boo
     node::Node::new(me, s.cfg, state).await?.run(stop).await
 }
 
+/// `90s`, `10m`, `2h`, `3d` (a bare number is seconds).
+fn parse_duration(s: &str) -> Result<u64> {
+    let s = s.trim();
+    let (n, unit) = s.split_at(s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len()));
+    let n: u64 = n.parse().with_context(|| format!("not a duration: {s}"))?;
+    Ok(n * match unit {
+        "" | "s" => 1,
+        "m" => 60,
+        "h" => 3600,
+        "d" => 86400,
+        u => bail!("unit {u}: s, m, h or d"),
+    })
+}
+
+/// One control request to the running node; its answer, or its error as one.
+async fn ask_node(config: Option<PathBuf>, request: serde_json::Value) -> Result<serde_json::Value> {
+    let ep = settings(RunArgs { config, ..Default::default() })?.cfg.control.context("no control endpoint known: give --config")?;
+    let answer = control::ask(&ep, &request.to_string()).await?;
+    let v: serde_json::Value = serde_json::from_str(&answer).context("bad answer from the node")?;
+    if let Some(e) = v["error"].as_str() {
+        bail!("{e}");
+    }
+    Ok(v)
+}
+
 fn print_status(v: &serde_json::Value) {
     let g = |k: &str| v.get(k).cloned().unwrap_or_default();
     println!("address      {}", g("address").as_str().unwrap_or("?"));
@@ -348,6 +422,7 @@ fn print_status(v: &serde_json::Value) {
 /// The network's own commands; everything else belongs to storage.
 const NETWORK_COMMANDS: &[&str] = &[
     "init", "keygen", "show", "run", "status", "service", "service-run", "help", "-h", "--help", "-V", "--version",
+    "link", "link-code", "requests", "allow", "dismiss", "unlink",
 ];
 
 /// Whether `vork ARGS` is a storage command. `status` is both: on its own
@@ -448,6 +523,66 @@ async fn network_main() -> Result<()> {
             } else {
                 print_status(&serde_json::from_str(&answer).context("bad answer from the node")?);
             }
+        }
+        Cmd::Link { address, code, config } => {
+            // A QR code's text: vork:link/ADDRESS?c=CODE&n=NAME
+            let (address, code) = match address.strip_prefix("vork-link:").or_else(|| address.strip_prefix("vork:link/")) {
+                Some(rest) => {
+                    let (a, q) = rest.split_once('?').unwrap_or((rest, ""));
+                    let c = q.split('&').find_map(|kv| kv.strip_prefix("c=")).map(str::to_string);
+                    (a.to_string(), code.or(c))
+                }
+                None => (address, code),
+            };
+            let r = ask_node(config, serde_json::json!({ "cmd": "link", "address": address, "code": code.unwrap_or_default() })).await?;
+            if r["already"].as_bool() == Some(true) {
+                println!("already one of your devices");
+            } else {
+                println!("asked {address}: it's linked once its owner allows it (vork requests shows the state)");
+            }
+        }
+        Cmd::LinkCode { valid, uses, approve, config } => {
+            let secs = parse_duration(&valid)?;
+            let r = ask_node(config, serde_json::json!({ "cmd": "link_code", "valid_s": secs, "uses": uses, "approve": approve })).await?;
+            let uri = r["uri"].as_str().unwrap_or_default();
+            if let Ok(q) = qrcode::QrCode::new(uri.as_bytes()) {
+                println!("{}", q.render::<qrcode::render::unicode::Dense1x2>().quiet_zone(true).build());
+            }
+            println!("{uri}");
+            println!("Scan it with the vØrk app, or on another node: vork link '{uri}'");
+            let mins = r["valid_s"].as_u64().unwrap_or(600) / 60;
+            let times = match r["uses"].as_u64() {
+                None => "any number of devices".to_string(),
+                Some(1) => "one device".to_string(),
+                Some(n) => format!("{n} devices"),
+            };
+            println!("Good for {mins} minutes, for {times}{}.", if approve { ", each one allowed by you (vork requests)" } else { "" });
+        }
+        Cmd::Requests { config } => {
+            let r = ask_node(config, serde_json::json!({ "cmd": "status" })).await?;
+            let req = r["links"]["requests"].as_array().cloned().unwrap_or_default();
+            let pend = r["links"]["pending"].as_array().cloned().unwrap_or_default();
+            if req.is_empty() && pend.is_empty() {
+                println!("no link requests");
+            }
+            for q in req {
+                println!("asks to be linked: {} {}   vork allow {}", q["address"].as_str().unwrap_or("?"), q["name"].as_str().unwrap_or(""), q["address"].as_str().unwrap_or("?"));
+            }
+            for p in pend {
+                println!("waiting for its owner: {}", p["address"].as_str().unwrap_or("?"));
+            }
+        }
+        Cmd::Allow { address, config } => {
+            ask_node(config, serde_json::json!({ "cmd": "link_allow", "address": address })).await?;
+            println!("linked: {address} is one of your devices");
+        }
+        Cmd::Dismiss { address, config } => {
+            ask_node(config, serde_json::json!({ "cmd": "link_dismiss", "address": address })).await?;
+            println!("dismissed {address}");
+        }
+        Cmd::Unlink { address, config } => {
+            ask_node(config, serde_json::json!({ "cmd": "unlink", "address": address })).await?;
+            println!("unlinked {address} (it's told)");
         }
         #[cfg(windows)]
         Cmd::Service { action } => match action {

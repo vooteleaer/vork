@@ -63,4 +63,6 @@ dependencies {
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons)
+    // Scanning another device's pairing code (Google's scanner: no camera permission for the app).
+    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
 }

@@ -40,3 +40,4 @@ New decisions copy [adr/0000-template.md](adr/0000-template.md). *Accepted* mean
 | [0021](adr/0021-compatibility-addresses.md) | Compatibility addresses: IPv6 per identity, local IPv4 aliases | proposed |
 | [0022](adr/0022-storage-leaves-reticulum.md) | Storage leaves Reticulum: destinations, sessions, requests | accepted |
 | [0023](adr/0023-reachability-learned.md) | Reachability is learned from others, never claimed | accepted |
+| [0024](adr/0024-linking-devices.md) | Devices are linked with both sides agreeing | accepted |

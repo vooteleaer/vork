@@ -24,6 +24,8 @@ class NodeService : Service() {
     private var supervisor: Thread? = null
     private var multicast: android.net.wifi.WifiManager.MulticastLock? = null
     private val wake = java.util.concurrent.Semaphore(0)
+    /** Link requests already shown as notifications. */
+    private val told = mutableSetOf<String>()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -111,6 +113,23 @@ class NodeService : Service() {
                     }
                 }
                 getSystemService(NotificationManager::class.java).notify(NOTIFICATION, notification(text))
+                // Someone asks to be one of this owner's devices: say so, even with the app closed.
+                val asking = s.optJSONObject("links")?.optJSONArray("requests")
+                for (i in 0 until (asking?.length() ?: 0)) {
+                    val r = asking!!.getJSONObject(i)
+                    val address = r.optString("address")
+                    if (address in told) continue
+                    told += address
+                    val open = PendingIntent.getActivity(this, 2, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+                    val n = Notification.Builder(this, CHANNEL)
+                        .setSmallIcon(R.drawable.ic_status)
+                        .setContentTitle("${r.optString("name").ifEmpty { address.take(8) }} wants to be one of your devices")
+                        .setContentText("Open vØrk to allow or dismiss it")
+                        .setContentIntent(open)
+                        .setAutoCancel(true)
+                        .build()
+                    getSystemService(NotificationManager::class.java).notify(address.hashCode(), n)
+                }
                 wake.tryAcquire(15_000L, java.util.concurrent.TimeUnit.MILLISECONDS)
                 wake.drainPermits()
             } catch (e: InterruptedException) {

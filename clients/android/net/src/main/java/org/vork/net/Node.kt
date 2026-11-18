@@ -42,6 +42,15 @@ class Node(context: Context) {
     fun removePeer(addr: String): JSONObject = ask(JSONObject().put("cmd", "peer_remove").put("addr", addr))
     fun addDevice(address: String): JSONObject = ask(JSONObject().put("cmd", "device_add").put("address", address))
     fun removeDevice(address: String): JSONObject = ask(JSONObject().put("cmd", "device_remove").put("address", address))
+    // Linking devices (vØrk ADR-0024): asked, allowed or dismissed by the other side's owner.
+    fun link(address: String, code: String = ""): JSONObject = ask(JSONObject().put("cmd", "link").put("address", address).put("code", code))
+    fun allow(address: String): JSONObject = ask(JSONObject().put("cmd", "link_allow").put("address", address))
+    fun dismiss(address: String): JSONObject = ask(JSONObject().put("cmd", "link_dismiss").put("address", address))
+    fun unlink(address: String): JSONObject = ask(JSONObject().put("cmd", "unlink").put("address", address))
+    /** A link (and its QR code) as Resilio's: valid this long, for this many devices (0: any), each allowed or not. */
+    fun linkCode(validS: Long, uses: Int, approve: Boolean): JSONObject =
+        ask(JSONObject().put("cmd", "link_code").put("valid_s", validS).put("uses", uses).put("approve", approve))
+
     /** The node lets go of the interface (the VPN is off). */
     fun interfaceOff(): JSONObject = ask(JSONObject().put("cmd", "interface_off"))
 }

@@ -3021,6 +3021,7 @@ dependencies = [
  "igd-next",
  "libc",
  "mdns-sd",
+ "qrcode",
  "serde",
  "serde_json",
  "sha2",

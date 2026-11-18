@@ -63,6 +63,20 @@ const MAX_HOPS: u8 = 16;
 // Session messages (inside WireGuard): datagrams 1–4, the stream 8–9.
 const APP_SEG: u8 = 8;
 const APP_ACK: u8 = 9;
+/// Where link messages go (ADR-0024): a built-in path every node serves.
+const LINK_PATH: &str = "/vork/link";
+/// A link message not answered is sent again after this.
+const LINK_AGAIN: Duration = Duration::from_secs(20);
+/// A link code is good this long unless given otherwise.
+const LINK_CODE_TTL: Duration = Duration::from_secs(600);
+
+/// A link this node handed out (ADR-0024).
+struct LinkCode {
+    code: String,
+    until: Instant,
+    uses: Option<u32>,
+    approve: bool,
+}
 /// An IPv6 packet between overlay addresses (M2), as a datagram.
 const APP_IP: u8 = 5;
 // Messages on the stream.
@@ -71,6 +85,7 @@ const MSG_RESPONSE: u8 = 2;
 const MSG_IDENTIFY: u8 = 3;
 pub const STATUS_OK: u8 = 0;
 pub const STATUS_NO_PATH: u8 = 1;
+pub const STATUS_REFUSED: u8 = 2;
 const LABEL_IDENTIFY: &[u8] = b"vork/v0/identify";
 const LABEL_SESSION: &[u8] = b"vork/v0/session";
 /// A dial counts as cold, so its answer proves the neighbor reachable
@@ -395,6 +410,16 @@ pub struct Node {
     ip_peer: HashMap<Hash, u32>,
     /// Nodes found on the local network (mDNS), by WireGuard key: when.
     lan_seen: HashMap<[u8; 32], Instant>,
+    /// Linking devices with both sides agreeing (ADR-0024).
+    links: crate::links::Links,
+    /// Link codes this node handed out (QR codes, links), as Resilio's: until
+    /// when, how many uses are left (None: any), and whether the owner still
+    /// approves each one.
+    link_codes: Vec<LinkCode>,
+    /// Outbox entries sent: when (sent again until answered).
+    link_sent: HashMap<String, Instant>,
+    /// Sessions opened for links in which we identified.
+    link_identified: HashSet<u32>,
 }
 
 /// Socket buffers big enough to absorb bursts (the Linux default, ~200 KB,
@@ -532,6 +557,7 @@ impl Node {
         let send_sock = std_sock.try_clone()?;
         let sock = Arc::new(UdpSocket::from_std(std_sock)?);
         let my_hash = me.hash();
+        let links = crate::links::Links::open(state.dir());
         let mut node = Node {
             my_hash,
             local: HashMap::new(),
@@ -571,6 +597,10 @@ impl Node {
             ip_unknown: HashMap::new(),
             ip_peer: HashMap::new(),
             lan_seen: HashMap::new(),
+            links,
+            link_codes: Vec::new(),
+            link_sent: HashMap::new(),
+            link_identified: HashSet::new(),
         };
         for name in node.cfg.destinations.clone() {
             let me = node.me_arc.clone();
@@ -756,6 +786,7 @@ impl Node {
         let mut last_seek = Instant::now();
         let mut sought = false;
         let mut last_share = Instant::now();
+        let mut last_links = Instant::now();
         let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
         let mut mapped_rx = None;
         let mut mapper = None;
@@ -901,6 +932,10 @@ impl Node {
                         last_seek = Instant::now();
                         sought = true;
                         self.seek_neighbors();
+                    }
+                    if last_links.elapsed() >= Duration::from_secs(5) {
+                        last_links = Instant::now();
+                        self.send_links();
                     }
                     if last_share.elapsed() >= SHARE_EVERY {
                         last_share = Instant::now();
@@ -1988,6 +2023,18 @@ impl Node {
                 let status = m[5];
                 let Some(s) = self.sessions.get_mut(&sid) else { return };
                 let Some((path, sent, for_client)) = s.waiting.remove(&id) else { return };
+                // A link message arrived: off the outbox.
+                if path == LINK_PATH && for_client.is_none() {
+                    if let Some(dest) = s.peer_hash {
+                        let a = hex::encode(dest);
+                        if status == STATUS_OK {
+                            self.links.delivered(&a);
+                            self.link_sent.remove(&a);
+                            self.links.save();
+                        }
+                    }
+                    return;
+                }
                 if let Some((client, req)) = for_client {
                     let frame = vork_api::FromNode::Response { req, status, body: m[6..].to_vec() };
                     self.to_client(client, &frame);
@@ -2148,6 +2195,7 @@ impl Node {
     fn serve(&mut self, _sid: u32, path: &str, body: &[u8]) -> (u8, Vec<u8>) {
         match path {
             "/vork/echo" => (STATUS_OK, body.to_vec()),
+            "/vork/link" => self.on_link_message(_sid, body),
             "/vork/blob" if body.len() == 4 => {
                 let n = (u32::from_be_bytes(body.try_into().unwrap()) as usize).min(stream::MAX_MESSAGE - 64);
                 (STATUS_OK, (0..n).map(|i| (i % 251) as u8).collect())
@@ -2509,6 +2557,10 @@ impl Node {
                 self.ip_identified.clear();
                 json!({ "ok": true }).to_string()
             }
+            Some("link" | "link_allow" | "link_dismiss" | "unlink" | "link_code") => match self.on_link_command(cmd, &v) {
+                Ok(answer) => answer.to_string(),
+                Err(e) => json!({ "error": e }).to_string(),
+            },
             Some("set" | "peer_add" | "peer_remove" | "device_add" | "device_remove") => match self.change_settings(cmd, &v) {
                 Ok(restart) => json!({ "ok": true, "restart": restart }).to_string(),
                 Err(e) => json!({ "error": e }).to_string(),
@@ -2533,6 +2585,181 @@ impl Node {
             }
             _ => json!({ "error": "unknown command; try {\"cmd\":\"status\"}" }).to_string(),
         }
+    }
+
+    // ---- linking devices (ADR-0024) ---------------------------------------------------
+
+    fn is_device(&self, h: &Hash) -> bool {
+        self.cfg.devices.contains(h)
+    }
+
+    /// Adds or removes a device in `vork.toml` (both sides agreed, or one unlinked).
+    fn set_device(&mut self, address: &str, on: bool) {
+        let cmd = if on { "device_add" } else { "device_remove" };
+        if let Err(e) = self.change_settings(cmd, &json!({ "address": address })) {
+            warn(format!("{cmd} {address}: {e}"));
+        }
+    }
+
+    fn on_link_command(&mut self, cmd: &str, v: &serde_json::Value) -> Result<serde_json::Value, String> {
+        if cmd == "link_code" {
+            // A link (and its QR code), as Resilio's: valid for a while,
+            // for some uses, linking at once or asking the owner each time.
+            let mut b = [0u8; 8];
+            getrandom::getrandom(&mut b).map_err(|e| e.to_string())?;
+            let code = hex::encode(b);
+            let valid = v.get("valid_s").and_then(|x| x.as_u64()).map(Duration::from_secs).unwrap_or(LINK_CODE_TTL).min(Duration::from_secs(30 * 86400));
+            let uses = match v.get("uses").and_then(|x| x.as_u64()) {
+                Some(0) => None,
+                Some(n) => Some(n as u32),
+                None => Some(1),
+            };
+            let approve = v.get("approve").and_then(|x| x.as_bool()).unwrap_or(false);
+            self.link_codes.retain(|c| c.until > Instant::now());
+            self.link_codes.push(LinkCode { code: code.clone(), until: Instant::now() + valid, uses, approve });
+            let me = hex::encode(self.my_hash);
+            let name: String = self.cfg.name.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-._~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect();
+            let uri = format!("vork-link:{me}?c={code}&n={name}");
+            // The QR code as rows of 0/1, for apps that draw it themselves.
+            let qr: Vec<String> = qrcode::QrCode::new(uri.as_bytes())
+                .map(|q| {
+                    let w = q.width();
+                    q.to_colors().chunks(w).map(|row| row.iter().map(|c| if *c == qrcode::Color::Dark { '1' } else { '0' }).collect()).collect()
+                })
+                .unwrap_or_default();
+            return Ok(json!({ "address": me, "code": code, "uri": uri, "qr": qr, "valid_s": valid.as_secs(), "uses": uses, "approve": approve }));
+        }
+        let address = v.get("address").and_then(|a| a.as_str()).map(|a| a.trim().to_ascii_lowercase()).ok_or(format!("{cmd} needs address"))?;
+        let hash = crate::links::parse(&address).ok_or("an address is 32 hex digits")?;
+        if hash == self.my_hash {
+            return Err("that's this node".into());
+        }
+        match cmd {
+            "link" => {
+                let code = v.get("code").and_then(|c| c.as_str()).unwrap_or_default().to_string();
+                if self.is_device(&hash) {
+                    return Ok(json!({ "ok": true, "already": true }));
+                }
+                // Asked by it already: this is the answer.
+                if self.links.requests.iter().any(|r| r.address == address) {
+                    self.links.forget(&address);
+                    self.set_device(&address, true);
+                    self.links.send(&address, "accept");
+                } else {
+                    if !self.links.is_pending(&address) {
+                        self.links.pending.push(address.clone());
+                    }
+                    self.links.send(&address, if code.is_empty() { "request".to_string() } else { format!("request:{code}") }.as_str());
+                }
+            }
+            "link_allow" => {
+                if !self.links.requests.iter().any(|r| r.address == address) {
+                    return Err("no request from that node".into());
+                }
+                self.links.forget(&address);
+                self.set_device(&address, true);
+                self.links.send(&address, "accept");
+            }
+            "link_dismiss" => {
+                self.links.forget(&address);
+                self.links.send(&address, "dismiss");
+            }
+            "unlink" => {
+                self.links.forget(&address);
+                if self.is_device(&hash) {
+                    self.set_device(&address, false);
+                }
+                self.links.send(&address, "remove");
+            }
+            _ => unreachable!(),
+        }
+        self.links.save();
+        self.link_sent.remove(&address);
+        self.send_links();
+        Ok(json!({ "ok": true }))
+    }
+
+    /// Sends what's in the outbox and not sent lately, over a session in
+    /// which this node identifies (the receiver must know who asks).
+    fn send_links(&mut self) {
+        let due: Vec<(String, String)> = self
+            .links
+            .outbox
+            .iter()
+            .filter(|o| self.link_sent.get(&o.address).is_none_or(|t| t.elapsed() >= LINK_AGAIN))
+            .map(|o| (o.address.clone(), o.op.clone()))
+            .collect();
+        for (address, op) in due {
+            let Some(dest) = crate::links::parse(&address) else { continue };
+            let Some(sid) = self.session_to(dest) else { continue }; // no route yet: later
+            if self.link_identified.insert(sid) {
+                let me = self.me_arc.clone();
+                self.identify(sid, &me);
+            }
+            let (op, code) = op.split_once(':').map_or((op.as_str(), ""), |(o, c)| (o, c));
+            let body = json!({ "op": op, "name": self.cfg.name, "code": code }).to_string();
+            self.request(sid, LINK_PATH, body.as_bytes(), None);
+            self.link_sent.insert(address, Instant::now());
+        }
+    }
+
+    /// A link message from an identified node.
+    fn on_link_message(&mut self, sid: u32, body: &[u8]) -> (u8, Vec<u8>) {
+        let Some(who) = self.sessions.get(&sid).and_then(|s| s.peer_identity) else {
+            return (STATUS_REFUSED, b"identify first".to_vec());
+        };
+        let Ok(v) = serde_json::from_slice::<serde_json::Value>(body) else { return (STATUS_REFUSED, b"bad message".to_vec()) };
+        let address = hex::encode(who);
+        let name: String = v["name"].as_str().unwrap_or_default().chars().take(64).collect();
+        match v["op"].as_str().unwrap_or_default() {
+            "request" => {
+                let code = v["code"].as_str().unwrap_or_default();
+                let now = Instant::now();
+                let valid = self.link_codes.iter().position(|c| !code.is_empty() && c.code == code && c.until > now && c.uses != Some(0));
+                let by_code = valid.is_some_and(|i| !self.link_codes[i].approve);
+                if let Some(i) = valid {
+                    if let Some(n) = self.link_codes[i].uses.as_mut() {
+                        *n -= 1;
+                    }
+                }
+                if self.is_device(&who) {
+                    self.links.send(&address, "accept"); // it lost track: tell it again
+                } else if by_code || self.links.is_pending(&address) {
+                    // A code this node gave out, or both asked: linked.
+                    self.links.forget(&address);
+                    self.set_device(&address, true);
+                    self.links.send(&address, "accept");
+                    log(format!("linked with {name} ({})", short(&who)));
+                } else if !self.links.requests.iter().any(|r| r.address == address) {
+                    self.links.requests.push(crate::links::Request { address: address.clone(), name: name.clone(), since: unix_now(), with_link: valid.is_some() });
+                    log(format!("{name} ({}) asks to be linked as one of this owner's devices", short(&who)));
+                }
+            }
+            "accept" => {
+                if self.links.is_pending(&address) {
+                    self.links.forget(&address);
+                    self.set_device(&address, true);
+                    log(format!("{name} ({}) accepted: linked", short(&who)));
+                }
+            }
+            "dismiss" => {
+                if self.links.is_pending(&address) {
+                    self.links.forget(&address);
+                    log(format!("{name} ({}) dismissed the link", short(&who)));
+                }
+            }
+            "remove" => {
+                self.links.forget(&address);
+                if self.is_device(&who) {
+                    self.set_device(&address, false);
+                    log(format!("{name} ({}) unlinked", short(&who)));
+                }
+            }
+            _ => return (STATUS_REFUSED, b"unknown op".to_vec()),
+        }
+        self.links.save();
+        self.send_links();
+        (STATUS_OK, Vec::new())
     }
 
     /// What the network app shows and changes: from `vork.toml` and as running.
@@ -2735,6 +2962,10 @@ impl Node {
             "name": self.cfg.name,
             "ip": crate::tun::overlay(&self.my_hash).to_string(),
             "settings": self.settings_json(),
+            "links": {
+                "pending": self.links.pending.iter().map(|a| json!({ "address": a, "ip": crate::links::parse(a).map(|h| crate::tun::overlay(&h).to_string()) })).collect::<Vec<_>>(),
+                "requests": self.links.requests.iter().map(|r| json!({ "address": r.address, "name": r.name, "since": r.since, "with_link": r.with_link, "ip": crate::links::parse(&r.address).map(|h| crate::tun::overlay(&h).to_string()) })).collect::<Vec<_>>(),
+            },
             // Every node known by its announce, as Tailscale lists a tailnet's machines.
             "nodes": self.known_nodes(),
             // The interface for ordinary programs (M2), if there is one: this node's address on it.

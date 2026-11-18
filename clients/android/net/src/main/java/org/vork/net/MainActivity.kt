@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -20,7 +21,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -62,8 +62,8 @@ import org.json.JSONObject
 
 /**
  * vØrk on Android, the network alone (storage is an app of its own on top):
- * Overview (this device, the interface for apps), My devices, Discovery
- * (nodes found and heard), Settings. Like Tailscale, without a server.
+ * Overview (this device, on/off), My devices (paired by a QR code shown on
+ * one and scanned with the other), Settings. Like Tailscale, without a server.
  */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -72,11 +72,44 @@ class MainActivity : ComponentActivity() {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         }
         NodeService.start(this)
+        opened(intent)
         setContent {
             MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
                 App(Node(this))
             }
         }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        opened(intent)
+    }
+
+    /** A vork-link: from another device: the app asks before linking. */
+    private fun opened(intent: android.content.Intent?) {
+        val data = intent?.dataString ?: return
+        if (data.startsWith("vork-link:")) LinkOpened.uri = data
+    }
+
+    /** Scans another device's pairing code (Google's code scanner: no camera permission here). */
+    fun scanCode() {
+        com.google.mlkit.vision.codescanner.GmsBarcodeScanning.getClient(this).startScan()
+            .addOnSuccessListener { code ->
+                val text = code.rawValue ?: return@addOnSuccessListener
+                val link = parseLink(text)
+                if (link == null || !text.startsWith("vork-link:")) {
+                    toast("That isn't a vØrk pairing code")
+                    return@addOnSuccessListener
+                }
+                // Scanned on purpose: paired at once, no second question.
+                val (address, c, name) = link
+                val node = Node(this)
+                Thread {
+                    val r = node.link(address, c)
+                    runOnUiThread { toast(r.optString("error").ifEmpty { "Pairing with ${name.ifEmpty { address.take(8) }}…" }) }
+                }.start()
+            }
+            .addOnFailureListener { e -> toast("Couldn't scan: ${e.message ?: e.javaClass.simpleName}") }
     }
 
     /** The system's VPN consent first, if it hasn't been given; then the interface. */
@@ -142,14 +175,51 @@ fun App(node: Node) {
         }
     }
     val said: (String) -> Unit = { note = it; tick++ }
+    val scope = rememberCoroutineScope()
+    // A link opened from another device: link with it?
+    LinkOpened.uri?.let { uri ->
+        val parsed = parseLink(uri)
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { LinkOpened.uri = null },
+            title = { Text("Link with ${parsed?.third?.ifEmpty { null } ?: parsed?.first?.take(8) ?: "?"}?") },
+            text = { Text(if (parsed == null) "This link isn't a vØrk device link." else "It becomes one of your devices, and this phone one of its: they see each other in My devices and link directly.") },
+            confirmButton = {
+                TextButton(enabled = parsed != null, onClick = {
+                    LinkOpened.uri = null
+                    val (address, code, _) = parsed!!
+                    scope.launch { said(io { node.link(address, code) }.optString("error").ifEmpty { "Linking…" }) }
+                }) { Text("Link") }
+            },
+            dismissButton = { TextButton(onClick = { LinkOpened.uri = null }) { Text("Cancel") } },
+        )
+    }
+    // Another device asks to be one of this owner's devices: Allow or Dismiss.
+    var later by remember { mutableStateOf(setOf<String>()) }
+    val asking = (status.optJSONObject("links")?.optJSONArray("requests") ?: JSONArray()).let { a -> (0 until a.length()).map { a.getJSONObject(it) } }
+        .firstOrNull { it.optString("address") !in later }
+    if (asking != null) {
+        val address = asking.optString("address")
+        val who = asking.optString("name").ifEmpty { address.take(8) }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { later = later + address },
+            title = { Text("$who wants to be one of your devices") },
+            text = {
+                Text(
+                    (if (asking.optBoolean("with_link")) "It came with a link you made. " else "") +
+                        "Allowed, the two see each other in My devices and link directly. Address $address",
+                )
+            },
+            confirmButton = { TextButton(onClick = { scope.launch { said(io { node.allow(address) }.optString("error").ifEmpty { "$who is one of your devices" }) } }) { Text("Allow") } },
+            dismissButton = { TextButton(onClick = { scope.launch { said(io { node.dismiss(address) }.optString("error").ifEmpty { "Dismissed" }) } }) { Text("Dismiss") } },
+        )
+    }
     Scaffold(
-        topBar = { TopAppBar(title = { Text(listOf("vØrk", "My devices", "Discovery", "Settings")[tab]) }) },
+        topBar = { TopAppBar(title = { Text(listOf("vØrk", "My devices", "Settings")[tab]) }) },
         bottomBar = {
             NavigationBar {
                 NavigationBarItem(selected = tab == 0, onClick = { tab = 0 }, icon = { Icon(Icons.Filled.Home, null) }, label = { Text("Overview") })
                 NavigationBarItem(selected = tab == 1, onClick = { tab = 1 }, icon = { Icon(Icons.Filled.Person, null) }, label = { Text("My devices") })
-                NavigationBarItem(selected = tab == 2, onClick = { tab = 2 }, icon = { Icon(Icons.Filled.Search, null) }, label = { Text("Discovery") })
-                NavigationBarItem(selected = tab == 3, onClick = { tab = 3 }, icon = { Icon(Icons.Filled.Settings, null) }, label = { Text("Settings") })
+                NavigationBarItem(selected = tab == 2, onClick = { tab = 2 }, icon = { Icon(Icons.Filled.Settings, null) }, label = { Text("Settings") })
             }
         },
     ) { inner ->
@@ -160,7 +230,6 @@ fun App(node: Node) {
             when (tab) {
                 0 -> Overview(node, status, said)
                 1 -> MyDevices(node, status, said)
-                2 -> Discovery(node, status, said)
                 else -> SettingsTab(node, status, said)
             }
         }
@@ -295,92 +364,180 @@ fun Overview(node: Node, s: JSONObject, said: (String) -> Unit) {
 
 // ---- My devices ---------------------------------------------------------------------------
 
+/** A `vork-link:` opened from another device's QR code or a shared link: confirmed before linking. */
+object LinkOpened {
+    var uri by mutableStateOf<String?>(null)
+}
+
+/** `vork-link:ADDRESS?c=CODE&n=NAME`, or a bare address: (address, code, name). */
+fun parseLink(text: String): Triple<String, String, String>? {
+    val t = text.trim()
+    val body = t.removePrefix("vork-link:").removePrefix("vork:link/")
+    val address = body.substringBefore('?').lowercase()
+    if (address.length != 32 || !address.all { it in "0123456789abcdef" }) return null
+    val query = body.substringAfter('?', "").split('&').mapNotNull { kv -> kv.split('=', limit = 2).takeIf { it.size == 2 }?.let { it[0] to java.net.URLDecoder.decode(it[1], "UTF-8") } }.toMap()
+    return Triple(address, query["c"] ?: "", query["n"] ?: "")
+}
+
 @Composable
 fun MyDevices(node: Node, s: JSONObject, said: (String) -> Unit) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val copy = copier(said)
     var adding by remember { mutableStateOf("") }
+    var makeLink by remember { mutableStateOf(false) }
+    if (makeLink) LinkCodeDialog(node, said) { makeLink = false }
     val devices = strings(s.optJSONObject("settings")?.optJSONArray("devices"))
     val known = nodes(s).associateBy { it.optString("address") }
+    val links = s.optJSONObject("links") ?: JSONObject()
+    val pending = (links.optJSONArray("pending") ?: JSONArray()).let { a -> (0 until a.length()).map { a.getJSONObject(it) } }
     LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            Text(
-                "Your other devices: they get direct links with this one, and are listed here even when away. Add one by its address (vØrk → Overview → Address on it), or from Discovery.",
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
-        if (devices.isEmpty()) item { Text("None yet.", style = MaterialTheme.typography.bodySmall) }
-        items(devices) { address ->
-            val n = known[address]
-            val remove: @Composable () -> Unit = {
-                TextButton(onClick = { scope.launch { said(io { node.removeDevice(address) }.optString("error").ifEmpty { "Removed from your devices" }) } }) { Text("Remove") }
-            }
-            if (n != null) {
-                NodeCard(n, copy, remove)
-            } else {
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text(address.take(8), style = MaterialTheme.typography.titleMedium)
-                        Text("Not heard now: away, or not connected to any node this one knows", style = MaterialTheme.typography.bodySmall)
-                        val ip = "fd" + address.take(2) + ":" + address.substring(2, 30).chunked(4).joinToString(":")
-                        AddressLines(ip, address, address.take(8), copy)
-                        remove()
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Pair a device", style = MaterialTheme.typography.titleMedium)
+                    Text("Show a pairing code on one device and scan it with the other: they're each other's devices then. A server shows its code with `vork link-code`.", style = MaterialTheme.typography.bodySmall)
+                    Row(Modifier.padding(top = 8.dp)) {
+                        Button(onClick = { makeLink = true }) { Text("Show a code") }
+                        Spacer(Modifier.width(8.dp))
+                        OutlinedButton(onClick = { (context as? MainActivity)?.scanCode() }) { Text("Scan a code") }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(adding, { adding = it.trim() }, label = { Text("Or paste a link (vork-link:…)") }, singleLine = true, modifier = Modifier.weight(1f))
+                        Spacer(Modifier.width(8.dp))
+                        Button(enabled = parseLink(adding) != null, onClick = {
+                            val (address, code, _) = parseLink(adding)!!
+                            scope.launch {
+                                val r = io { node.link(address, code) }
+                                said(r.optString("error").ifEmpty { if (code.isEmpty()) "Asked: linked once its owner allows it" else "Linking…" })
+                                adding = ""
+                            }
+                        }) { Text("Link") }
                     }
                 }
             }
         }
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(adding, { adding = it.trim() }, label = { Text("A device's address (32 hex digits)") }, singleLine = true, modifier = Modifier.weight(1f))
-                Spacer(Modifier.width(8.dp))
-                Button(enabled = adding.length == 32, onClick = {
-                    scope.launch {
-                        said(io { node.addDevice(adding) }.optString("error").ifEmpty { "Added to your devices" })
-                        adding = ""
+        if (pending.isNotEmpty()) {
+            item { Text("Waiting for the other side (${pending.size})", style = MaterialTheme.typography.titleSmall) }
+            items(pending) { p ->
+                val address = p.optString("address")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(known[address]?.let { displayName(it) } ?: address.take(8), modifier = Modifier.weight(1f))
+                    TextButton(onClick = { scope.launch { said(io { node.unlink(address) }.optString("error").ifEmpty { "Cancelled" }) } }) { Text("Cancel") }
+                }
+            }
+        }
+        item { Text("Your devices (${devices.size})", style = MaterialTheme.typography.titleSmall) }
+        if (devices.isEmpty()) item { Text("None yet.", style = MaterialTheme.typography.bodySmall) }
+        items(devices) { address ->
+            val n = known[address]
+            val unlink: @Composable () -> Unit = {
+                TextButton(onClick = { scope.launch { said(io { node.unlink(address) }.optString("error").ifEmpty { "Unlinked (the other device is told)" }) } }) { Text("Unlink") }
+            }
+            if (n != null) {
+                NodeCard(n, copy, unlink)
+            } else {
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text(address.take(8), style = MaterialTheme.typography.titleMedium)
+                        Text("Away: not heard now", style = MaterialTheme.typography.bodySmall)
+                        val ip = "fd" + address.take(2) + ":" + address.substring(2, 30).chunked(4).joinToString(":")
+                        AddressLines(ip, address, address.take(8), copy)
+                        unlink()
                     }
-                }) { Text("Add") }
+                }
             }
         }
     }
 }
 
-// ---- Discovery ---------------------------------------------------------------------------
-
+/** Makes a link with Resilio's choices, then shows it as a QR code and text to copy or send. */
 @Composable
-fun Discovery(node: Node, s: JSONObject, said: (String) -> Unit) {
+fun LinkCodeDialog(node: Node, said: (String) -> Unit, close: () -> Unit) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val copy = copier(said)
-    var query by remember { mutableStateOf("") }
-    var showAll by remember { mutableStateOf(false) }
-    val devices = strings(s.optJSONObject("settings")?.optJSONArray("devices")).toSet()
-    val all = nodes(s).filter { it.optString("address") !in devices }
-    val lan = all.filter { it.optBoolean("on_lan") }
-    val connected = all.filter { !it.optBoolean("on_lan") && it.optBoolean("direct") }
-    val rest = all.filter { !it.optBoolean("on_lan") && !it.optBoolean("direct") }
-        .filter { query.isBlank() || displayName(it).contains(query, true) || it.optString("address").startsWith(query.lowercase()) }
-    val add: (JSONObject) -> @Composable () -> Unit = { n ->
-        {
-            TextButton(onClick = { scope.launch { said(io { node.addDevice(n.optString("address")) }.optString("error").ifEmpty { "${displayName(n)} is one of your devices now" }) } }) {
-                Text("This is my device")
-            }
-        }
+    var valid by remember { mutableStateOf(600L) }
+    var many by remember { mutableStateOf(false) }
+    var approve by remember { mutableStateOf(false) }
+    var made by remember { mutableStateOf<JSONObject?>(null) }
+    var options by remember { mutableStateOf(false) }
+    // Made at once: one device, 10 minutes, linked without asking (the code is the consent).
+    LaunchedEffect(Unit) {
+        val r = io { node.linkCode(valid, 1, false) }
+        if (r.has("error")) { said(r.optString("error")); close() } else made = r
     }
-    LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Text("On this network (${lan.size})", style = MaterialTheme.typography.titleSmall) }
-        if (lan.isEmpty()) item { Text("No vØrk node found on this Wi-Fi.", style = MaterialTheme.typography.bodySmall) }
-        items(lan) { NodeCard(it, copy, add(it)) }
-        item { Text("Connected (${connected.size})", style = MaterialTheme.typography.titleSmall) }
-        if (connected.isEmpty()) item { Text("No other node linked directly.", style = MaterialTheme.typography.bodySmall) }
-        items(connected) { NodeCard(it, copy, add(it)) }
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { showAll = !showAll }) {
-                Text("Elsewhere on the network (${rest.size})", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                Text(if (showAll) "Hide" else "Show", style = MaterialTheme.typography.labelLarge)
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = close,
+        title = { Text(if (options) "A pairing code" else "Scan it with the other device") },
+        text = {
+            val m = made
+            if (options || m == null) {
+                Column {
+                    Text("Valid for", style = MaterialTheme.typography.labelLarge)
+                    Row {
+                        for ((label, secs) in listOf("10 min" to 600L, "1 day" to 86_400L, "3 days" to 259_200L, "7 days" to 604_800L)) {
+                            TextButton(onClick = { valid = secs }) { Text(if (valid == secs) "• $label" else label) }
+                        }
+                    }
+                    Toggle("Any number of devices (else one)", many) { many = it }
+                    Toggle("Ask me for each device", approve) { approve = it }
+                }
+            } else {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    QrCode(m.optJSONArray("qr") ?: JSONArray())
+                    Text(m.optString("uri"), style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace))
+                    Text(
+                        "Scan it with the other phone's camera, or send it. Valid ${if (valid >= 86_400) "${valid / 86_400} day(s)" else "${valid / 60} min"}, " +
+                            (if (many) "for any number of devices" else "for one device") + if (approve) "; you allow each one." else ".",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Row {
+                        TextButton(onClick = { copy("Link", m.optString("uri")) }) { Text("Copy") }
+                        TextButton(onClick = {
+                            val send = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain").putExtra(android.content.Intent.EXTRA_TEXT, m.optString("uri"))
+                            context.startActivity(android.content.Intent.createChooser(send, "Send the link"))
+                        }) { Text("Send") }
+                    }
+                }
             }
-        }
-        if (showAll) {
-            item { OutlinedTextField(query, { query = it }, label = { Text("Search by name or address") }, singleLine = true, modifier = Modifier.fillMaxWidth()) }
-            items(rest.take(200)) { NodeCard(it, copy, add(it)) }
+        },
+        confirmButton = {
+            if (options) {
+                TextButton(onClick = {
+                    scope.launch {
+                        val r = io { node.linkCode(valid, if (many) 0 else 1, approve) }
+                        if (r.has("error")) { said(r.optString("error")); close() } else { made = r; options = false }
+                    }
+                }) { Text("Make the code") }
+            } else {
+                TextButton(onClick = close) { Text("Done") }
+            }
+        },
+        dismissButton = { if (!options) TextButton(onClick = { options = true }) { Text("Options") } },
+    )
+}
+
+/** A QR code from the node's rows of 0 and 1. */
+@Composable
+fun QrCode(rows: JSONArray) {
+    val n = rows.length()
+    if (n == 0) return
+    androidx.compose.foundation.Canvas(Modifier.padding(8.dp).width(240.dp).height(240.dp)) {
+        val quiet = 4
+        val cell = size.width / (n + 2 * quiet)
+        drawRect(androidx.compose.ui.graphics.Color.White)
+        for (y in 0 until n) {
+            val row = rows.getString(y)
+            for (x in row.indices) {
+                if (row[x] == '1') {
+                    drawRect(
+                        androidx.compose.ui.graphics.Color.Black,
+                        topLeft = androidx.compose.ui.geometry.Offset((x + quiet) * cell, (y + quiet) * cell),
+                        size = androidx.compose.ui.geometry.Size(cell + 0.5f, cell + 0.5f),
+                    )
+                }
+            }
         }
     }
 }
