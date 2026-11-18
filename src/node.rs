@@ -47,6 +47,10 @@ const LINK_SILENT: Duration = Duration::from_secs(KEEPALIVE as u64 + 10);
 const RETRY_MIN: Duration = Duration::from_secs(5);
 const RETRY_MAX: Duration = Duration::from_secs(60);
 const ANNOUNCE_EVERY: Duration = Duration::from_secs(30);
+/// A route whose announce hasn't come again for this long is forgotten
+/// (destinations announce every ANNOUNCE_EVERY): a node that left is gone
+/// from the lists, and memory doesn't grow with everyone ever heard.
+const ROUTE_TTL: Duration = Duration::from_secs(600);
 /// Relay entries and far-end path state live this long without traffic (probes keep them alive).
 const PATH_IDLE: Duration = Duration::from_secs(60);
 const PROBE_EVERY: Duration = Duration::from_secs(1);
@@ -208,6 +212,8 @@ struct Session {
 struct Route {
     hops: u8,
     ann: Announce,
+    /// When this neighbor last brought a newer announce.
+    heard: Instant,
 }
 
 /// A destination this node answers for: of its own identity, or registered
@@ -878,6 +884,7 @@ impl Node {
                         self.remember_neighbors();
                         self.reach.prune(unix_now());
                         self.reach.save();
+                        self.forget_old_routes();
                     }
                     // A few seconds for configured and remembered neighbors first.
                     if last_seek.elapsed() >= SEEK_EVERY || (!sought && self.started.elapsed() >= Duration::from_secs(8)) {
@@ -1209,7 +1216,7 @@ impl Node {
         let by_via = self.routes.entry(hash).or_default();
         let newer = by_via.get(&from).is_none_or(|r| a.seq > r.ann.seq || (a.seq == r.ann.seq && hops < r.hops));
         if newer {
-            by_via.insert(from, Route { hops, ann: a.clone() });
+            by_via.insert(from, Route { hops, ann: a.clone(), heard: Instant::now() });
         }
         if newer {
             self.heard(hash);
@@ -2294,6 +2301,29 @@ impl Node {
                 self.neighbor_by_key.remove(&n.x_pub);
                 debug(format!("learned node {} didn't answer", n.addr.map(|a| a.to_string()).unwrap_or_default()));
             }
+        }
+    }
+
+    /// Drops routes not announced again within ROUTE_TTL.
+    fn forget_old_routes(&mut self) {
+        let mut gone = 0;
+        let in_use = &self.session_by_dest;
+        self.routes.retain(|dest, by| {
+            // A session's destination keeps its newest route (a Lite node
+            // hears no floods; it asked once).
+            if in_use.contains_key(dest) {
+                let newest = by.iter().max_by_key(|(_, r)| r.heard).map(|(k, _)| *k);
+                by.retain(|k, r| r.heard.elapsed() < ROUTE_TTL || Some(*k) == newest);
+            } else {
+                by.retain(|_, r| r.heard.elapsed() < ROUTE_TTL);
+            }
+            if by.is_empty() {
+                gone += 1;
+            }
+            !by.is_empty()
+        });
+        if gone > 0 {
+            debug(format!("forgot {gone} destination(s) not announced for {} min", ROUTE_TTL.as_secs() / 60));
         }
     }
 
