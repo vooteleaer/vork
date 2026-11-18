@@ -1,3 +1,4 @@
+mod api;
 mod config;
 mod control;
 mod identity;
@@ -210,6 +211,7 @@ pub fn settings(a: RunArgs) -> Result<Settings> {
         "dup" => node::Spread::Dup,
         s => bail!("spread must be spray or dup, not {s}"),
     };
+    let api = file.api.clone().or_else(|| vork_api::endpoint_for(state.as_deref(), listen.port()));
     let control = Some(config::control_endpoint(a.control.as_deref().or(file.control.as_deref()), state.as_deref(), listen)).transpose().ok().flatten();
     let cfg = node::Config {
         listen,
@@ -235,6 +237,7 @@ pub fn settings(a: RunArgs) -> Result<Settings> {
         bench: parse_address(a.bench)?,
         bench_rate: a.bench_rate,
         control,
+        api,
     };
     Ok(Settings { key, state, cfg, log: a.log.or(file.log).unwrap_or_else(|| "info".into()), log_file: a.log_file.or(file.log_file) })
 }

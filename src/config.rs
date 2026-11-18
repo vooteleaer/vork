@@ -29,6 +29,8 @@ pub struct FileConfig {
     pub log: Option<String>,
     pub log_file: Option<PathBuf>,
     pub control: Option<String>,
+    /// The local API endpoint for applications.
+    pub api: Option<String>,
 }
 
 impl FileConfig {

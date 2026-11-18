@@ -1,0 +1,12 @@
+[package]
+name = "vork-api"
+version = "0.0.1"
+description = "The local API of a vØrk node: protocol and async client (prototype)"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tokio = { version = "1", features = ["io-util", "net", "rt", "sync", "macros", "time"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }

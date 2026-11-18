@@ -2958,7 +2958,15 @@ dependencies = [
  "socket2 0.5.10",
  "tokio",
  "toml",
+ "vork-api",
  "windows-service",
+]
+
+[[package]]
+name = "vork-api"
+version = "0.0.1"
+dependencies = [
+ "tokio",
 ]
 
 [[package]]

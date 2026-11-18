@@ -125,8 +125,8 @@ struct Session {
     /// Known to both ends and to no other session: what proofs are bound to.
     nonce: [u8; 32],
     stream: Stream,
-    /// Our requests waiting for an answer: id → (path, sent).
-    waiting: HashMap<u32, (String, Instant)>,
+    /// Our requests waiting for an answer: id → (path, sent, the API client and its request id).
+    waiting: HashMap<u32, (String, Instant, Option<(u32, u32)>)>,
     next_req: u32,
     paths: Vec<(u32, u64)>,
     /// First hops whose paths failed: (don't retry before, current backoff).
@@ -136,6 +136,23 @@ struct Session {
 struct Route {
     hops: u8,
     ann: Announce,
+}
+
+/// A destination this node answers for: of its own identity, or registered
+/// by an application on this machine with that application's identity.
+struct LocalDest {
+    identity: Arc<Identity>,
+    name: String,
+    name_hash: [u8; identity::NAME_HASH_LEN],
+    app_data: Vec<u8>,
+    /// The API client it belongs to (None: the node's own).
+    owner: Option<u32>,
+}
+
+/// An application connected to the local API.
+struct ApiClient {
+    tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    subscribed: bool,
 }
 
 impl Session {
@@ -205,6 +222,8 @@ pub struct Config {
     pub bench_rate: u64,
     /// Where the control endpoint listens (`None`: no control endpoint).
     pub control: Option<String>,
+    /// The local API endpoint for applications (ADR-0020).
+    pub api: Option<String>,
 }
 
 /// What a bench receiver has seen in the current second.
@@ -225,8 +244,12 @@ enum Out {
 pub struct Node {
     me: Identity,
     my_hash: Hash,
-    /// Named destinations of this node's identity: address → name hash.
-    local: HashMap<Hash, [u8; identity::NAME_HASH_LEN]>,
+    /// Destinations answered here besides the node's own address.
+    local: HashMap<Hash, LocalDest>,
+    me_arc: Arc<Identity>,
+    clients: HashMap<u32, ApiClient>,
+    /// `Find`s waiting for an announce: (client, request, destination, deadline).
+    finds: Vec<(u32, u32, Hash, Instant)>,
     /// Receives through tokio; sends through the same socket's std handle,
     /// because tokio's `try_send_to` drops a datagram (WouldBlock) until the
     /// reactor has seen the socket writable, which loses the first handshake.
@@ -397,9 +420,12 @@ impl Node {
         let send_sock = std_sock.try_clone()?;
         let sock = Arc::new(UdpSocket::from_std(std_sock)?);
         let my_hash = me.hash();
-        Ok(Node {
+        let mut node = Node {
             my_hash,
-            local: cfg.destinations.iter().map(|n| (identity::destination_hash(&my_hash, n), identity::name_hash(n))).collect(),
+            local: HashMap::new(),
+            me_arc: Arc::new(Identity::from_bytes(&me.to_bytes())),
+            clients: HashMap::new(),
+            finds: Vec::new(),
             me,
             sock,
             send_sock,
@@ -425,7 +451,12 @@ impl Node {
             bench_rx: HashMap::new(),
             state,
             started: Instant::now(),
-        })
+        };
+        for name in node.cfg.destinations.clone() {
+            let me = node.me_arc.clone();
+            node.add_local(me, &name, None);
+        }
+        Ok(node)
     }
 
     /// A fresh 24-bit tunnel index, used by boringtun as the top bits of every
@@ -516,6 +547,19 @@ impl Node {
             },
             None => None,
         };
+        let mut api_rx = match &self.cfg.api {
+            Some(ep) => match crate::api::listen(ep) {
+                Ok(rx) => {
+                    log(format!("API endpoint {ep}"));
+                    Some(rx)
+                }
+                Err(e) => {
+                    warn(format!("no API endpoint: {e:#}"));
+                    None
+                }
+            },
+            None => None,
+        };
         let mut last_remember = Instant::now();
         let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
         let mut mapped_rx = None;
@@ -575,6 +619,9 @@ impl Node {
                 Some(ext) = async { match mapped_rx.as_mut() { Some(rx) => rx.recv().await, None => std::future::pending().await } } => {
                     self.mapped = Some(ext);
                 }
+                Some(ev) = async { match api_rx.as_mut() { Some(rx) => rx.recv().await, None => std::future::pending().await } } => {
+                    self.on_api(ev);
+                }
                 Some((req, reply)) = async { match ctrl_rx.as_mut() { Some(rx) => rx.recv().await, None => std::future::pending().await } } => {
                     let _ = reply.send(self.on_control(&req));
                 }
@@ -598,6 +645,7 @@ impl Node {
                 }
                 _ = tick.tick() => {
                     self.on_timers();
+                    self.expire_finds();
                     if self.cfg.announce && last_announce.elapsed() >= ANNOUNCE_EVERY {
                         last_announce = Instant::now();
                         self.announce_self();
@@ -835,35 +883,62 @@ impl Node {
 
     // ---- announces and routes ----------------------------------------------------
 
-    /// An announce for one of this node's destinations (`NO_NAME`: the identity itself).
-    fn local_announce(&mut self, name_hash: [u8; identity::NAME_HASH_LEN], app_data: Vec<u8>) -> Announce {
-        let x_pub = *self.me.x_pub().as_bytes();
+    /// A signed announce of `identity`'s destination `name_hash`.
+    fn sign_announce(&mut self, identity: &Identity, name_hash: [u8; identity::NAME_HASH_LEN], app_data: Vec<u8>) -> Announce {
+        let x_pub = *identity.x_pub().as_bytes();
         let seq = self.state.next_seq();
         let flags = self.my_flags();
-        let mut a = Announce { ed_pub: self.me.ed_pub(), x_pub, name_hash, seq, flags, app_data, sig: [0; 64], hops: 0 };
-        a.sig = self.me.sign(LABEL_ANNOUNCE, &a.signed());
+        let mut a = Announce { ed_pub: identity.ed_pub(), x_pub, name_hash, seq, flags, app_data, sig: [0; 64], hops: 0 };
+        a.sig = identity.sign(LABEL_ANNOUNCE, &a.signed());
         a
     }
 
     fn own_announce(&mut self) -> Announce {
-        self.local_announce(wire::NO_NAME, Vec::new())
+        let me = self.me_arc.clone();
+        self.sign_announce(&me, wire::NO_NAME, Vec::new())
     }
 
-    /// Announces of every local destination, the identity first.
+    /// The announce of a destination answered here.
+    fn local_announce(&mut self, dest: &Hash) -> Option<Announce> {
+        if *dest == self.my_hash {
+            return Some(self.own_announce());
+        }
+        let d = self.local.get(dest)?;
+        let (id, nh, data) = (d.identity.clone(), d.name_hash, d.app_data.clone());
+        Some(self.sign_announce(&id, nh, data))
+    }
+
+    /// Announces of every local destination, the node's identity first.
     fn own_announces(&mut self) -> Vec<Announce> {
         let mut v = vec![self.own_announce()];
-        for (_, name_hash) in self.local.clone() {
-            v.push(self.local_announce(name_hash, Vec::new()));
+        let dests: Vec<Hash> = self.local.keys().copied().collect();
+        for d in dests {
+            v.extend(self.local_announce(&d));
         }
         v
     }
 
-    /// The local destination `dest` names, if it is one: its name hash.
-    fn local_dest(&self, dest: &Hash) -> Option<[u8; identity::NAME_HASH_LEN]> {
-        if *dest == self.my_hash {
-            return Some(wire::NO_NAME);
+    fn local_dest(&self, dest: &Hash) -> Option<()> {
+        (*dest == self.my_hash || self.local.contains_key(dest)).then_some(())
+    }
+
+    /// The identity that answers for a local destination.
+    fn local_identity(&self, dest: Option<&Hash>) -> Arc<Identity> {
+        dest.and_then(|d| self.local.get(d)).map(|d| d.identity.clone()).unwrap_or_else(|| self.me_arc.clone())
+    }
+
+    fn add_local(&mut self, identity: Arc<Identity>, name: &str, owner: Option<u32>) -> Hash {
+        let dest = identity::destination_hash(&identity.hash(), name);
+        self.local.insert(dest, LocalDest { identity, name: name.to_string(), name_hash: identity::name_hash(name), app_data: Vec::new(), owner });
+        dest
+    }
+
+    fn announce_one(&mut self, dest: &Hash) {
+        if let Some(a) = self.local_announce(dest) {
+            for id in self.up_neighbors() {
+                self.send_msg(id, &Msg::Announce(a.clone()));
+            }
         }
-        self.local.get(dest).copied()
     }
 
     fn announce_self(&mut self) {
@@ -891,6 +966,9 @@ impl Node {
         let newer = by_via.get(&from).is_none_or(|r| a.seq > r.ann.seq || (a.seq == r.ann.seq && hops < r.hops));
         if newer {
             by_via.insert(from, Route { hops, ann: a.clone() });
+        }
+        if newer {
+            self.heard(hash);
         }
         if !known {
             log(format!("learned {} at {hops} hops", hex::encode(hash)));
@@ -959,10 +1037,11 @@ impl Node {
         if !self.is_up(from) || !self.seen_req.insert((dest, nonce)) {
             return;
         }
-        if let Some(name_hash) = self.local_dest(&dest) {
-            if self.cfg.announce {
-                let a = self.local_announce(name_hash, Vec::new());
-                self.send_msg(from, &Msg::Announce(a));
+        if self.local_dest(&dest).is_some() {
+            if self.cfg.announce || dest != self.my_hash {
+                if let Some(a) = self.local_announce(&dest) {
+                    self.send_msg(from, &Msg::Announce(a));
+                }
             }
             return;
         }
@@ -1225,14 +1304,15 @@ impl Node {
             Some(wg::INIT) => {
                 let Ok(Packet::HandshakeInit(init)) = Tunn::parse_incoming_packet(inner) else { return };
                 let local = self.ends.get(&key).and_then(|e| e.dest);
-                let Ok(half) = parse_handshake_anon(&self.me.dh, &self.me.x_pub(), &init) else { return };
+                let ident = self.local_identity(local.as_ref());
+                let Ok(half) = parse_handshake_anon(&ident.dh, &ident.x_pub(), &init) else { return };
                 match self.session_by_key.get(&half.peer_static_public) {
                     Some(sid) => *sid,
                     None => {
                         // The opener is anonymous (a fresh key per session) until it identifies.
                         let sid = self.new_id();
-                        let tunn = Self::session_tunn(self.me.dh.clone(), half.peer_static_public, sid);
-                        let nonce = session_nonce(&half.peer_static_public, self.me.x_pub().as_bytes());
+                        let tunn = Self::session_tunn(ident.dh.clone(), half.peer_static_public, sid);
+                        let nonce = session_nonce(&half.peer_static_public, ident.x_pub().as_bytes());
                         self.sessions.insert(sid, Session::new(tunn, half.peer_static_public, None, local, None, nonce));
                         self.session_by_key.insert(half.peer_static_public, sid);
                         log(format!("new end-to-end session {} to {}", hex::encode(&nonce[..4]), local.map(|d| short(&d)).unwrap_or_default()));
@@ -1432,22 +1512,22 @@ impl Node {
     }
 
     /// Proves to the far end who we are, bound to this session.
-    fn identify(&mut self, sid: u32) {
+    fn identify(&mut self, sid: u32, who: &Identity) {
         let Some(s) = self.sessions.get(&sid) else { return };
-        let sig = self.me.sign(LABEL_IDENTIFY, &s.nonce);
+        let sig = who.sign(LABEL_IDENTIFY, &s.nonce);
         let mut m = vec![MSG_IDENTIFY];
-        m.extend_from_slice(&self.me.ed_pub());
-        m.extend_from_slice(self.me.x_pub().as_bytes());
+        m.extend_from_slice(&who.ed_pub());
+        m.extend_from_slice(who.x_pub().as_bytes());
         m.extend_from_slice(&sig);
         self.send_message(sid, &m);
     }
 
     /// Sends a request; the answer comes back as a RESPONSE message.
-    fn request(&mut self, sid: u32, path: &str, body: &[u8]) -> Option<u32> {
+    fn request(&mut self, sid: u32, path: &str, body: &[u8], for_client: Option<(u32, u32)>) -> Option<u32> {
         let s = self.sessions.get_mut(&sid)?;
         let id = s.next_req;
         s.next_req = s.next_req.wrapping_add(1);
-        s.waiting.insert(id, (path.to_string(), Instant::now()));
+        s.waiting.insert(id, (path.to_string(), Instant::now(), for_client));
         let mut m = vec![MSG_REQUEST];
         m.extend_from_slice(&id.to_be_bytes());
         m.push(path.len().min(255) as u8);
@@ -1479,18 +1559,34 @@ impl Node {
                     return;
                 }
                 let path = String::from_utf8_lossy(&m[6..6 + plen]).into_owned();
+                let s = &self.sessions[&sid];
+                let owner = s.local.and_then(|d| self.local.get(&d)).and_then(|d| d.owner);
+                if let Some(client) = owner {
+                    let frame = vork_api::FromNode::Incoming {
+                        token: ((sid as u64) << 32) | id as u64,
+                        dest: s.local.unwrap(),
+                        session: sid,
+                        nonce: s.nonce,
+                        requester: s.peer_identity,
+                        path,
+                        body: m[6 + plen..].to_vec(),
+                    };
+                    self.to_client(client, &frame);
+                    return;
+                }
                 let (status, body) = self.serve(sid, &path, &m[6 + plen..]);
-                let mut r = vec![MSG_RESPONSE];
-                r.extend_from_slice(&id.to_be_bytes());
-                r.push(status);
-                r.extend_from_slice(&body);
-                self.send_message(sid, &r);
+                self.respond(sid, id, status, &body);
             }
             Some(&MSG_RESPONSE) if m.len() >= 6 => {
                 let id = u32::from_be_bytes(m[1..5].try_into().unwrap());
                 let status = m[5];
                 let Some(s) = self.sessions.get_mut(&sid) else { return };
-                let Some((path, sent)) = s.waiting.remove(&id) else { return };
+                let Some((path, sent, for_client)) = s.waiting.remove(&id) else { return };
+                if let Some((client, req)) = for_client {
+                    let frame = vork_api::FromNode::Response { req, status, body: m[6..].to_vec() };
+                    self.to_client(client, &frame);
+                    return;
+                }
                 let n = m.len() - 6;
                 let t = sent.elapsed();
                 log(format!(
@@ -1500,6 +1596,129 @@ impl Node {
                 ));
             }
             _ => {}
+        }
+    }
+
+    fn respond(&mut self, sid: u32, id: u32, status: u8, body: &[u8]) {
+        let mut r = vec![MSG_RESPONSE];
+        r.extend_from_slice(&id.to_be_bytes());
+        r.push(status);
+        r.extend_from_slice(body);
+        self.send_message(sid, &r);
+    }
+
+    // ---- the local API: applications on this machine ----------------------------
+
+    fn to_client(&self, client: u32, frame: &vork_api::FromNode) {
+        if let Some(c) = self.clients.get(&client) {
+            let _ = c.tx.send(frame.encode());
+        }
+    }
+
+    fn known(&self, dest: &Hash) -> Option<vork_api::Known> {
+        let r = self.routes.get(dest)?.values().min_by_key(|r| r.hops)?;
+        let a = &r.ann;
+        let mut public = [0u8; 64];
+        public[..32].copy_from_slice(&a.x_pub);
+        public[32..].copy_from_slice(&a.ed_pub);
+        Some(vork_api::Known { public, name_hash: a.name_hash, hops: r.hops, app_data: a.app_data.clone() })
+    }
+
+    fn on_api(&mut self, ev: crate::api::Event) {
+        use vork_api::{FromNode, ToNode};
+        match ev {
+            crate::api::Event::Connected { client, tx } => {
+                self.clients.insert(client, ApiClient { tx, subscribed: false });
+            }
+            crate::api::Event::Gone { client } => {
+                self.clients.remove(&client);
+                let gone: Vec<Hash> = self.local.iter().filter(|(_, d)| d.owner == Some(client)).map(|(h, _)| *h).collect();
+                for d in gone {
+                    self.local.remove(&d);
+                }
+                self.finds.retain(|f| f.0 != client);
+            }
+            crate::api::Event::Frame { client, frame } => match frame {
+                ToNode::Hello { .. } => self.to_client(client, &FromNode::Hello { version: vork_api::VERSION, address: self.my_hash }),
+                ToNode::Register { req, secret, name } => {
+                    let identity = Arc::new(Identity::from_bytes(&secret));
+                    let dest = self.add_local(identity, &name, Some(client));
+                    log(format!("an application hosts {} ({name})", short(&dest)));
+                    self.to_client(client, &FromNode::Registered { req, dest });
+                }
+                ToNode::Announce { dest, app_data } => {
+                    if let Some(d) = self.local.get_mut(&dest).filter(|d| d.owner == Some(client)) {
+                        d.app_data = app_data;
+                        d.app_data.truncate(wire::MAX_APP_DATA);
+                        self.announce_one(&dest);
+                    }
+                }
+                ToNode::Recall { req, dest } => {
+                    let known = self.known(&dest);
+                    self.to_client(client, &FromNode::Known { req, known });
+                }
+                ToNode::Find { req, dest, timeout_ms } => match self.known(&dest) {
+                    Some(k) => self.to_client(client, &FromNode::Known { req, known: Some(k) }),
+                    None => {
+                        self.request_path(dest);
+                        self.finds.push((client, req, dest, Instant::now() + Duration::from_millis(timeout_ms as u64)));
+                    }
+                },
+                ToNode::Open { req, dest } => match self.session_to(dest) {
+                    Some(sid) => {
+                        let nonce = self.sessions[&sid].nonce;
+                        self.to_client(client, &FromNode::Opened { req, session: sid, nonce });
+                    }
+                    None => {
+                        self.request_path(dest);
+                        self.to_client(client, &FromNode::Error { req, message: format!("no path to {}", hex::encode(dest)) });
+                    }
+                },
+                ToNode::Identify { session, as_dest } => {
+                    if let Some(d) = self.local.get(&as_dest).filter(|d| d.owner == Some(client)) {
+                        let who = d.identity.clone();
+                        self.identify(session, &who);
+                    }
+                }
+                ToNode::Request { req, session, path, body } => {
+                    if self.request(session, &path, &body, Some((client, req))).is_none() {
+                        self.to_client(client, &FromNode::Error { req, message: "no such session".into() });
+                    }
+                }
+                ToNode::Close { .. } => {}
+                ToNode::Respond { token, status, body } => {
+                    let (sid, id) = ((token >> 32) as u32, token as u32);
+                    self.respond(sid, id, status, &body);
+                }
+                ToNode::Subscribe => {
+                    if let Some(c) = self.clients.get_mut(&client) {
+                        c.subscribed = true;
+                    }
+                }
+            },
+        }
+    }
+
+    /// Tells `Find`s and subscribers about an announce just accepted.
+    fn heard(&mut self, dest: Hash) {
+        let Some(known) = self.known(&dest) else { return };
+        let done: Vec<(u32, u32)> = self.finds.iter().filter(|f| f.2 == dest).map(|f| (f.0, f.1)).collect();
+        self.finds.retain(|f| f.2 != dest);
+        for (client, req) in done {
+            self.to_client(client, &vork_api::FromNode::Known { req, known: Some(known.clone()) });
+        }
+        let frame = vork_api::FromNode::Heard { dest, known };
+        for c in self.clients.values().filter(|c| c.subscribed) {
+            let _ = c.tx.send(frame.encode());
+        }
+    }
+
+    fn expire_finds(&mut self) {
+        let now = Instant::now();
+        let late: Vec<(u32, u32)> = self.finds.iter().filter(|f| f.3 <= now).map(|f| (f.0, f.1)).collect();
+        self.finds.retain(|f| f.3 > now);
+        for (client, req) in late {
+            self.to_client(client, &vork_api::FromNode::Known { req, known: None });
         }
     }
 
@@ -1528,9 +1747,10 @@ impl Node {
             return;
         }
         if self.cfg.identify && s.next_req == 0 {
-            self.identify(sid);
+            let me = self.me_arc.clone();
+            self.identify(sid, &me);
         }
-        self.request(sid, "/vork/blob", &(n as u32).to_be_bytes());
+        self.request(sid, "/vork/blob", &(n as u32).to_be_bytes(), None);
     }
 
     // ---- bench: throughput -------------------------------------------------------
@@ -1762,7 +1982,8 @@ impl Node {
             .collect();
         json!({
             "address": hex::encode(self.my_hash),
-            "local_destinations": self.cfg.destinations.iter().map(|n| serde_json::json!({ "name": n, "address": hex::encode(identity::destination_hash(&self.my_hash, n)) })).collect::<Vec<_>>(),
+            "local_destinations": self.local.iter().map(|(h, d)| serde_json::json!({ "name": d.name, "address": hex::encode(h), "application": d.owner.is_some() })).collect::<Vec<_>>(),
+            "applications": self.clients.len(),
             "wg_key": hex::encode(self.me.x_pub().as_bytes()),
             "listen": self.cfg.listen.to_string(),
             "lite": self.cfg.lite,
