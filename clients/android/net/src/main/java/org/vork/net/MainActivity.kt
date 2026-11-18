@@ -231,6 +231,31 @@ fun Overview(node: Node, s: JSONObject, said: (String) -> Unit) {
     val copy = copier(said)
     val small = MaterialTheme.typography.bodySmall
     LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        // On or off, as in Tailscale: on, apps reach vØrk addresses (only
+        // fd00::/8 goes through vØrk); off, everything bypasses it. The node
+        // stays in the network either way (Settings → Stop stops it).
+        item {
+            val on = s.optJSONObject("interface") != null
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(if (on) "Connected" else "Disconnected", style = MaterialTheme.typography.titleLarge)
+                            Text(
+                                if (on) "Apps reach vØrk nodes at their fd… addresses; all other traffic goes around vØrk."
+                                else "All traffic goes around vØrk; apps don't reach vØrk addresses.",
+                                style = small,
+                            )
+                        }
+                        Switch(checked = on, onCheckedChange = { want ->
+                            if (want) (context as? MainActivity)?.turnOnVpn()
+                            else { VorkVpn.stop(context); said("Disconnected") }
+                        })
+                    }
+                    if (!on) VorkVpn.state?.let { Text(it, style = small) }
+                }
+            }
+        }
         item {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
@@ -246,22 +271,6 @@ fun Overview(node: Node, s: JSONObject, said: (String) -> Unit) {
                     }
                     Row(Modifier.padding(top = 8.dp)) {
                         OutlinedButton(onClick = { NodeService.restart(context); said("Restarting the node") }) { Text("Restart") }
-                    }
-                }
-            }
-        }
-        item {
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp)) {
-                    Text("Apps on this phone", style = MaterialTheme.typography.titleMedium)
-                    val iface = s.optJSONObject("interface")
-                    if (iface != null) {
-                        Text("Apps reach vØrk nodes at their IP addresses (fd…): ping, ssh, a browser…", style = small)
-                        TextButton(onClick = { VorkVpn.stop(context); said("Apps no longer reach vØrk addresses (fully once the node restarts)") }) { Text("Turn off") }
-                    } else {
-                        Text("Off: apps don't reach vØrk addresses. On, only fd00::/8 goes through vØrk; the rest of the phone's traffic doesn't.", style = small)
-                        VorkVpn.state?.let { Text("Interface: $it", style = small) }
-                        Button(onClick = { (context as? MainActivity)?.turnOnVpn() }) { Text("Turn on") }
                     }
                 }
             }

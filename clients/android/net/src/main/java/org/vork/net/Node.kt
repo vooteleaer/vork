@@ -42,4 +42,6 @@ class Node(context: Context) {
     fun removePeer(addr: String): JSONObject = ask(JSONObject().put("cmd", "peer_remove").put("addr", addr))
     fun addDevice(address: String): JSONObject = ask(JSONObject().put("cmd", "device_add").put("address", address))
     fun removeDevice(address: String): JSONObject = ask(JSONObject().put("cmd", "device_remove").put("address", address))
+    /** The node lets go of the interface (the VPN is off). */
+    fun interfaceOff(): JSONObject = ask(JSONObject().put("cmd", "interface_off"))
 }

@@ -46,6 +46,9 @@ class VorkVpn : VpnService() {
         keeper?.interrupt()
         iface?.close()
         iface = null
+        // The node holds a copy of the interface: it lets go too, or the VPN stays.
+        val node = Node(this)
+        Thread { node.interfaceOff() }.start()
         super.onDestroy()
     }
 

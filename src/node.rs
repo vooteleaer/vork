@@ -779,6 +779,11 @@ impl Node {
         let mut bench_due = 0.0f64;
         let mut bench_last = Instant::now();
         loop {
+            // The interface was let go (interface_off): its descriptor closes here.
+            if self.tun.is_none() && tun.is_some() {
+                tun = None;
+                log("interface let go");
+            }
             tokio::select! {
                 _ = bench_tick.tick(), if self.cfg.bench.is_some() => {
                     // Pace by elapsed time, so a late tick sends what it owes.
@@ -2497,6 +2502,13 @@ impl Node {
         }
         match Some(cmd) {
             Some("status") => self.status_json().to_string(),
+            // Lets go of the interface (Android's VPN turned off): no restart needed.
+            Some("interface_off") => {
+                self.tun = None;
+                self.ip_peer.clear();
+                self.ip_identified.clear();
+                json!({ "ok": true }).to_string()
+            }
             Some("set" | "peer_add" | "peer_remove" | "device_add" | "device_remove") => match self.change_settings(cmd, &v) {
                 Ok(restart) => json!({ "ok": true, "restart": restart }).to_string(),
                 Err(e) => json!({ "error": e }).to_string(),
