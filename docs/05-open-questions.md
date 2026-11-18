@@ -26,7 +26,7 @@ Decisions still to make. Each names who it blocks.
 
 12. ~~**Open by default?**~~ Decided: open to everyone, the owner's traffic first; relaying uses only the capacity the owner leaves (ADR-0019).
 13. **Direct links inside islands by default?** Outside islands they stay opt-in. Blocks: M8.
-14. **The public backbone.** cafa-cloud as the first always-on public node: under whose name, and with which limits? Blocks: M1.
+14. ~~**The public backbone.**~~ Decided: cafa-cloud is an ordinary full node like any other (ADR-0002, no roles); its limits are those of ADR-0019, its owner's traffic first and relaying in what is left.
 
 ## Identities
 
