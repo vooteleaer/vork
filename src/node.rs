@@ -137,6 +137,8 @@ pub struct Config {
     /// How many paths (through different first hops) a session opens.
     pub paths: usize,
     pub spread: Spread,
+    /// Named services of the node's identity, announced next to it.
+    pub destinations: Vec<String>,
     /// Send bench traffic to this destination...
     pub bench: Option<Hash>,
     /// ...at this rate (Mbit/s).
@@ -163,6 +165,8 @@ enum Out {
 pub struct Node {
     me: Identity,
     my_hash: Hash,
+    /// Named destinations of this node's identity: address → name hash.
+    local: HashMap<Hash, [u8; identity::NAME_HASH_LEN]>,
     /// Receives through tokio; sends through the same socket's std handle,
     /// because tokio's `try_send_to` drops a datagram (WouldBlock) until the
     /// reactor has seen the socket writable, which loses the first handshake.
@@ -332,6 +336,7 @@ impl Node {
         let my_hash = me.hash();
         Ok(Node {
             my_hash,
+            local: cfg.destinations.iter().map(|n| (identity::destination_hash(&my_hash, n), identity::name_hash(n))).collect(),
             me,
             sock,
             send_sock,
@@ -668,8 +673,9 @@ impl Node {
             self.send_msg(id, &Msg::Observed { addr });
         }
         if self.cfg.announce {
-            let own = self.own_announce();
-            self.send_msg(id, &Msg::Announce(own));
+            for own in self.own_announces() {
+                self.send_msg(id, &Msg::Announce(own));
+            }
         }
     }
 
@@ -750,18 +756,42 @@ impl Node {
 
     // ---- announces and routes ----------------------------------------------------
 
-    fn own_announce(&mut self) -> Announce {
+    /// An announce for one of this node's destinations (`NO_NAME`: the identity itself).
+    fn local_announce(&mut self, name_hash: [u8; identity::NAME_HASH_LEN], app_data: Vec<u8>) -> Announce {
         let x_pub = *self.me.x_pub().as_bytes();
         let seq = self.state.next_seq();
         let flags = self.my_flags();
-        let sig = self.me.sign(LABEL_ANNOUNCE, &Announce::signed_part(&self.my_hash, &x_pub, seq, flags));
-        Announce { ed_pub: self.me.ed_pub(), x_pub, seq, flags, sig, hops: 0 }
+        let mut a = Announce { ed_pub: self.me.ed_pub(), x_pub, name_hash, seq, flags, app_data, sig: [0; 64], hops: 0 };
+        a.sig = self.me.sign(LABEL_ANNOUNCE, &a.signed());
+        a
+    }
+
+    fn own_announce(&mut self) -> Announce {
+        self.local_announce(wire::NO_NAME, Vec::new())
+    }
+
+    /// Announces of every local destination, the identity first.
+    fn own_announces(&mut self) -> Vec<Announce> {
+        let mut v = vec![self.own_announce()];
+        for (_, name_hash) in self.local.clone() {
+            v.push(self.local_announce(name_hash, Vec::new()));
+        }
+        v
+    }
+
+    /// The local destination `dest` names, if it is one: its name hash.
+    fn local_dest(&self, dest: &Hash) -> Option<[u8; identity::NAME_HASH_LEN]> {
+        if *dest == self.my_hash {
+            return Some(wire::NO_NAME);
+        }
+        self.local.get(dest).copied()
     }
 
     fn announce_self(&mut self) {
-        let a = self.own_announce();
-        for id in self.up_neighbors() {
-            self.send_msg(id, &Msg::Announce(a.clone()));
+        for a in self.own_announces() {
+            for id in self.up_neighbors() {
+                self.send_msg(id, &Msg::Announce(a.clone()));
+            }
         }
     }
 
@@ -769,12 +799,11 @@ impl Node {
         if !self.is_up(from) {
             return; // only over links proven to work both ways
         }
-        let hash = node_hash(&a.ed_pub, &a.x_pub);
-        if hash == self.my_hash || a.hops >= MAX_HOPS {
+        let hash = a.dest();
+        if self.local_dest(&hash).is_some() || a.hops >= MAX_HOPS {
             return;
         }
-        let signed = Announce::signed_part(&hash, &a.x_pub, a.seq, a.flags);
-        if !identity::verify(&a.ed_pub, LABEL_ANNOUNCE, &signed, &a.sig) {
+        if !identity::verify(&a.ed_pub, LABEL_ANNOUNCE, &a.signed(), &a.sig) {
             return log("dropped an announce with a bad signature");
         }
         let hops = a.hops.saturating_add(1);
@@ -851,9 +880,9 @@ impl Node {
         if !self.is_up(from) || !self.seen_req.insert((dest, nonce)) {
             return;
         }
-        if dest == self.my_hash {
+        if let Some(name_hash) = self.local_dest(&dest) {
             if self.cfg.announce {
-                let a = self.own_announce();
+                let a = self.local_announce(name_hash, Vec::new());
                 self.send_msg(from, &Msg::Announce(a));
             }
             return;
@@ -883,7 +912,7 @@ impl Node {
         if !self.is_up(from) {
             return;
         }
-        if dest == self.my_hash {
+        if self.local_dest(&dest).is_some() {
             // We are the far end. The session is known once traffic arrives.
             self.ends.insert(
                 (from, label),
@@ -1464,6 +1493,7 @@ impl Node {
             .collect();
         json!({
             "address": hex::encode(self.my_hash),
+            "local_destinations": self.cfg.destinations.iter().map(|n| serde_json::json!({ "name": n, "address": hex::encode(identity::destination_hash(&self.my_hash, n)) })).collect::<Vec<_>>(),
             "wg_key": hex::encode(self.me.x_pub().as_bytes()),
             "listen": self.cfg.listen.to_string(),
             "lite": self.cfg.lite,

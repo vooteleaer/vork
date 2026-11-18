@@ -123,6 +123,9 @@ pub struct RunArgs {
     /// How packets use the paths: spray (by round-trip time) or dup (every packet on every path) [default: spray].
     #[arg(long)]
     spread: Option<String>,
+    /// Also announce this named service of the node's identity (repeatable).
+    #[arg(long = "destination")]
+    destinations: Vec<String>,
     /// Measure throughput: send to this address (hex); the receiver logs what arrives each second.
     #[arg(long)]
     bench: Option<String>,
@@ -209,6 +212,7 @@ pub fn settings(a: RunArgs) -> Result<Settings> {
         gateway: a.gateway.or(file.gateway),
         paths: a.paths.or(file.paths).unwrap_or(2).max(1),
         spread,
+        destinations: file.destinations.iter().chain(&a.destinations).cloned().collect(),
         bench: parse_address(a.bench)?,
         bench_rate: a.bench_rate,
         control,
@@ -252,6 +256,9 @@ pub async fn run_node(s: Settings, stop: Option<tokio::sync::watch::Receiver<boo
 fn print_status(v: &serde_json::Value) {
     let g = |k: &str| v.get(k).cloned().unwrap_or_default();
     println!("address      {}", g("address").as_str().unwrap_or("?"));
+    for d in g("local_destinations").as_array().cloned().unwrap_or_default() {
+        println!("  {}  {}", d["address"].as_str().unwrap_or("?"), d["name"].as_str().unwrap_or("?"));
+    }
     println!("listen       {}   uptime {} s{}", g("listen").as_str().unwrap_or("?"), g("uptime_s"), if g("lite").as_bool() == Some(true) { "   [lite]" } else { "" });
     let outside: Vec<String> = g("outside").as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
     if !outside.is_empty() {
@@ -379,8 +386,10 @@ async fn network_main() -> Result<()> {
         }
         Cmd::Run(a) => run_node(settings(a)?, None).await?,
         Cmd::Status { config, control, json } => {
-            let s = settings(RunArgs { config, control, ..Default::default() })?;
-            let ep = s.cfg.control.context("no control endpoint known: give --control or --config")?;
+            let ep = match control {
+                Some(ep) => ep,
+                None => settings(RunArgs { config, ..Default::default() })?.cfg.control.context("no control endpoint known: give --control or --config")?,
+            };
             let answer = control::ask(&ep, r#"{"cmd":"status"}"#).await?;
             if json {
                 print!("{answer}");

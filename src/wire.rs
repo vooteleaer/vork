@@ -8,7 +8,7 @@
 //! addresses inside the tunnel are a fixed per-link convention and mean
 //! nothing: identity lives in the messages, not in IP.
 
-use crate::identity::{HASH_LEN, Hash};
+use crate::identity::{HASH_LEN, Hash, NAME_HASH_LEN};
 use anyhow::{Result, bail};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
@@ -94,21 +94,48 @@ pub enum Msg {
 pub struct Announce {
     pub ed_pub: [u8; 32],
     pub x_pub: [u8; 32],
+    /// Which service of the identity: SHA-256(name)[0..10]; all zero for the identity itself.
+    pub name_hash: [u8; NAME_HASH_LEN],
     pub seq: u64,
     pub flags: u8,
+    /// The destination's own data (storage: its announce interval, site, ...).
+    pub app_data: Vec<u8>,
     pub sig: [u8; 64],
     pub hops: u8,
 }
 
+/// The name hash of an identity's own (unnamed) destination.
+pub const NO_NAME: [u8; NAME_HASH_LEN] = [0; NAME_HASH_LEN];
+/// Most app data an announce carries.
+pub const MAX_APP_DATA: usize = 512;
+
 pub const FLAG_RELAY: u8 = 1;
 
 impl Announce {
-    pub fn signed_part(hash: &Hash, x_pub: &[u8; 32], seq: u64, flags: u8) -> Vec<u8> {
-        let mut m = hash.to_vec();
+    /// What the identity signs: destination ‖ x_pub ‖ name hash ‖ seq ‖ flags ‖ app data.
+    pub fn signed_part(dest: &Hash, x_pub: &[u8; 32], name_hash: &[u8; NAME_HASH_LEN], seq: u64, flags: u8, app_data: &[u8]) -> Vec<u8> {
+        let mut m = dest.to_vec();
         m.extend_from_slice(x_pub);
+        m.extend_from_slice(name_hash);
         m.extend_from_slice(&seq.to_be_bytes());
         m.push(flags);
+        m.extend_from_slice(app_data);
         m
+    }
+
+    /// The identity's address.
+    pub fn identity(&self) -> Hash {
+        crate::identity::node_hash(&self.ed_pub, &self.x_pub)
+    }
+
+    /// The announced destination: the identity, or one of its named services.
+    pub fn dest(&self) -> Hash {
+        let id = self.identity();
+        if self.name_hash == NO_NAME { id } else { crate::identity::destination_from_name_hash(&id, &self.name_hash) }
+    }
+
+    pub fn signed(&self) -> Vec<u8> {
+        Self::signed_part(&self.dest(), &self.x_pub, &self.name_hash, self.seq, self.flags, &self.app_data)
     }
 }
 
@@ -140,8 +167,11 @@ impl Msg {
                 b.push(T_ANNOUNCE);
                 b.extend_from_slice(&a.ed_pub);
                 b.extend_from_slice(&a.x_pub);
+                b.extend_from_slice(&a.name_hash);
                 b.extend_from_slice(&a.seq.to_be_bytes());
                 b.push(a.flags);
+                b.extend_from_slice(&(a.app_data.len() as u16).to_be_bytes());
+                b.extend_from_slice(&a.app_data);
                 b.extend_from_slice(&a.sig);
                 b.push(a.hops);
             }
@@ -187,8 +217,16 @@ impl Msg {
             T_ANNOUNCE => Msg::Announce(Announce {
                 ed_pub: r.arr()?,
                 x_pub: r.arr()?,
+                name_hash: r.arr()?,
                 seq: u64::from_be_bytes(r.arr()?),
                 flags: r.u8()?,
+                app_data: {
+                    let n = u16::from_be_bytes(r.arr()?) as usize;
+                    if n > MAX_APP_DATA {
+                        bail!("announce app data too long");
+                    }
+                    r.take(n)?.to_vec()
+                },
                 sig: r.arr()?,
                 hops: r.u8()?,
             }),
@@ -258,6 +296,11 @@ impl Reader<'_> {
         self.i += N;
         Ok(s.try_into().unwrap())
     }
+    fn take(&mut self, n: usize) -> Result<&[u8]> {
+        let Some(s) = self.b.get(self.i..self.i + n) else { bail!("message too short") };
+        self.i += n;
+        Ok(s)
+    }
     fn rest(&mut self) -> &[u8] {
         let s = &self.b[self.i..];
         self.i = self.b.len();
@@ -300,7 +343,7 @@ mod tests {
             Msg::PathReq { dest: [7; 16], nonce: 42 },
             Msg::Observed { addr: "1.2.3.4:5678".parse().unwrap() },
             Msg::Observed { addr: "[2001:db8::1]:51820".parse().unwrap() },
-            Msg::Announce(Announce { ed_pub: [3; 32], x_pub: [4; 32], seq: 7, flags: 1, sig: [5; 64], hops: 2 }),
+            Msg::Announce(Announce { ed_pub: [3; 32], x_pub: [4; 32], name_hash: [6; 10], seq: 7, flags: 1, app_data: vec![8, 9], sig: [5; 64], hops: 2 }),
             Msg::PathOpen { label: 1, dest: [6; 16], ttl: 9 },
             Msg::PathAck { label: 2 },
             Msg::PathErr { label: 3 },

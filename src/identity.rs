@@ -106,8 +106,12 @@ pub fn name_hash(name: &str) -> [u8; NAME_HASH_LEN] {
 /// The address of a named service of an identity (a destination):
 /// SHA-256(name hash ‖ identity address)[0..16].
 pub fn destination_hash(identity: &Hash, name: &str) -> Hash {
+    destination_from_name_hash(identity, &name_hash(name))
+}
+
+pub fn destination_from_name_hash(identity: &Hash, name_hash: &[u8; NAME_HASH_LEN]) -> Hash {
     let mut h = Sha256::new();
-    h.update(name_hash(name));
+    h.update(name_hash);
     h.update(identity);
     h.finalize()[..HASH_LEN].try_into().unwrap()
 }

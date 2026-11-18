@@ -15,7 +15,7 @@ Byte order: our own fields are **big-endian**. WireGuard's fields keep WireGuard
 | Label | Signs |
 |---|---|
 | `vork/v0/bind` | `x_pub ‖ flags` in `HELLO` |
-| `vork/v0/announce` | `address ‖ x_pub ‖ seq ‖ flags` in `ANNOUNCE` |
+| `vork/v0/announce` | `destination ‖ x_pub ‖ name_hash ‖ seq ‖ flags ‖ app_data` in `ANNOUNCE` |
 
 - **Overlay IPv6 address** (compatibility view): `fd` followed by the first 15 bytes of the address.
 - **Flags:** bit 0 `RELAY` (set: full node; clear: Lite node). Other bits are zero.
@@ -48,7 +48,7 @@ The UDP payload starts with a type byte.
 |---|---|---|
 | 1 | `HELLO` | `ed_pub[32]` `flags[1]` `sig[64]` |
 | 2 | `OBSERVED` | `family[1]` (4 or 6) `ip[4 or 16]` `port[2]` |
-| 3 | `ANNOUNCE` | `ed_pub[32]` `x_pub[32]` `seq[8]` `flags[1]` `sig[64]` `hops[1]` |
+| 3 | `ANNOUNCE` | `ed_pub[32]` `x_pub[32]` `name_hash[10]` `seq[8]` `flags[1]` `app_len[2]` `app_data[app_len ≤ 512]` `sig[64]` `hops[1]` |
 | 4 | — | retired (`FWD` before path labels) |
 | 5 | `PATH_REQ` | `dest[16]` `nonce[8]` |
 | 6 | `PATH_OPEN` | `label[8]` `dest[16]` `ttl[1]` |
@@ -71,10 +71,11 @@ A node that receives a `HELLO` without having sent its own to that neighbor with
 
 ### ANNOUNCE
 
-- The address is computed from `x_pub ‖ ed_pub`; the signature is checked over `vork/v0/announce ‖ address ‖ x_pub ‖ seq ‖ flags`.
+- An announce is for one **destination** of an identity: the identity itself (`name_hash` all zero; destination = its address) or a named service (destination = `SHA-256(name_hash ‖ address)[0..16]`, `name_hash = SHA-256(name)[0..10]`). Names themselves never travel. The address is computed from `x_pub ‖ ed_pub`; the signature is checked over `vork/v0/announce ‖ destination ‖ x_pub ‖ name_hash ‖ seq ‖ flags ‖ app_data`.
+- `app_data` belongs to the destination's application (storage puts its announce interval and site there); the network only carries it.
 - `seq` must strictly increase for each identity. A node stores the last value it used and sends `max(last + 1, Unix time in ms)`: devices without a clock still work, and a clock set back doesn't make announces look old.
 - `hops` is not signed. A forwarder sends it on as `hops + 1`. Announces with `hops ≥ 16` are dropped.
-- A node sends its own announce every **30 s** and when a link comes up.
+- A node sends an announce for each of its destinations every **30 s** and when a link comes up. Path requests and `PATH_OPEN` name destinations; a node answers for all of its own.
 - **Routes:** a node keeps, per destination, one route per neighbor it heard the announce from, replaced when that neighbor brings a higher `seq` (or the same `seq` with fewer hops).
 - **Flooding:** a full node forwards the first copy of each `(address, seq)` to all up neighbors except the sender and except Lite neighbors. Lite nodes don't forward.
 - When a full neighbor's `HELLO` arrives for the first time, a full node sends it its best announce for every destination it knows.

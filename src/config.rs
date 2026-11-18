@@ -23,6 +23,9 @@ pub struct FileConfig {
     pub gateway: Option<std::net::Ipv4Addr>,
     pub paths: Option<usize>,
     pub spread: Option<String>,
+    /// Named services of this node's identity to announce (storage uses "retifs.node").
+    #[serde(default)]
+    pub destinations: Vec<String>,
     pub log: Option<String>,
     pub log_file: Option<PathBuf>,
     pub control: Option<String>,
