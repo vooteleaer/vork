@@ -7,7 +7,8 @@ plugins {
 // The version (vork docs/storage/versioning.md): the workspace's, a release's when
 // this commit is tagged with it, else a build towards it; the commit count is
 // the versionCode, so each build installs over the one before.
-val repo = rootProject.projectDir.parentFile
+// clients/android/ in the vork repository.
+val repo = rootProject.projectDir.parentFile.parentFile
 fun git(vararg args: String): String = try {
     ProcessBuilder(listOf("git", "-C", repo.path) + args).redirectErrorStream(true).start().inputStream.bufferedReader().readText().trim()
 } catch (e: Exception) {
