@@ -14,10 +14,10 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 /// UDP port of the network layer inside a WireGuard tunnel.
 pub const L0_PORT: u16 = 4799;
-/// Link addresses inside a tunnel. A leaf device (e.g. ESPHome) is configured
+/// Link addresses inside a tunnel. A Lite node (e.g. ESPHome) is configured
 /// with `address: 10.89.0.2` and `peer_allowed_ips: [10.89.0.1/32]`.
 pub const LINK_UPSTREAM: [u8; 4] = [10, 89, 0, 1];
-pub const LINK_LEAF: [u8; 4] = [10, 89, 0, 2];
+pub const LINK_LITE: [u8; 4] = [10, 89, 0, 2];
 const IPV4_HDR: usize = 20;
 const UDP_HDR: usize = 8;
 
@@ -38,7 +38,7 @@ pub fn frame(payload: &[u8]) -> Vec<u8> {
     p.extend_from_slice(&(total as u16).to_be_bytes());
     p.extend_from_slice(&[0, 0, 0x40, 0, 64, 17, 0, 0]); // id, DF, ttl, UDP, checksum
     p.extend_from_slice(&LINK_UPSTREAM);
-    p.extend_from_slice(&LINK_LEAF);
+    p.extend_from_slice(&LINK_LITE);
     let c = ipv4_checksum(&p[..IPV4_HDR]);
     p[10..12].copy_from_slice(&c.to_be_bytes());
     p.extend_from_slice(&L0_PORT.to_be_bytes());

@@ -10,7 +10,7 @@
 - **Proof, not trust.** Identities, announces and permissions are signatures. Where a proof is impossible (whether a relay really forwards), the node measures and routes around it, and never falls back to trusting a central party.
 - **Every node may be hostile.** A hostile node can delay, drop and watch metadata. It can't forge, read or impersonate. Trusted nodes (your own, your island's) are an optimization, never an assumption.
 - **No roles.** Every node runs the same code. Who relays, holds data or reflects addresses follows from measured properties (public address, uptime, bandwidth), not configuration.
-- **Runs on small devices.** An ESP32 running ESPHome must be able to join (see [Leaf devices](#leaf-devices-esp32-esphome)).
+- **Runs on small devices.** An ESP32 running ESPHome must be able to join (see [Leaf devices](#lite-nodes-esp32-esphome)).
 
 ## How phase 1 works
 
@@ -48,22 +48,22 @@ $V run --key c.key --listen 0.0.0.0:51822 --peer HOST:51820@<A wg key> \
        --no-announce --ping <B address>                                 # laptop, anonymous
 ```
 
-## Leaf devices (ESP32, ESPHome)
+## Lite nodes (ESP32, ESPHome)
 
-ESPHome's WireGuard component has **one peer and IPv4 only**, and it can't accept unknown peers. So a small device joins as a **leaf**: it isn't a different kind of node, it just announces that it doesn't relay (`FLAG_RELAY` unset).
+ESPHome's WireGuard component has **one peer and IPv4 only**, and it can't accept unknown peers. So a small device runs **vork Lite**: the same protocol and identity, minus relaying. It isn't a different kind of node to the network, it just announces that it doesn't relay (`FLAG_RELAY` unset), and no one routes through it. The same build option suits battery devices and phones.
 
-- **Outer layer unchanged.** The stock `wireguard:` component with a single upstream peer (a full node). That's why the layer travels as plain IPv4/UDP inside the tunnel: the leaf needs only a UDP socket, no WireGuard changes.
+- **Outer layer unchanged.** The stock `wireguard:` component with a single upstream peer (a full node). That's why the layer travels as plain IPv4/UDP inside the tunnel: the Lite node needs only a UDP socket, no WireGuard changes.
   ```yaml
   wireguard:
     address: 10.89.0.2
     peer_allowed_ips: [10.89.0.1/32]
     peer_persistent_keepalive: 25s
   ```
-- **No flooding to leaves.** The upstream doesn't send a leaf every announce. The leaf asks for the path it needs (path request, phase 2) and uses the upstream as its default route.
+- **No flooding to Lite nodes.** The upstream doesn't send a Lite node every announce. The Lite node asks for the path it needs (path request, phase 2) and uses the upstream as its default route.
 - **End-to-end layer** needs a second WireGuard-compatible session engine on the device, running over `FWD` instead of a socket. To check: whether the Noise core of wireguard-lwip (which esp_wireguard is built on) can be used without its netif, or whether the fugo101/wireguard_lwip fork (16 peers, custom output for relays) fits.
 - **Time:** WireGuard handshakes carry a timestamp the responder checks, so the device needs SNTP (ESPHome's `time:`). Announce sequence numbers must not depend on the clock (see below).
 - **Identity:** the device's own (server-type) identity in encrypted flash, delegated by its owner. Ed25519 via libsodium (an ESP-IDF component).
-- **Budget:** the leaf side of L0 must stay small: fixed binary layouts, no CBOR/JSON in L0, a handful of neighbors and sessions.
+- **Budget:** the Lite node side of L0 must stay small: fixed binary layouts, no CBOR/JSON in L0, a handful of neighbors and sessions.
 - **Goal:** an ESPHome external component (`external_components:`), so that Home Assistant reaches a device by its identity, end to end, through any number of relays.
 
 ## Known limits and next steps
@@ -80,7 +80,7 @@ ESPHome's WireGuard component has **one peer and IPv4 only**, and it can't accep
 ## Phases
 
 1. **Links, gossip, hash routing, forwarding** (this).
-2. NAT: addresses observed by peers, hole punching, path requests, leaf profile.
+2. NAT: addresses observed by peers, hole punching, path requests, Lite profile.
 3. Overlay IPv6 as a compatibility view (TUN): SSH, SMB and browsers by identity.
 4. retifs as the storage layer (its `Transport` trait over this network).
 5. YubiKey identities, device delegation, islands.
