@@ -2,7 +2,7 @@
 
 *Technical name `vork` (crate, binary, folder), since `Ø` breaks shells, URLs and package registries.* A serverless, identity-addressed network over WireGuard: Reticulum's ideas on plain IP, fast, with no central servers. Any node can relay for others, and any node is assumed hostile.
 
-> **Status: prototype (phase 1 done, phase 2 in progress).** Not for real use. The wire format will change. Tested only on one machine so far (localhost).
+> **Status: prototype (milestone M0 of the [roadmap](docs/04-roadmap.md)).** Not for real use. The wire format will change. Tested on localhost and between two machines across a router.
 
 ## Principles
 
@@ -128,11 +128,6 @@ ESPHome's WireGuard component has **one peer and IPv4 only**, and it can't accep
 - **Sybil:** proof-of-work stamps on announces.
 - **boringtun** 0.7.1 is used as-is; it needs payloads framed as IP packets. Check its maintenance status against the forks (defguard, nordisk) before relying on it.
 
-## Phases
+## Documentation
 
-1. **Links, gossip, hash routing, forwarding** (this).
-2. NAT: addresses observed by peers, hole punching, router port mapping, path requests, Lite profile; path labels and several paths per session. *(First version done; needs testing on real networks.)*
-3. Overlay IPv6 as a compatibility view (TUN): SSH, SMB and browsers by identity.
-4. retifs as the storage layer (its `Transport` trait over this network).
-5. YubiKey identities, device delegation, islands.
-6. Nested WireGuard for the strong privacy class.
+The design, the protocol, the threat model and the plan are in [`docs/`](docs/README.md): vision, architecture, wire format v0, threat model, roadmap (milestones M1–M12 with acceptance tests), open questions, and the decisions so far as ADRs.
