@@ -57,6 +57,7 @@ The UDP payload starts with a type byte.
 | 8 | `PATH_ERR` | `label[8]` |
 | 9 | `DATA` | `label[8]` `inner[…]` (to the end) |
 | 10 | `PROBE` | `label[8]` `nonce[8]` `reply[1]` |
+| 11 | `REACH` | `count[1]` (≤ 32), then per entry `x_pub[32]` `family[1]` `ip[4 or 16]` `port[2]` `age_s[4]` |
 
 Unknown types are dropped.
 
@@ -69,6 +70,10 @@ A node that receives a `HELLO` without having sent its own to that neighbor with
 ### OBSERVED
 
 "I see you at this address." Sent when a link comes up. The receiver may use it as a candidate for direct links. It is a claim, not a proof.
+
+### REACH
+
+"I dialed these cold and they answered" (ADR-0023): a node sends its own proofs on link up and every 10 minutes. A dial is cold when nothing came from that neighbor for 150 s; the handshake answer must come from the dialed address within 10 s. Only relaying nodes are reported; a private or shared (100.64/10) address only to a neighbor reached at the same kind of address. The receiver ignores the entry about the sender, notes the entry about itself (others reach it), and keeps the rest as leads. With fewer than 2 relaying neighbors up, a node dials the best lead every 30 s; one not up within 20 s isn't tried again for 10 minutes. Leads are kept in `reachable.json`.
 
 ### ANNOUNCE
 
@@ -171,3 +176,7 @@ On the first pong (or on receiving candidates), a node with `--direct` sends its
 | Path request interval | 2 s per destination |
 | Path request memory | 30 s |
 | Socket buffers | 4 MB (forced as root on Linux) |
+| Cold dial / answer within | 150 s silent / 10 s |
+| Seek neighbors below / every | 2 relaying up / 30 s |
+| Lead trial / not again for | 20 s / 10 min |
+| Reach reports | on link up, every 10 min, ≤ 32 entries |

@@ -52,6 +52,11 @@ impl State {
         Ok(State { dir: dir.map(Path::to_path_buf), seq })
     }
 
+    /// The state directory (`None`: nothing kept).
+    pub fn dir(&self) -> Option<&Path> {
+        self.dir.as_deref()
+    }
+
     /// The next announce sequence number: strictly greater than any used
     /// before by this identity, and the clock in milliseconds when that is larger.
     pub fn next_seq(&mut self) -> u64 {

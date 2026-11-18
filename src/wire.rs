@@ -88,7 +88,13 @@ pub enum Msg {
     /// "Where is `dest`?" Lite nodes don't receive floods; they ask. Answered
     /// with the destination's announce.
     PathReq { dest: Hash, nonce: u64 },
+    /// "I dialed these cold and they answered": WireGuard key, address, and
+    /// how many seconds ago (ADR-0023). Leads to try, never trusted as such.
+    Reach { entries: Vec<([u8; 32], SocketAddr, u32)> },
 }
+
+/// The most entries a `Reach` message carries.
+pub const MAX_REACH: usize = 32;
 
 #[derive(Debug, Clone)]
 pub struct Announce {
@@ -148,6 +154,7 @@ const T_PATH_ACK: u8 = 7;
 const T_PATH_ERR: u8 = 8;
 const T_DATA: u8 = 9;
 const T_PROBE: u8 = 10;
+const T_REACH: u8 = 11;
 
 impl Msg {
     pub fn encode(&self) -> Vec<u8> {
@@ -205,6 +212,16 @@ impl Msg {
                 b.extend_from_slice(dest);
                 b.extend_from_slice(&nonce.to_be_bytes());
             }
+            Msg::Reach { entries } => {
+                b.push(T_REACH);
+                let n = entries.len().min(MAX_REACH);
+                b.push(n as u8);
+                for (key, addr, age) in &entries[..n] {
+                    b.extend_from_slice(key);
+                    put_addr(&mut b, addr);
+                    b.extend_from_slice(&age.to_be_bytes());
+                }
+            }
         }
         b
     }
@@ -236,6 +253,17 @@ impl Msg {
             T_DATA => Msg::Data { label: r.u64()?, inner: r.rest().to_vec() },
             T_PROBE => Msg::Probe { label: r.u64()?, nonce: r.u64()?, reply: r.u8()? != 0 },
             T_PATH_REQ => Msg::PathReq { dest: r.arr()?, nonce: u64::from_be_bytes(r.arr()?) },
+            T_REACH => {
+                let n = r.u8()? as usize;
+                if n > MAX_REACH {
+                    bail!("too many reach entries");
+                }
+                let mut entries = Vec::with_capacity(n);
+                for _ in 0..n {
+                    entries.push((r.arr()?, get_addr(&mut r)?, u32::from_be_bytes(r.arr()?)));
+                }
+                Msg::Reach { entries }
+            }
             t => bail!("unknown message type {t}"),
         })
     }
@@ -341,6 +369,8 @@ mod tests {
         let msgs = [
             Msg::Hello { ed_pub: [1; 32], flags: 1, sig: [2; 64] },
             Msg::PathReq { dest: [7; 16], nonce: 42 },
+            Msg::Reach { entries: vec![([4; 32], "1.2.3.4:51820".parse().unwrap(), 60), ([5; 32], "[2001:db8::1]:9".parse().unwrap(), 0)] },
+            Msg::Reach { entries: vec![] },
             Msg::Observed { addr: "1.2.3.4:5678".parse().unwrap() },
             Msg::Observed { addr: "[2001:db8::1]:51820".parse().unwrap() },
             Msg::Announce(Announce { ed_pub: [3; 32], x_pub: [4; 32], name_hash: [6; 10], seq: 7, flags: 1, app_data: vec![8, 9], sig: [5; 64], hops: 2 }),

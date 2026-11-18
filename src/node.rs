@@ -20,6 +20,7 @@ use boringtun::noise::handshake::parse_handshake_anon;
 use boringtun::noise::{Packet, Tunn, TunnResult};
 use boringtun::x25519::{PublicKey, StaticSecret};
 use crate::stream::{self, Stream};
+use crate::reach::{self, Reach};
 use crate::state::{Remembered, State, unix_now};
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
@@ -66,6 +67,21 @@ pub const STATUS_OK: u8 = 0;
 pub const STATUS_NO_PATH: u8 = 1;
 const LABEL_IDENTIFY: &[u8] = b"vork/v0/identify";
 const LABEL_SESSION: &[u8] = b"vork/v0/session";
+/// A dial counts as cold, so its answer proves the neighbor reachable
+/// (ADR-0023), when nothing came from it for this long: no NAT mapping of
+/// its own toward us can still be open (UDP mappings last 30 s to 2 min).
+const NAT_COLD: Duration = Duration::from_secs(150);
+/// The handshake answer to a cold dial must come within this.
+const COLD_ANSWER: Duration = Duration::from_secs(10);
+/// Fewer relaying neighbors up than this, and the node dials reachable ones it learned of.
+const MIN_UP: usize = 2;
+const SEEK_EVERY: Duration = Duration::from_secs(30);
+/// A learned node dialed and not up within this is let go.
+const TRIAL: Duration = Duration::from_secs(20);
+/// A learned node that didn't answer isn't dialed again for this long.
+const TRIED_AGAIN: Duration = Duration::from_secs(600);
+/// Neighbors are told what this node proved this often (and at link up).
+const SHARE_EVERY: Duration = Duration::from_secs(600);
 /// "What is your key?" `nonce[8]`, and the answer `nonce[8] x_pub[32] ed_pub[32]`.
 /// Outside WireGuard (whose messages start with 1–4).
 const KEY_ASK: &[u8] = b"VORK?";
@@ -112,6 +128,10 @@ struct Neighbor {
     /// When we last sent this neighbor our HELLO.
     hello_sent: Option<Instant>,
     up: bool,
+    /// A cold dial waiting for its answer: to where, when (ADR-0023).
+    cold: Option<(SocketAddr, Instant)>,
+    /// Dialed from what was learned of reachable nodes: let go if not up soon.
+    trial: Option<Instant>,
 }
 
 /// A path as seen from one of its ends; keyed by (neighbor, label on that link).
@@ -311,6 +331,10 @@ pub struct Node {
     bench_rx: HashMap<u32, BenchRx>,
     state: State,
     started: Instant,
+    /// Which nodes can be reached directly, learned from experience (ADR-0023).
+    reach: Reach,
+    /// Learned nodes dialed, by key: when.
+    tried: HashMap<[u8; 32], Instant>,
 }
 
 /// Socket buffers big enough to absorb bursts (the Linux default, ~200 KB,
@@ -478,8 +502,10 @@ impl Node {
             bench_seq: 0,
             bench_sent: 0,
             bench_rx: HashMap::new(),
+            reach: Reach::open(state.dir()),
             state,
             started: Instant::now(),
+            tried: HashMap::new(),
         };
         for name in node.cfg.destinations.clone() {
             let me = node.me_arc.clone();
@@ -512,7 +538,21 @@ impl Node {
         let tunn = self.new_tunn(x_pub, Some(KEEPALIVE), id);
         self.neighbors.insert(
             id,
-            Neighbor { tunn, x_pub, addr, hash: None, flags: None, observed_me: None, last_rx: None, retry, last_try: Instant::now(), hello_sent: None, up: false },
+            Neighbor {
+                tunn,
+                x_pub,
+                addr,
+                hash: None,
+                flags: None,
+                observed_me: None,
+                last_rx: None,
+                retry,
+                last_try: Instant::now(),
+                hello_sent: None,
+                up: false,
+                cold: None,
+                trial: None,
+            },
         );
         self.neighbor_by_key.insert(x_pub, id);
         id
@@ -593,6 +633,9 @@ impl Node {
             None => None,
         };
         let mut last_remember = Instant::now();
+        let mut last_seek = Instant::now();
+        let mut sought = false;
+        let mut last_share = Instant::now();
         let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
         let mut mapped_rx = None;
         let mut mapper = None;
@@ -663,11 +706,13 @@ impl Node {
                         let _ = tokio::time::timeout(Duration::from_secs(3), m).await;
                     }
                     self.remember_neighbors();
+                    self.reach.save();
                     log("stopped");
                     return Ok(());
                 }
                 _ = tokio::signal::ctrl_c() => {
                     self.remember_neighbors();
+                    self.reach.save();
                     let _ = stop_tx.send(true);
                     if let Some(m) = mapper {
                         let _ = tokio::time::timeout(Duration::from_secs(3), m).await;
@@ -702,6 +747,20 @@ impl Node {
                     if last_remember.elapsed() >= Duration::from_secs(60) {
                         last_remember = Instant::now();
                         self.remember_neighbors();
+                        self.reach.prune(unix_now());
+                        self.reach.save();
+                    }
+                    // A few seconds for configured and remembered neighbors first.
+                    if last_seek.elapsed() >= SEEK_EVERY || (!sought && self.started.elapsed() >= Duration::from_secs(8)) {
+                        last_seek = Instant::now();
+                        sought = true;
+                        self.seek_neighbors();
+                    }
+                    if last_share.elapsed() >= SHARE_EVERY {
+                        last_share = Instant::now();
+                        for id in self.up_neighbors() {
+                            self.share_reach(id);
+                        }
                     }
                     if last_bench_report.elapsed() >= Duration::from_secs(1) {
                         let secs = last_bench_report.elapsed().as_secs_f64();
@@ -728,6 +787,10 @@ impl Node {
     fn initiate(&mut self, id: u32) {
         let Some(n) = self.neighbors.get_mut(&id) else { return };
         n.last_try = Instant::now();
+        // Cold: its answer will show it can be reached from here unasked.
+        if !n.up && n.last_rx.is_none_or(|t| t.elapsed() >= NAT_COLD) {
+            n.cold = n.addr.map(|a| (a, Instant::now()));
+        }
         let mut buf = vec![0u8; PKT_BUF];
         if let TunnResult::WriteToNetwork(p) = n.tunn.format_handshake_initiation(&mut buf, false) {
             let p = p.to_vec();
@@ -754,6 +817,7 @@ impl Node {
         if data.starts_with(KEY_ASK) || data.starts_with(KEY_TELL) {
             return self.on_key_query(addr, data);
         }
+        let answer = wg::kind(data) == Some(wg::RESP);
         let id = match wg::kind(data) {
             Some(wg::INIT) => {
                 let Ok(Packet::HandshakeInit(init)) = Tunn::parse_incoming_packet(data) else { return };
@@ -802,6 +866,12 @@ impl Node {
             let n = self.neighbors.get_mut(&id).unwrap();
             n.addr = Some(addr);
             n.last_rx = Some(Instant::now());
+            // The answer to a cold dial, from where we dialed: reachable from here.
+            if answer && n.cold.take().is_some_and(|(at, t)| at == addr && t.elapsed() < COLD_ANSWER) {
+                let key = n.x_pub;
+                debug(format!("reached {} directly at {addr}", hex::encode(&key[..4])));
+                self.reach.proved(key, addr, unix_now());
+            }
         }
         self.check_up(id);
     }
@@ -835,6 +905,10 @@ impl Node {
         if let Some(addr) = addr {
             self.send_msg(id, &Msg::Observed { addr });
         }
+        if let Some(n) = self.neighbors.get_mut(&id) {
+            n.trial = None;
+        }
+        self.share_reach(id);
         if self.cfg.announce {
             for own in self.own_announces() {
                 self.send_msg(id, &Msg::Announce(own));
@@ -879,6 +953,7 @@ impl Node {
             Msg::PathErr { label } => self.on_path_err(from, label),
             Msg::Data { label, inner } => self.on_data(from, label, inner),
             Msg::Probe { label, nonce, reply } => self.on_probe(from, label, nonce, reply),
+            Msg::Reach { entries } => self.on_reach(from, entries),
         }
     }
 
@@ -896,6 +971,9 @@ impl Node {
         let restarted = !first && n.hello_sent.is_none_or(|t| t.elapsed() > Duration::from_secs(1));
         n.hash = Some(h);
         n.flags = Some(flags);
+        let key = n.x_pub;
+        self.reach.set_relay(&key, flags & FLAG_RELAY != 0);
+        let n = self.neighbors.get_mut(&from).unwrap();
         let addr = n.addr;
         if restarted {
             debug(format!("neighbor {} said hello again; answering", short(&h)));
@@ -1959,6 +2037,81 @@ impl Node {
             self.seen_req.clear();
         }
         self.pings.retain(|_, t| t.elapsed() < Duration::from_secs(10));
+        // Learned nodes that didn't come up: let go.
+        let failed: Vec<u32> = self.neighbors.iter().filter(|(_, n)| !n.up && n.trial.is_some_and(|t| t.elapsed() >= TRIAL)).map(|(id, _)| *id).collect();
+        for id in failed {
+            if let Some(n) = self.neighbors.remove(&id) {
+                self.neighbor_by_key.remove(&n.x_pub);
+                debug(format!("learned node {} didn't answer", n.addr.map(|a| a.to_string()).unwrap_or_default()));
+            }
+        }
+    }
+
+    // ---- reachability (ADR-0023) ---------------------------------------------------
+
+    /// Tells a neighbor which nodes this one dialed cold and reached.
+    fn share_reach(&mut self, id: u32) {
+        let Some(n) = self.neighbors.get(&id) else { return };
+        let Some(addr) = n.addr else { return };
+        let entries = self.reach.to_share(reach::scope(addr.ip()), unix_now());
+        if !entries.is_empty() {
+            self.send_msg(id, &Msg::Reach { entries });
+        }
+    }
+
+    /// A neighbor's report. About itself: ignored (no node vouches for
+    /// itself). About us: how others reach us. Others: leads to dial.
+    fn on_reach(&mut self, from: u32, entries: Vec<([u8; 32], SocketAddr, u32)>) {
+        let Some(n) = self.neighbors.get(&from) else { return };
+        let Some(reporter) = n.hash else { return };
+        let reporter_key = n.x_pub;
+        let mine = *self.me.x_pub().as_bytes();
+        let now = unix_now();
+        for (key, addr, age) in entries {
+            if key == reporter_key {
+                continue;
+            }
+            if key == mine {
+                if self.reach.about_me.insert(reporter, (addr, now.saturating_sub(age as u64))).is_none() {
+                    log(format!("{} reached us directly at {addr}", short(&reporter)));
+                }
+                continue;
+            }
+            self.reach.heard(&reporter, key, addr, age, now);
+        }
+    }
+
+    /// Fewer relaying neighbors up than MIN_UP: dial the best learned node not tried lately.
+    fn seek_neighbors(&mut self) {
+        let up = self.neighbors.values().filter(|n| n.up && n.flags.is_none_or(|f| f & FLAG_RELAY != 0)).count();
+        let trying = self.neighbors.values().any(|n| n.trial.is_some());
+        if up >= MIN_UP || trying {
+            return;
+        }
+        self.tried.retain(|_, t| t.elapsed() < TRIED_AGAIN);
+        let mine = *self.me.x_pub().as_bytes();
+        let skip = |k: &[u8; 32]| *k == mine || self.tried.contains_key(k) || self.neighbor_by_key.get(k).is_some_and(|id| self.is_up(*id));
+        let Some((key, addr)) = self.reach.candidates(skip).into_iter().next() else { return };
+        self.tried.insert(key, Instant::now());
+        let id = match self.neighbor_by_key.get(&key) {
+            // Known but down: try it at the learned address.
+            Some(id) => {
+                let id = *id;
+                if let Some(n) = self.neighbors.get_mut(&id) {
+                    n.addr = Some(addr);
+                }
+                id
+            }
+            None => {
+                let id = self.add_neighbor(key, Some(addr), None);
+                if let Some(n) = self.neighbors.get_mut(&id) {
+                    n.trial = Some(Instant::now());
+                }
+                id
+            }
+        };
+        log(format!("dialing {addr}, learned to be reachable"));
+        self.initiate(id);
     }
 
     fn status(&self) {
@@ -2130,6 +2283,12 @@ impl Node {
             "destinations": self.routes.len(),
             "sessions": sessions,
             "relay": { "paths": self.switch.len() / 2, "packets": self.relayed },
+            "reach": {
+                "known": self.reach.len().0,
+                "proven_here": self.reach.len().1,
+                // Who dialed us cold and got an answer: reachable from there.
+                "reached_by": self.reach.about_me.iter().map(|(h, (a, t))| json!({ "node": hex::encode(h), "at": a.to_string(), "ago_s": unix_now().saturating_sub(*t) })).collect::<Vec<_>>(),
+            },
         })
     }
 }

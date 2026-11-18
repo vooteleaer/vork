@@ -4,6 +4,7 @@ mod control;
 mod identity;
 mod node;
 mod portmap;
+mod reach;
 #[cfg(windows)]
 mod service;
 mod state;
@@ -286,6 +287,14 @@ fn print_status(v: &serde_json::Value) {
         println!("seen at      {}", outside.join(", "));
     }
     println!("destinations {}   relaying {} paths, {} packets", g("destinations"), g("relay")["paths"], g("relay")["packets"]);
+    let reach = g("reach");
+    let by: Vec<String> = reach["reached_by"].as_array().cloned().unwrap_or_default().iter().filter_map(|r| r["at"].as_str().map(String::from)).collect();
+    let mut at = by.clone();
+    at.sort();
+    at.dedup();
+    let me = if by.is_empty() { "not shown yet (no node dialed us cold)".to_string() } else { format!("yes, by {} node(s), at {}", by.len(), at.join(", ")) };
+    println!("reachable    {me}");
+    println!("learned      {} reachable node(s), {} proven from here", reach["known"], reach["proven_here"]);
     println!("neighbors:");
     for n in g("neighbors").as_array().cloned().unwrap_or_default() {
         let addr = n["address"].as_str().map(|a| &a[..8.min(a.len())]).unwrap_or("?");
