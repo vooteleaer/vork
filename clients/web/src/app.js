@@ -9,7 +9,7 @@ let heard = [];
 function fromHash() {
   const h = decodeURIComponent(location.hash.slice(1));
   if (h.startsWith("library=")) return { kind: "library", ns: h.slice(8) };
-  if (["announces", "join", "new", "reports", "node", "reticulum", "settings"].includes(h)) return { kind: h };
+  if (["announces", "join", "new", "reports", "node", "network", "settings"].includes(h)) return { kind: h };
   return { kind: "node" };
 }
 let selected = fromHash();
@@ -105,7 +105,7 @@ function renderNav() {
   nav.append(el("h2", {}, "This node"));
   nav.append(item({ kind: "reports" }, "Crash and trouble reports"));
   nav.append(item({ kind: "node" }, "Status"));
-  nav.append(item({ kind: "reticulum" }, "Reticulum"));
+  nav.append(item({ kind: "network" }, "vØrk network"));
   nav.append(item({ kind: "settings" }, "Settings"));
 }
 
@@ -251,8 +251,8 @@ const views = {
       }
     });
 
-    // The Reticulum paths to its nodes, as this node's Reticulum client sees them.
-    const pathCard = el("div", { class: "card" }, el("h3", {}, "Reticulum paths"),
+    // The paths to its nodes, as this node sees them.
+    const pathCard = el("div", { class: "card" }, el("h3", {}, "Paths to its nodes"),
       el("p", { class: "dim" }, "To the nodes this library syncs with, as this node sees them now."));
     const plist = el("div", { class: "list" }, el("div", { class: "dim" }, "…"));
     pathCard.append(plist);
@@ -327,7 +327,7 @@ const views = {
 
   async reports(v) {
     v.append(el("h2", {}, "Crash and trouble reports"),
-      el("p", { class: "sub" }, "From every device in the library vork-crashlogs (vork ADR-0036): panics, unclean stops, Reticulum gone, app crashes."));
+      el("p", { class: "sub" }, "From every device in the library vork-crashlogs (vork ADR-0036): panics, unclean stops, the vØrk node gone, app crashes."));
     const note = el("textarea", { placeholder: "What went wrong? vorkd's last output is added." });
     v.append(el("div", { class: "card" }, el("h3", {}, "Write a report"), note, el("div", { class: "row" },
       el("button", { onclick: async () => {
@@ -367,62 +367,59 @@ const views = {
         el("span", { class: "k" }, "Store limit"), el("span", {}, human(u.store_limit)),
         el("span", { class: "k" }, "Disk"), el("span", {}, `${human(u.disk_available)} free of ${human(u.disk_total)}`))));
     }
-    const r = await get("/api/reticulum");
-    v.append(el("div", { class: "card" }, el("h3", {}, "Reticulum"),
-      el("p", {}, reticulumState(r), " ", el("button", { class: "flat", onclick: () => { selected = { kind: "reticulum" }; render(); } }, "Connections and configuration"))));
+    const r = await get("/api/network");
+    v.append(el("div", { class: "card" }, el("h3", {}, "vØrk network"),
+      el("p", {}, networkState(r), " ", el("button", { class: "flat", onclick: () => { selected = { kind: "network" }; render(); } }, "Connections and configuration"))));
   },
 
-  // Reticulum, the network vork runs on: its state, connections (on, off,
-  // added, removed) and its whole configuration file.
-  async reticulum(v) {
-    const r = await get("/api/reticulum");
-    v.append(el("h2", {}, "Reticulum"),
-      el("p", { class: "sub" }, reticulumState(r) + (r.transport ? " · transport " + r.transport : "")));
-    const applied = r.live ? "" : " Changes take effect when Reticulum next starts.";
+  // The vØrk node vork runs on: its state, connections (on, off, added,
+  // removed) and its whole configuration file.
+  async network(v) {
+    const r = await get("/api/network");
+    v.append(el("h2", {}, "vØrk network"),
+      el("p", { class: "sub" }, networkState(r) + (r.address ? " · node " + r.address : "")));
 
     const conns = el("div", { class: "card" }, el("h3", {}, "Connections"),
-      el("p", { class: "dim" }, "From the configuration file." + applied));
+      el("p", { class: "dim" }, "From the node's configuration file. A new one is dialed at once; switching off or removing takes effect when the node next starts."));
     for (const c of r.connections || []) {
       conns.append(el("div", { class: "row" }, el("span", { class: "dot " + (c.up ? "up" : (c.enabled ? "down" : "")) }),
-        el("span", { class: "grow" }, c.name, el("span", { class: "dim" }, " · " + c.kind + (c.enabled ? (c.up ? "" : " · not connected") : " · off"))),
-        el("span", { class: "dim" }, `↓ ${human(c.rx)} ↑ ${human(c.tx)}`),
-        el("button", { onclick: () => act("/api/reticulum/switch", { name: c.name, on: !c.enabled }, c.enabled ? "Switched off" : "Switched on") }, c.enabled ? "Switch off" : "Switch on"),
-        el("button", { onclick: () => { if (confirm(`Remove the connection ${c.name}?`)) act("/api/reticulum/remove", { name: c.name }, "Removed"); } }, "Remove")));
+        el("span", { class: "grow" }, c.name, el("span", { class: "dim" }, c.enabled ? (c.up ? " · connected" : " · not connected") : " · off")),
+        el("button", { onclick: () => act("/api/network/switch", { name: c.name, on: !c.enabled }, c.enabled ? "Switched off" : "Switched on") }, c.enabled ? "Switch off" : "Switch on"),
+        el("button", { onclick: () => { if (confirm(`Remove the connection ${c.name}?`)) act("/api/network/remove", { name: c.name }, "Removed"); } }, "Remove")));
     }
     if (!(r.connections || []).length) conns.append(el("div", { class: "dim" }, "None."));
     v.append(conns);
 
     if ((r.others || []).length) {
-      const others = el("div", { class: "card" }, el("h3", {}, "Other interfaces"),
-        el("p", { class: "dim" }, "Running but not in the configuration file: found on the network (discovered), or made by Reticulum itself."));
+      const others = el("div", { class: "card" }, el("h3", {}, "Other neighbors"),
+        el("p", { class: "dim" }, "Not in the configuration file: remembered from earlier, or they came to this node."));
       for (const c of r.others) {
         others.append(el("div", { class: "row" }, el("span", { class: "dot " + (c.up ? "up" : "down") }),
-          el("span", { class: "grow" }, c.name, el("span", { class: "dim" }, " · " + c.kind)),
-          el("span", { class: "dim" }, `↓ ${human(c.rx)} ↑ ${human(c.tx)}`)));
+          el("span", { class: "grow" }, c.name, el("span", { class: "dim" }, " · " + c.kind))));
       }
       v.append(others);
     }
 
-    const name = el("input", { placeholder: "Name" });
+    const name = el("input", { placeholder: "Name (for you)" });
     const host = el("input", { placeholder: "Host or address" });
-    const port = el("input", { placeholder: "Port", value: "4242", size: 6 });
+    const port = el("input", { placeholder: "Port", value: "51820", size: 6 });
     v.append(el("div", { class: "card" }, el("h3", {}, "Add a connection"),
-      el("p", { class: "dim" }, "A TCP connection to another Reticulum node. Other kinds (radios, listeners) in the configuration below."),
+      el("p", { class: "dim" }, "Another vØrk node, by its address: its key is asked for when it's first reached. A neighbor only relays; everything is encrypted end to end."),
       el("div", { class: "row" }, name, host, port,
-        el("button", { class: "primary", onclick: () => act("/api/reticulum/add", { name: name.value, host: host.value, port: Number(port.value) }, "Added") }, "Add"))));
+        el("button", { class: "primary", onclick: () => act("/api/network/add", { name: name.value || host.value, host: host.value, port: Number(port.value) }, "Added") }, "Add"))));
 
-    const cfg = await get("/api/reticulum/config");
+    const cfg = await get("/api/network/config");
     const area = el("textarea", { class: "mono", rows: 24, spellcheck: "false", style: "width:100%;box-sizing:border-box" });
     area.value = cfg.text || "";
     v.append(el("div", { class: "card" }, el("h3", {}, "Configuration"),
       el("p", { class: "dim mono" }, cfg.error || cfg.path || ""),
       area,
       el("div", { class: "row" },
-        el("span", { class: "grow dim" }, r.live ? "Saved and applied at once; if Reticulum refuses it, the previous one is put back." : "Saved; used when Reticulum next starts."),
+        el("span", { class: "grow dim" }, "Saved; used when the node next starts (the previous file is kept beside it)."),
         el("button", { class: "primary", onclick: async () => {
           try {
-            const res = await post("/api/reticulum/config", { text: area.value });
-            toast(res.live ? "Saved and applied" : "Saved; restart Reticulum to use it");
+            await post("/api/network/config", { text: area.value });
+            toast("Saved; restart the vØrk node to use it");
             await refresh();
           } catch (e) { toast(e.message); }
         } }, "Save"))));
@@ -448,10 +445,11 @@ const views = {
   },
 };
 
-function reticulumState(r) {
+function networkState(r) {
   if (!r.running) return "Not running" + (r.error ? ": " + r.error : "");
-  const up = r.uptime ? (r.uptime > 86400 ? Math.round(r.uptime / 86400) + " d" : Math.round(r.uptime / 3600) + " h") : "";
-  return "Running" + (up ? ", up " + up : "") + (r.error ? " · " + r.error : "");
+  const up = r.uptime ? (r.uptime > 86400 ? Math.round(r.uptime / 86400) + " d" : r.uptime > 3600 ? Math.round(r.uptime / 3600) + " h" : Math.round(r.uptime / 60) + " min") : "";
+  const n = (r.connections || []).concat(r.others || []);
+  return "Running" + (up ? ", up " + up : "") + ` · ${n.filter(c => c.up).length} of ${n.length} neighbor(s) up · ${r.destinations || 0} destination(s) known`;
 }
 
 async function loadInvites(ns, list) {

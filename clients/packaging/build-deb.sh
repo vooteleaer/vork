@@ -5,13 +5,13 @@
 # arm64 on an amd64 machine: with arm64 GTK installed (dpkg multiarch:
 # libgtk-4-dev:arm64 libadwaita-1-dev:arm64) and gcc-aarch64-linux-gnu.
 #
-#     packaging/build-deb.sh [OUT_DIR] [ARCH]
+#     clients/packaging/build-deb.sh [OUT_DIR] [ARCH]
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-ROOT=$(cd "$HERE/.." && pwd)
+ROOT=$(cd "$HERE/../.." && pwd)
 OUT=${1:-$ROOT/target/deb}
 export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$ROOT/target}
-VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/Cargo.toml" | head -1 | tr -d '\r')
+VERSION=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' "$ROOT/Cargo.toml" | head -1 | tr -d '\r')
 COMMIT=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
 # A release when this commit is tagged with the version, else a build towards
 # it; the commit count keeps those in order (vork docs/storage/versioning.md).
@@ -49,19 +49,19 @@ install -m 0644 "$HERE/org.vork.Desktop.desktop" "$STAGE/usr/share/applications/
 # In the tray from login (a desktop without a tray: nothing shows, nothing runs on).
 install -m 0644 "$HERE/org.vork.Desktop-autostart.desktop" "$STAGE/etc/xdg/autostart/"
 install -m 0644 "$HERE/org.vork.Desktop.svg" "$STAGE/usr/share/icons/hicolor/scalable/apps/"
-install -m 0644 "$ROOT/README.md" "$STAGE/usr/share/doc/vork-desktop/"
+install -m 0644 "$ROOT/clients/README.md" "$STAGE/usr/share/doc/vork-desktop/"
 SIZE=$(du -sk "$STAGE/usr" | cut -f1)
 cat > "$STAGE/DEBIAN/control" <<CTRL
 Package: vork-desktop
 Version: $DEBVER
 Architecture: $ARCH
-Maintainer: vork <https://github.com/vooteleaer/retifs>
+Maintainer: vork <https://github.com/vooteleaer/vork>
 Installed-Size: $SIZE
 Depends: vork, libc6 (>= $GLIBC), libgtk-4-1 (>= 4.12), libadwaita-1-0 (>= 1.4)
 Section: net
 Priority: optional
 Description: vork utility: this device, its libraries and how they're kept
- The vork node at a glance, in the tray and in a window: Reticulum and
+ The vØrk node at a glance, in the tray and in a window: the network and
  its connections, the services, settings, storage, libraries and their
  members, and Find. A prototype.
 CTRL

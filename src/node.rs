@@ -66,6 +66,25 @@ pub const STATUS_OK: u8 = 0;
 pub const STATUS_NO_PATH: u8 = 1;
 const LABEL_IDENTIFY: &[u8] = b"vork/v0/identify";
 const LABEL_SESSION: &[u8] = b"vork/v0/session";
+/// "What is your key?" `nonce[8]`, and the answer `nonce[8] x_pub[32] ed_pub[32]`.
+/// Outside WireGuard (whose messages start with 1–4).
+const KEY_ASK: &[u8] = b"VORK?";
+const KEY_TELL: &[u8] = b"VORK!";
+
+/// `HOST:PORT` or `HOST:PORT@KEY`.
+pub fn parse_peer_text(s: &str) -> Result<(SocketAddr, Option<[u8; 32]>), String> {
+    use std::net::ToSocketAddrs;
+    let (addr, key) = match s.split_once('@') {
+        Some((a, k)) => (a, Some(k)),
+        None => (s, None),
+    };
+    let addr = addr.trim().to_socket_addrs().map_err(|e| format!("{addr}: {e}"))?.next().ok_or(format!("{addr} doesn't resolve"))?;
+    let key = match key {
+        Some(k) => Some(hex::decode(k.trim()).ok().and_then(|b| <[u8; 32]>::try_from(b).ok()).ok_or("the key must be 64 hex digits")?),
+        None => None,
+    };
+    Ok((addr, key))
+}
 const TTL: u8 = 32;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -198,6 +217,9 @@ struct Hop {
 pub struct Config {
     pub listen: SocketAddr,
     pub peers: Vec<(SocketAddr, [u8; 32])>,
+    /// Bootstrap neighbors known only by address: their key is asked for
+    /// (trust on first use; a neighbor is never trusted for more than relaying).
+    pub peers_by_address: Vec<SocketAddr>,
     pub announce: bool,
     pub ping: Option<Hash>,
     /// Lite: never relay, receive no floods, ask for paths (ESP32 and the like).
@@ -254,6 +276,8 @@ pub struct Node {
     clients: HashMap<u32, ApiClient>,
     /// `Find`s waiting for an announce: (client, request, destination, deadline).
     finds: Vec<(u32, u32, Hash, Instant)>,
+    /// Neighbors we know by address only, asked for their key: nonce, when.
+    asking: HashMap<SocketAddr, (u64, Instant)>,
     /// Receives through tokio; sends through the same socket's std handle,
     /// because tokio's `try_send_to` drops a datagram (WouldBlock) until the
     /// reactor has seen the socket writable, which loses the first handshake.
@@ -430,6 +454,7 @@ impl Node {
             me_arc: Arc::new(Identity::from_bytes(&me.to_bytes())),
             clients: HashMap::new(),
             finds: Vec::new(),
+            asking: HashMap::new(),
             me,
             sock,
             send_sock,
@@ -522,6 +547,9 @@ impl Node {
         for (addr, key) in self.cfg.peers.clone() {
             let id = self.add_neighbor(key, Some(addr), Some(Duration::from_secs(5)));
             self.initiate(id);
+        }
+        for addr in self.cfg.peers_by_address.clone() {
+            self.ask_key(addr);
         }
         // Neighbors from earlier runs: reconnect without bootstrap peers.
         let remembered = self.state.neighbors();
@@ -650,6 +678,7 @@ impl Node {
                 _ = tick.tick() => {
                     self.on_timers();
                     self.expire_finds();
+                    self.ask_keys_again();
                     if self.cfg.announce && last_announce.elapsed() >= ANNOUNCE_EVERY {
                         last_announce = Instant::now();
                         self.announce_self();
@@ -722,6 +751,9 @@ impl Node {
     }
 
     fn on_datagram(&mut self, addr: SocketAddr, data: &[u8]) {
+        if data.starts_with(KEY_ASK) || data.starts_with(KEY_TELL) {
+            return self.on_key_query(addr, data);
+        }
         let id = match wg::kind(data) {
             Some(wg::INIT) => {
                 let Ok(Packet::HandshakeInit(init)) = Tunn::parse_incoming_packet(data) else { return };
@@ -1971,11 +2003,73 @@ impl Node {
         }
     }
 
-    fn on_control(&self, request: &str) -> String {
-        let cmd = serde_json::from_str::<serde_json::Value>(request).ok().and_then(|v| v.get("cmd").and_then(|c| c.as_str()).map(String::from));
-        match cmd.as_deref() {
+    fn on_control(&mut self, request: &str) -> String {
+        let v = serde_json::from_str::<serde_json::Value>(request).unwrap_or_default();
+        match v.get("cmd").and_then(|c| c.as_str()) {
             Some("status") => self.status_json().to_string(),
+            // Connect to a neighbor now: "HOST:PORT" (its key asked for) or "HOST:PORT@KEY".
+            Some("peer") => {
+                let Some(text) = v.get("addr").and_then(|a| a.as_str()) else { return json!({ "error": "peer needs addr" }).to_string() };
+                match parse_peer_text(text) {
+                    Ok((addr, Some(key))) => {
+                        if !self.neighbor_by_key.contains_key(&key) {
+                            let id = self.add_neighbor(key, Some(addr), Some(RETRY_MIN));
+                            self.initiate(id);
+                        }
+                        json!({ "ok": true }).to_string()
+                    }
+                    Ok((addr, None)) => {
+                        self.ask_key(addr);
+                        json!({ "ok": true }).to_string()
+                    }
+                    Err(e) => json!({ "error": e }).to_string(),
+                }
+            }
             _ => json!({ "error": "unknown command; try {\"cmd\":\"status\"}" }).to_string(),
+        }
+    }
+
+    // ---- neighbors known by address only ------------------------------------------
+
+    /// Asks the node at `addr` for its key (answered unauthenticated: the key
+    /// is public, and a neighbor is trusted with nothing but relaying).
+    fn ask_key(&mut self, addr: SocketAddr) {
+        let nonce = rand_u64();
+        self.asking.insert(addr, (nonce, Instant::now()));
+        let mut q = KEY_ASK.to_vec();
+        q.extend_from_slice(&nonce.to_be_bytes());
+        self.send_raw(addr, &q);
+    }
+
+    fn on_key_query(&mut self, addr: SocketAddr, data: &[u8]) {
+        if data.starts_with(KEY_ASK) && data.len() == KEY_ASK.len() + 8 {
+            let mut a = KEY_TELL.to_vec();
+            a.extend_from_slice(&data[KEY_ASK.len()..]);
+            a.extend_from_slice(self.me.x_pub().as_bytes());
+            a.extend_from_slice(&self.me.ed_pub());
+            return self.send_raw(addr, &a);
+        }
+        if data.starts_with(KEY_TELL) && data.len() == KEY_TELL.len() + 8 + 64 {
+            let nonce = u64::from_be_bytes(data[KEY_TELL.len()..KEY_TELL.len() + 8].try_into().unwrap());
+            if self.asking.get(&addr).map(|(n, _)| *n) != Some(nonce) {
+                return;
+            }
+            self.asking.remove(&addr);
+            let key: [u8; 32] = data[KEY_TELL.len() + 8..KEY_TELL.len() + 40].try_into().unwrap();
+            if key == *self.me.x_pub().as_bytes() || self.neighbor_by_key.contains_key(&key) {
+                return;
+            }
+            log(format!("{addr} gave its key {}", hex::encode(&key[..4])));
+            let id = self.add_neighbor(key, Some(addr), Some(RETRY_MIN));
+            self.initiate(id);
+        }
+    }
+
+    /// Asks again those that haven't answered (every 5 s).
+    fn ask_keys_again(&mut self) {
+        let late: Vec<SocketAddr> = self.asking.iter().filter(|(_, (_, t))| t.elapsed() >= Duration::from_secs(5)).map(|(a, _)| *a).collect();
+        for a in late {
+            self.ask_key(a);
         }
     }
 

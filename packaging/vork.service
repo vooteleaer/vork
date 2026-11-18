@@ -21,7 +21,9 @@ Restart=on-failure
 RestartSec=3
 KillSignal=SIGINT
 StateDirectory=vork
-StateDirectoryMode=0700
+# Readable by local users: their programs reach the node through api.sock and
+# control.sock here; the key itself is 0600.
+StateDirectoryMode=0755
 CapabilityBoundingSet=CAP_NET_ADMIN
 NoNewPrivileges=yes
 ProtectSystem=strict

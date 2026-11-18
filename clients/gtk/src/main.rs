@@ -440,18 +440,18 @@ fn start_tray(app: &adw::Application, window: &adw::ApplicationWindow, me: &Rc<A
             }
         });
     }
-    // Reticulum every 15 s (prnsd is asked as a program), vØrk storage from the
+    // The vØrk node every 15 s (its control socket), vØrk storage from the
     // window's own 5 s poll.
     let me = me.clone();
     let update = move || {
         let (me2, tray) = (me.clone(), tray.clone());
-        bg(&me.daemon, |_| vork_desktop_core::device::reticulum(), move |r| {
+        bg(&me.daemon, |_| vork_desktop_core::device::network(), move |r| {
             let outward: Vec<_> = r.interfaces.iter().filter(|i| !i.is_local()).collect();
             tray.show(tray::TrayState {
                 vork_up: me2.vork_up.get(),
                 node: me2.node.borrow().clone(),
                 starting: me2.starting.borrow().clone(),
-                reticulum_up: r.running,
+                network_up: r.running,
                 links_up: outward.iter().filter(|i| i.up).count(),
                 links: outward.len(),
             });

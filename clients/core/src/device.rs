@@ -1,11 +1,8 @@
-//! This device: Reticulum (the shared instance vØrk storage runs on), the
-//! services, and the node's settings. Any Reticulum implementation that
-//! offers a shared instance will do (Python's `rnsd`, Prns's `prnsd`, …):
-//! whether it runs is asked of the shared instance itself, and its
-//! connections are read and changed in Reticulum's own configuration file,
-//! which every implementation reads. Where `prnsd`'s command line is there,
-//! it's used besides: per-interface traffic, and changes applied live. The
-//! services are
+//! This device: the vØrk node (the network vØrk storage runs on), the
+//! services, and the node's settings. The node is asked through its control
+//! endpoint (`vork status`'s): whether it runs, its neighbors, what it knows.
+//! Its connections are the `peers` of its configuration file (`vork.toml`),
+//! changed in place, and a new one is also dialed at once. The services are
 //! systemd user units on Linux (the .deb's; from the Flatpak, the host's
 //! through `flatpak-spawn --host`) and, on Windows, processes the
 //! utility itself starts at login (the installer's); the settings are the
@@ -14,11 +11,12 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// One Reticulum interface, as `prnsd status --json` shows it.
+/// One neighbor of the node.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Interface {
+    /// Where it is (`host:port`), or its address when that's unknown.
     pub name: String,
-    /// "TcpClient", "LocalServer", "AutoInterface", …
+    /// "neighbor", or "lite" for a small device that doesn't relay.
     pub kind: String,
     pub up: bool,
     pub rx: u64,
@@ -26,277 +24,171 @@ pub struct Interface {
 }
 
 impl Interface {
-    /// The machine's own shared-instance socket: not a way out.
+    /// Nothing of the node's own is listed as a neighbor.
     pub fn is_local(&self) -> bool {
-        self.kind == "LocalServer" || self.kind == "LocalClient" || self.name.starts_with("Shared Instance")
+        false
     }
 }
 
-/// Reticulum on this machine.
+/// The vØrk node on this machine.
 #[derive(Debug, Clone, Default)]
-pub struct Reticulum {
-    /// A `prnsd` found to ask for details (Prns's), if there is one.
-    pub prnsd: Option<PathBuf>,
-    /// A shared instance answered.
+pub struct Network {
+    /// The node answered.
     pub running: bool,
-    pub transport_id: Option<String>,
+    /// The node's address.
+    pub address: Option<String>,
     pub uptime_s: Option<f64>,
     pub interfaces: Vec<Interface>,
+    /// Destinations it knows a route to.
+    pub destinations: u64,
+    /// Packets it relayed for others.
+    pub relayed: u64,
+    /// Where others see it (its outside address).
+    pub seen_at: Vec<String>,
     pub error: Option<String>,
 }
 
-/// The prnsd to ask: Prns's own, installed apart from vØrk storage (vØrk storage never
-/// brings one). Haiku: the Prns package's; Windows: the managed one; else
-/// the PATH's, or cargo's.
-pub fn prnsd() -> Option<PathBuf> {
-    // The Flatpak: the host's, found there (its PATH, or cargo's).
-    if in_flatpak() {
-        let o = host("sh").args(["-c", r#"command -v prnsd || { [ -x "$HOME/.cargo/bin/prnsd" ] && echo "$HOME/.cargo/bin/prnsd"; }"#]).output().ok()?;
-        let p = String::from_utf8_lossy(&o.stdout).trim().to_string();
-        return (o.status.success() && !p.is_empty()).then(|| PathBuf::from(p));
+/// Parses the node's status (`vork status --json`).
+pub fn parse_status(json: &str) -> Result<Network, String> {
+    let v: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("vork status: {e}"))?;
+    if let Some(e) = v["error"].as_str() {
+        return Err(e.to_string());
     }
-    if cfg!(target_os = "haiku") && Path::new(HAIKU_PRNSD).is_file() {
-        return Some(PathBuf::from(HAIKU_PRNSD));
-    }
-    if let Some(base) = std::env::var_os("LOCALAPPDATA") {
-        let p = PathBuf::from(base).join("prnsd\\prnsd-managed.exe");
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-    let exe = if cfg!(windows) { "prnsd.exe" } else { "prnsd" };
-    let cargo = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(|h| PathBuf::from(h).join(".cargo").join("bin"));
-    std::env::var_os("PATH")
-        .map(|paths| std::env::split_paths(&paths).collect::<Vec<_>>())
-        .unwrap_or_default()
-        .into_iter()
-        .chain(cargo)
-        .map(|d| d.join(exe))
-        .find(|p| p.is_file())
-}
-
-/// Parses `prnsd status --json`.
-pub fn parse_status(json: &str) -> Result<Reticulum, String> {
-    let v: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("prnsd status: {e}"))?;
-    let interfaces = v["interfaces"]
+    let interfaces = v["neighbors"]
         .as_array()
         .map(|a| {
             a.iter()
-                .map(|i| Interface {
-                    name: i["name"].as_str().unwrap_or("?").to_string(),
-                    kind: i["type"].as_str().unwrap_or("").to_string(),
-                    up: i["status"].as_bool().unwrap_or(false),
-                    rx: i["rxb"].as_u64().unwrap_or(0),
-                    tx: i["txb"].as_u64().unwrap_or(0),
+                .map(|n| Interface {
+                    name: n["endpoint"].as_str().or(n["address"].as_str()).unwrap_or("?").to_string(),
+                    kind: if n["lite"].as_bool() == Some(true) { "lite" } else { "neighbor" }.to_string(),
+                    up: n["up"].as_bool().unwrap_or(false),
+                    rx: 0,
+                    tx: 0,
                 })
                 .collect()
         })
         .unwrap_or_default();
-    Ok(Reticulum {
-        prnsd: None,
+    Ok(Network {
         running: true,
-        transport_id: v["transport_id"].as_str().map(str::to_string),
-        uptime_s: v["transport_uptime"].as_f64(),
+        address: v["address"].as_str().map(str::to_string),
+        uptime_s: v["uptime_s"].as_f64(),
         interfaces,
+        destinations: v["destinations"].as_u64().unwrap_or(0),
+        relayed: v["relay"]["packets"].as_u64().unwrap_or(0),
+        seen_at: v["outside"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default(),
         error: None,
     })
 }
 
-/// What's said when no shared instance answers.
-pub const NO_SHARED_INSTANCE: &str = "no Reticulum shared instance is running (start Reticulum on this device)";
+/// What's said when no node answers.
+pub const NO_NODE: &str = "the vØrk node isn't running on this device";
 
-/// Set once connections were changed in the configuration file with no
-/// way to apply them live: the shared instance must be restarted.
-static CHANGED_UNAPPLIED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// Asks the shared instance how it is: whether it answers, and with
-/// `prnsd`'s command line, its interfaces and their traffic too.
-pub fn reticulum() -> Reticulum {
-    let mut r = match prnsd() {
-        Some(bin) => {
-            let out = prnsd_command(&bin).args(["status", "--json"]).args(config_args()).output();
-            let mut r = match out {
-                Ok(o) if o.status.success() => parse_status(&String::from_utf8_lossy(&o.stdout)).unwrap_or_else(|e| Reticulum { error: Some(e), ..Default::default() }),
-                _ => Reticulum::default(),
-            };
-            r.prnsd = Some(bin);
-            r
-        }
-        None => Reticulum::default(),
-    };
-    // Whatever implementation runs it: the shared instance answers or not.
-    if !r.running {
-        r.running = shared_instance_up();
-        r.error = None;
+/// Asks the node how it is.
+pub fn network() -> Network {
+    let endpoint = vork_api::default_control_endpoint();
+    match vork_api::control_request(&endpoint, r#"{"cmd":"status"}"#) {
+        Ok(answer) => parse_status(&answer).unwrap_or_else(|e| Network { error: Some(e), ..Default::default() }),
+        Err(_) => Network { error: Some(NO_NODE.into()), ..Default::default() },
     }
-    if !r.running {
-        r.error = Some(NO_SHARED_INSTANCE.into());
-    } else if CHANGED_UNAPPLIED.load(std::sync::atomic::Ordering::Relaxed) {
-        r.error = Some("connections changed: restart Reticulum to use them".into());
-    }
-    r
 }
 
-/// One line saying how Reticulum is, whichever implementation runs it:
-/// details where they're known, and the configuration file in use.
-pub fn summary(r: &Reticulum) -> String {
+/// Whether the node answers.
+pub fn node_up() -> bool {
+    vork_api::control_request(&vork_api::default_control_endpoint(), r#"{"cmd":"status"}"#).is_ok()
+}
+
+/// One line saying how the node is.
+pub fn summary(r: &Network) -> String {
     if !r.running {
-        return r.error.clone().unwrap_or_else(|| NO_SHARED_INSTANCE.into());
+        return r.error.clone().unwrap_or_else(|| NO_NODE.into());
     }
     let mut parts = Vec::new();
-    if let Some(t) = &r.transport_id {
-        parts.push(format!("transport {t}"));
+    if let Some(a) = &r.address {
+        parts.push(format!("node {}", &a[..a.len().min(8)]));
     }
     if let Some(s) = r.uptime_s {
-        parts.push(if s > 86_400.0 { format!("up {:.0} d", s / 86_400.0) } else { format!("up {:.0} h", s / 3600.0) });
+        parts.push(if s > 86_400.0 { format!("up {:.0} d", s / 86_400.0) } else if s > 3600.0 { format!("up {:.0} h", s / 3600.0) } else { format!("up {:.0} min", s / 60.0) });
     }
-    if let Some(e) = &r.error {
-        parts.push(e.clone());
-    }
-    if parts.is_empty() {
-        parts.push("a shared instance answers".into());
+    let up = r.interfaces.iter().filter(|i| i.up).count();
+    parts.push(format!("{up} of {} neighbor(s) up", r.interfaces.len()));
+    parts.push(format!("{} destination(s) known", r.destinations));
+    if r.relayed > 0 {
+        parts.push(format!("{} packet(s) relayed for others", r.relayed));
     }
     parts.push(format!("configuration {}", config_path().display()));
     parts.join(" · ")
 }
 
-/// Reticulum's configuration directory when it isn't where every
-/// implementation looks by default: `$RETICULUM_CONFIG_DIR`. In the
-/// containers, Reticulum's own container shares its volume with vØrk storage'
-/// (the web UI reads and changes it, prnsd's control files there apply it).
-pub fn config_dir_override() -> Option<PathBuf> {
-    std::env::var_os("RETICULUM_CONFIG_DIR").filter(|v| !v.is_empty()).map(PathBuf::from)
-}
-
-/// `--config DIR` for prnsd, when the directory isn't the default one.
-fn config_args() -> Vec<std::ffi::OsString> {
-    config_dir_override().map(|d| vec!["--config".into(), d.into_os_string()]).unwrap_or_default()
-}
-
-/// Reticulum's configuration file, where every implementation looks for
-/// it: `/etc/reticulum/config`, `~/.config/reticulum/config`, then
-/// `~/.reticulum/config` (made there if none exists); or in
-/// `$RETICULUM_CONFIG_DIR`.
+/// The node's configuration file: `$VORK_CONFIG`; the system node's
+/// (`/etc/vork/vork.toml`) when that one runs; else the user's
+/// (`~/.config/vork/vork.toml`, `%LOCALAPPDATA%\vork\node\vork.toml`).
 pub fn config_path() -> PathBuf {
-    if let Some(dir) = config_dir_override() {
-        return dir.join("config");
+    if let Some(p) = std::env::var_os("VORK_CONFIG").filter(|v| !v.is_empty()) {
+        return PathBuf::from(p);
     }
-    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from).unwrap_or_default();
-    let mut candidates = Vec::new();
-    if cfg!(unix) {
-        candidates.push(PathBuf::from("/etc/reticulum/config"));
+    #[cfg(windows)]
+    {
+        let local = PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap_or_default()).join("vork").join("node").join("vork.toml");
+        let system = PathBuf::from(std::env::var_os("ProgramData").unwrap_or_default()).join("vork").join("vork.toml");
+        if !local.is_file() && system.is_file() {
+            return system;
+        }
+        local
     }
-    candidates.push(home.join(".config").join("reticulum").join("config"));
-    let fallback = home.join(".reticulum").join("config");
-    candidates.push(fallback.clone());
-    candidates.into_iter().find(|p| p.is_file()).unwrap_or(fallback)
+    #[cfg(not(windows))]
+    {
+        let system = PathBuf::from("/etc/vork/vork.toml");
+        if system.is_file() && Path::new("/var/lib/vork/control.sock").exists() {
+            return system;
+        }
+        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+        std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| home.join(".config")).join("vork").join("vork.toml")
+    }
 }
 
-/// The `[[name]]` sections under `[interfaces]` in a Reticulum
-/// configuration (ConfigObj): name, `type`, and `enabled` (or the older
-/// `interface_enabled`; on when unset).
-pub fn parse_config_interfaces(text: &str) -> Vec<Configured> {
-    let mut out: Vec<Configured> = Vec::new();
-    let mut in_interfaces = false;
-    for line in text.lines() {
-        let t = line.trim();
-        if t.starts_with('#') || t.is_empty() {
-            continue;
-        }
-        if t.starts_with("[[") {
-            if in_interfaces {
-                out.push(Configured { name: t.trim_start_matches('[').trim_end_matches(']').trim().to_string(), kind: String::new(), enabled: true });
-            }
-            continue;
-        }
-        if t.starts_with('[') {
-            in_interfaces = t.trim_matches(|c| c == '[' || c == ']').trim() == "interfaces";
-            continue;
-        }
-        let (Some(last), Some((k, v))) = (out.last_mut().filter(|_| in_interfaces), t.split_once('=')) else { continue };
-        let (k, v) = (k.trim(), v.trim().trim_matches('"'));
-        match k {
-            "type" => last.kind = v.to_string(),
-            "enabled" | "interface_enabled" => last.enabled = matches!(v.to_lowercase().as_str(), "yes" | "true" | "on" | "1"),
-            _ => {}
-        }
-    }
-    out
+/// The strings of a TOML array `key = [ ... ]` (one line or several).
+fn toml_list(text: &str, key: &str) -> Vec<String> {
+    let Some((start, end)) = list_span(text, key) else { return Vec::new() };
+    let body = &text[start..end];
+    body.split(['[', ']', ',', '\n'])
+        .map(|p| p.trim())
+        .filter(|p| p.starts_with('"'))
+        .map(|p| p.trim_matches('"').to_string())
+        .collect()
 }
 
-/// The configuration with a TCP client interface added under `[interfaces]`.
-pub fn config_add_tcp(text: &str, name: &str, host: &str, port: u16) -> Result<String, String> {
-    if parse_config_interfaces(text).iter().any(|c| c.name == name) {
-        return Err(format!("there's a connection named {name} already"));
+/// Byte span of `key = [ ... ]`, from the key to the closing bracket.
+fn list_span(text: &str, key: &str) -> Option<(usize, usize)> {
+    let mut at = 0;
+    for line in text.split_inclusive('\n') {
+        let t = line.trim_start();
+        if !t.starts_with('#') && t.split('=').next().map(str::trim) == Some(key) && t.contains('[') {
+            let open = at + line.find('[')?;
+            let close = open + text[open..].find(']')?;
+            return Some((at, close + 1));
+        }
+        at += line.len();
     }
-    let block = format!("  [[{name}]]\n    type = TCPClientInterface\n    enabled = yes\n    target_host = {host}\n    target_port = {port}\n");
-    let lines: Vec<&str> = text.lines().collect();
-    let Some(start) = lines.iter().position(|l| l.trim() == "[interfaces]") else {
-        let sep = if text.is_empty() || text.ends_with('\n') { "" } else { "\n" };
-        return Ok(format!("{text}{sep}\n[interfaces]\n{block}"));
+    None
+}
+
+/// The text with `key = [ ... ]` set to `items` (added at the end if missing).
+fn set_toml_list(text: &str, key: &str, items: &[String]) -> String {
+    let value = if items.is_empty() {
+        format!("{key} = []")
+    } else {
+        format!("{key} = [\n{}\n]", items.iter().map(|i| format!("    \"{i}\",")).collect::<Vec<_>>().join("\n"))
     };
-    // Before the next top-level section, or at the end.
-    let end = lines[start + 1..].iter().position(|l| { let t = l.trim(); t.starts_with('[') && !t.starts_with("[[") }).map_or(lines.len(), |i| start + 1 + i);
-    let mut out: Vec<String> = lines[..end].iter().map(|l| l.to_string()).collect();
-    out.push(block.trim_end().to_string());
-    out.extend(lines[end..].iter().map(|l| l.to_string()));
-    Ok(out.join("\n") + "\n")
-}
-
-/// The lines of interface `name`'s section: from its `[[name]]` to the next section.
-fn section_span(lines: &[&str], name: &str) -> Option<(usize, usize)> {
-    let start = lines.iter().position(|l| l.trim().starts_with("[[") && l.trim().trim_start_matches('[').trim_end_matches(']').trim() == name)?;
-    let end = lines[start + 1..].iter().position(|l| l.trim().starts_with('[')).map_or(lines.len(), |i| start + 1 + i);
-    Some((start, end))
-}
-
-/// The configuration with interface `name` switched on or off.
-pub fn config_set_enabled(text: &str, name: &str, enabled: bool) -> Result<String, String> {
-    let lines: Vec<&str> = text.lines().collect();
-    let (start, end) = section_span(&lines, name).ok_or_else(|| format!("no connection named {name}"))?;
-    let value = if enabled { "yes" } else { "no" };
-    let mut out: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
-    let mut set = false;
-    for line in out.iter_mut().take(end).skip(start + 1) {
-        let key = line.trim().split('=').next().unwrap_or("").trim().to_string();
-        if key == "enabled" || key == "interface_enabled" {
-            let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
-            *line = format!("{indent}{key} = {value}");
-            set = true;
+    match list_span(text, key) {
+        Some((a, b)) => format!("{}{value}{}", &text[..a], &text[b..]),
+        None => {
+            let sep = if text.is_empty() || text.ends_with('\n') { "" } else { "\n" };
+            format!("{text}{sep}{value}\n")
         }
     }
-    if !set {
-        out.insert(start + 1, format!("    enabled = {value}"));
-    }
-    Ok(out.join("\n") + "\n")
 }
 
-/// The configuration without interface `name`.
-pub fn config_remove(text: &str, name: &str) -> Result<String, String> {
-    let lines: Vec<&str> = text.lines().collect();
-    let (start, end) = section_span(&lines, name).ok_or_else(|| format!("no connection named {name}"))?;
-    let out: Vec<&str> = lines[..start].iter().chain(lines[end..].iter()).copied().collect();
-    Ok(out.join("\n") + "\n")
-}
-
-/// Changes Reticulum's configuration file with `edit` (no `prnsd` to do it live).
-fn edit_config(edit: impl FnOnce(&str) -> Result<String, String>) -> Result<(), String> {
-    let path = config_path();
-    let text = std::fs::read_to_string(&path).unwrap_or_default();
-    let new = edit(&text)?;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    }
-    std::fs::write(&path, new).map_err(|e| format!("{}: {e}", path.display()))?;
-    CHANGED_UNAPPLIED.store(true, std::sync::atomic::Ordering::Relaxed);
-    Ok(())
-}
-
-fn first_line(bytes: &[u8], or: &str) -> String {
-    String::from_utf8_lossy(bytes).lines().find(|l| !l.trim().is_empty()).map(str::to_string).unwrap_or_else(|| or.to_string())
-}
-
-/// A configured interface (`prnsd interfaces list`): name, type, enabled.
+/// A configured connection: `HOST:PORT` (its key asked for) or `HOST:PORT@KEY`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Configured {
     pub name: String,
@@ -304,99 +196,91 @@ pub struct Configured {
     pub enabled: bool,
 }
 
-/// Parses `prnsd interfaces list` ("1. RTR-3: TCPClientInterface (enabled)").
-pub fn parse_list(text: &str) -> Vec<Configured> {
-    text.lines()
-        .filter_map(|l| {
-            let (_, rest) = l.trim().split_once(". ")?;
-            let (name, rest) = rest.rsplit_once(": ")?;
-            let (kind, state) = rest.rsplit_once(" (")?;
-            Some(Configured { name: name.to_string(), kind: kind.trim().to_string(), enabled: state.trim_end_matches(')') == "enabled" })
-        })
-        .collect()
+/// The connections in a node configuration: `peers` on, `peers_off` off.
+pub fn parse_config_peers(text: &str) -> Vec<Configured> {
+    let on = toml_list(text, "peers").into_iter().map(|p| Configured { name: p, kind: "neighbor".into(), enabled: true });
+    let off = toml_list(text, "peers_off").into_iter().map(|p| Configured { name: p, kind: "neighbor".into(), enabled: false });
+    on.chain(off).collect()
 }
 
-/// The interfaces in the Reticulum configuration, enabled or not.
+/// The node's configured connections, on or off.
 pub fn configured() -> Result<Vec<Configured>, String> {
-    if let Some(bin) = prnsd() {
-        let o = prnsd_command(&bin).args(["interfaces", "list"]).args(config_args()).output().map_err(|e| e.to_string())?;
-        if o.status.success() {
-            return Ok(parse_list(&String::from_utf8_lossy(&o.stdout)));
-        }
-    }
-    Ok(parse_config_interfaces(&std::fs::read_to_string(config_path()).unwrap_or_default()))
+    Ok(parse_config_peers(&config_text()?))
 }
 
-fn run_prnsd(args: &[&str]) -> Result<(), String> {
-    let bin = prnsd().ok_or("prnsd not found")?;
-    let o = prnsd_command(&bin).args(args).args(config_args()).output().map_err(|e| e.to_string())?;
-    if o.status.success() { Ok(()) } else { Err(first_line(&o.stderr, "prnsd failed")) }
+fn edit_config(edit: impl FnOnce(&str) -> Result<String, String>) -> Result<(), String> {
+    let path = config_path();
+    let text = config_text()?;
+    let new = edit(&text)?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    std::fs::write(&path, new).map_err(|e| format!("{}: {e} (the system node's configuration needs an administrator)", path.display()))
 }
 
-/// prnsd asked something: on Windows without a console window of its own
-/// (prnsd is a console program; the utility asks it every few seconds).
-fn prnsd_command(bin: &Path) -> Command {
-    #[allow(unused_mut)]
-    let mut cmd = host(bin);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-    cmd
+fn peer_text(host: &str, port: u16) -> String {
+    if host.contains(':') && !host.contains(']') { format!("[{host}]:{port}") } else { format!("{host}:{port}") }
 }
 
-/// Changes the Reticulum configuration and puts it to use: a managed prnsd
-/// (`prnsd start`) applies it live; the Prns package's job on Haiku runs
-/// `prnsd run`, which can't, so it's restarted.
-fn reconfigure(args: &[&str]) -> Result<(), String> {
-    #[cfg(target_os = "haiku")]
-    if service_state(PRNS_JOB).as_deref() == Some("active") {
-        run_prnsd(args)?;
-        service(PRNS_JOB, "restart")?;
-        // vorkd doesn't attach to a new shared instance by itself:
-        // restarted after it.
-        std::thread::sleep(std::time::Duration::from_secs(2));
-        return service(VORKD, "restart");
+/// The configuration with connection `peer` added.
+pub fn config_add_peer(text: &str, peer: &str) -> Result<String, String> {
+    let mut on = toml_list(text, "peers");
+    if on.iter().chain(toml_list(text, "peers_off").iter()).any(|p| p == peer) {
+        return Err(format!("{peer} is there already"));
     }
-    let mut with = args.to_vec();
-    with.push("--apply");
-    run_prnsd(&with)
+    on.push(peer.to_string());
+    Ok(set_toml_list(text, "peers", &on))
 }
 
-/// The Prns package's Reticulum job (Haiku).
-#[cfg(target_os = "haiku")]
-const PRNS_JOB: &str = "x-vnd.prns-prnsd";
-/// On Haiku Reticulum is the Prns package's: prnsd, and its start script
-/// (which writes a new user's first configuration).
-const HAIKU_PRNSD: &str = "/boot/system/bin/prnsd";
-#[cfg(target_os = "haiku")]
-const HAIKU_PRNSD_START: &str = "/boot/system/apps/Prns/prnsd-start";
+/// The configuration with connection `peer` switched on or off.
+pub fn config_set_enabled(text: &str, peer: &str, enabled: bool) -> Result<String, String> {
+    let (mut on, mut off) = (toml_list(text, "peers"), toml_list(text, "peers_off"));
+    let (from, to) = if enabled { (&mut off, &mut on) } else { (&mut on, &mut off) };
+    let i = from.iter().position(|p| p == peer).ok_or_else(|| format!("no connection {peer}"))?;
+    to.push(from.remove(i));
+    Ok(set_toml_list(&set_toml_list(text, "peers", &on), "peers_off", &off))
+}
 
-/// Adds a TCP connection to another Reticulum node.
-pub fn add_tcp(name: &str, host: &str, port: u16) -> Result<(), String> {
-    if prnsd().is_none() {
-        return edit_config(|t| config_add_tcp(t, name, host, port));
+/// The configuration without connection `peer`.
+pub fn config_remove(text: &str, peer: &str) -> Result<String, String> {
+    let (mut on, mut off) = (toml_list(text, "peers"), toml_list(text, "peers_off"));
+    let before = on.len() + off.len();
+    on.retain(|p| p != peer);
+    off.retain(|p| p != peer);
+    if on.len() + off.len() == before {
+        return Err(format!("no connection {peer}"));
     }
-    let port = port.to_string();
-    reconfigure(&["interfaces", "add", "TCPClientInterface", "--name", name, "--target-host", host, "--target-port", &port])
+    Ok(set_toml_list(&set_toml_list(text, "peers", &on), "peers_off", &off))
+}
+
+/// Asks the running node to connect to `peer` now.
+fn dial(peer: &str) {
+    let req = serde_json::json!({ "cmd": "peer", "addr": peer }).to_string();
+    let _ = vork_api::control_request(&vork_api::default_control_endpoint(), &req);
+}
+
+/// Adds a connection to another vØrk node (`name` is only a label; the
+/// address is what counts), and dials it at once.
+pub fn add_tcp(_name: &str, host: &str, port: u16) -> Result<(), String> {
+    let peer = peer_text(host, port);
+    edit_config(|t| config_add_peer(t, &peer))?;
+    dial(&peer);
+    Ok(())
 }
 
 pub fn set_interface(name: &str, enabled: bool) -> Result<(), String> {
-    if prnsd().is_none() {
-        return edit_config(|t| config_set_enabled(t, name, enabled));
+    edit_config(|t| config_set_enabled(t, name, enabled))?;
+    if enabled {
+        dial(name);
     }
-    reconfigure(&["interfaces", if enabled { "enable" } else { "disable" }, name])
+    Ok(())
 }
 
 pub fn remove_interface(name: &str) -> Result<(), String> {
-    if prnsd().is_none() {
-        return edit_config(|t| config_remove(t, name));
-    }
-    reconfigure(&["interfaces", "remove", name, "--yes"])
+    edit_config(|t| config_remove(t, name))
 }
 
-/// The Reticulum configuration file's text (empty if there's none yet).
+/// The node configuration file's text (empty if there's none yet).
 pub fn config_text() -> Result<String, String> {
     let path = config_path();
     match std::fs::read_to_string(&path) {
@@ -406,58 +290,39 @@ pub fn config_text() -> Result<String, String> {
     }
 }
 
-/// Replaces the Reticulum configuration with `text` and puts it to use: with
-/// prnsd, applied live (`prnsd interfaces apply`); if Reticulum refuses it,
-/// the previous file is put back and the refusal said. Without prnsd, it's
-/// written and used when Reticulum next starts. The previous file is kept
-/// beside it as `config.previous`.
+/// Replaces the node configuration with `text` (the previous one kept beside
+/// it as `vork.toml.previous`); the node takes it up when it next starts.
+/// Returns whether it's in use already (never: a restart is needed).
 pub fn save_config(text: &str) -> Result<bool, String> {
     let path = config_path();
     let old = config_text()?;
     if old == text {
-        return Ok(prnsd().is_some());
+        return Ok(true);
     }
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
-    let previous = path.with_file_name("config.previous");
+    let previous = path.with_extension("toml.previous");
     std::fs::write(&previous, &old).map_err(|e| format!("{}: {e}", previous.display()))?;
     std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
-    if prnsd().is_none() {
-        CHANGED_UNAPPLIED.store(true, std::sync::atomic::Ordering::Relaxed);
-        return Ok(false);
-    }
-    if let Err(e) = reconfigure_apply() {
-        let _ = std::fs::write(&path, &old);
-        return Err(format!("Reticulum didn't take it, so the previous configuration is back: {e}"));
-    }
-    Ok(true)
+    Ok(false)
 }
 
-/// Asks the running prnsd to take up the configuration file as it is now.
-fn reconfigure_apply() -> Result<(), String> {
-    #[cfg(target_os = "haiku")]
-    if service_state(PRNS_JOB).as_deref() == Some("active") {
-        run_prnsd(&["interfaces", "validate"])?;
-        service(PRNS_JOB, "restart")?;
-        std::thread::sleep(std::time::Duration::from_secs(2));
-        return service(VORKD, "restart");
-    }
-    run_prnsd(&["interfaces", "apply"])
+fn first_line(bytes: &[u8], or: &str) -> String {
+    String::from_utf8_lossy(bytes).lines().find(|l| !l.trim().is_empty()).map(str::to_string).unwrap_or_else(|| or.to_string())
 }
 
 /// The user services the vØrk storage package installs (Linux, systemd).
 #[cfg(not(any(windows, target_os = "haiku")))]
-pub const SERVICES: &[(&str, &str)] = &[("vorkd.service", "vork daemon"), ("vork-gateway.service", "Libraries as local websites")];
-/// On Windows: the programs next to the utility, which it starts itself.
-/// Reticulum is whatever shared instance runs, not one of them.
+pub const SERVICES: &[(&str, &str)] = &[("vorkd.service", "vork daemon"), ("vork.service", "vØrk network (yours; a system node may run instead)"), ("vork-gateway.service", "Libraries as local websites")];
+/// On Windows: the programs next to the utility, which it starts itself:
+/// the daemon, the vØrk node it runs on, and the libraries in Explorer.
 #[cfg(windows)]
-pub const SERVICES: &[(&str, &str)] = &[("vorkd", "vork daemon"), ("vork-cloudfiles", "Libraries in Explorer")];
+pub const SERVICES: &[(&str, &str)] = &[("vorkd", "vork daemon"), ("vork", "vØrk network"), ("vork-cloudfiles", "Libraries in Explorer")];
 /// On Haiku: launch_daemon jobs of the user's (`~/config/settings/launch/vork`,
-/// or a package's `data/user_launch`), started at login; Reticulum is the
-/// Prns package's.
+/// or a package's `data/user_launch`), started at login.
 #[cfg(target_os = "haiku")]
-pub const SERVICES: &[(&str, &str)] = &[("x-vnd.retifs-daemon", "vork daemon"), ("x-vnd.prns-prnsd", "Reticulum")];
+pub const SERVICES: &[(&str, &str)] = &[("x-vnd.retifs-daemon", "vork daemon"), ("x-vnd.vork-node", "vØrk network")];
 
 /// The service vØrk storage itself runs as.
 pub const VORKD: &str = SERVICES[0].0;
@@ -495,6 +360,7 @@ pub fn in_flatpak() -> bool {
 pub const NOT_INSTALLED: &str = "vork isn't installed on this computer: install the vork .deb";
 
 /// A program of this machine's: in the Flatpak, run on the host.
+#[cfg_attr(windows, allow(dead_code))]
 fn host(program: impl AsRef<std::ffi::OsStr>) -> Command {
     if in_flatpak() {
         let mut cmd = Command::new("flatpak-spawn");
@@ -538,7 +404,7 @@ pub fn service_state(job: &str) -> Option<String> {
 fn job_program(job: &str) -> Option<(&'static str, PathBuf, PathBuf)> {
     match job {
         "x-vnd.retifs-daemon" => Some(("vorkd", install_dir().join("bin/vorkd"), install_dir().join("bin/vorkd"))),
-        PRNS_JOB => Some(("prnsd", PathBuf::from(HAIKU_PRNSD_START), PathBuf::from(HAIKU_PRNSD))),
+        NODE_JOB => Some(("vork", install_dir().join("bin/vork"), install_dir().join("bin/vork"))),
         _ => None,
     }
 }
@@ -580,14 +446,14 @@ fn run_program(job: &str, action: &str) -> Result<(), String> {
         if !haiku_teams(job).is_empty() {
             return Ok(());
         }
-        if prog == "prnsd" && shared_instance_up() {
-            return Err("another Reticulum runs on this machine already".into());
+        if prog == "vork" && node_up() {
+            return Err("a vØrk node runs on this machine already".into());
         }
-        // Reticulum first, as the job requires it.
-        if prog == "vorkd" && !shared_instance_up() && Path::new(HAIKU_PRNSD_START).is_file() {
-            run_program(PRNS_JOB, "start")?;
+        // The node first: vorkd runs on it.
+        if prog == "vorkd" && !node_up() {
+            run_program(NODE_JOB, "start")?;
             for _ in 0..30 {
-                if shared_instance_up() {
+                if node_up() {
                     break;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(500));
@@ -597,6 +463,7 @@ fn run_program(job: &str, action: &str) -> Result<(), String> {
         std::fs::create_dir_all(&logs).map_err(|e| e.to_string())?;
         let log = std::fs::OpenOptions::new().create(true).append(true).open(logs.join(format!("{prog}.log"))).map_err(|e| e.to_string())?;
         Command::new(&starts)
+            .args(if prog == "vork" { &["run"][..] } else { &[] })
             .stdin(std::process::Stdio::null())
             .stdout(log.try_clone().map_err(|e| e.to_string())?)
             .stderr(log)
@@ -670,11 +537,9 @@ pub fn install_dir() -> PathBuf {
     std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or_else(|| PathBuf::from("."))
 }
 
-/// Whether a Reticulum shared instance listens on this machine (its TCP
-/// port, as on Windows).
-pub fn shared_instance_up() -> bool {
-    std::net::TcpStream::connect_timeout(&([127, 0, 0, 1], 37428).into(), std::time::Duration::from_millis(400)).is_ok()
-}
+/// The Haiku job running the vØrk node.
+#[cfg(target_os = "haiku")]
+const NODE_JOB: &str = "x-vnd.vork-node";
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -729,7 +594,25 @@ pub fn service(name: &str, action: &str) -> Result<(), String> {
         let log = std::fs::OpenOptions::new().create(true).append(true).open(logs.join(format!("{name}.log"))).map_err(|e| e.to_string())?;
         // The Cloud Files provider: every library, a folder each of
         // %USERPROFILE%\vork.
-        let args: &[&str] = if name == "vork-cloudfiles" { &["--all"] } else { &[] };
+        let config = config_path();
+        if name == "vork" && !config.is_file() {
+            // First start: a configuration and an identity of this user's own.
+            let o = Command::new(install_dir().join("vork.exe"))
+                .args(["init", "--config"])
+                .arg(&config)
+                .creation_flags(CREATE_NO_WINDOW)
+                .output()
+                .map_err(|e| format!("vork init: {e}"))?;
+            if !o.status.success() {
+                return Err(first_line(&o.stderr, "vork init failed"));
+            }
+        }
+        let config_arg = config.to_string_lossy().into_owned();
+        let args: Vec<&str> = match name {
+            "vork-cloudfiles" => vec!["--all"],
+            "vork" => vec!["run", "--config", &config_arg],
+            _ => vec![],
+        };
         Command::new(install_dir().join(&exe))
             .args(args)
             .stdout(log.try_clone().map_err(|e| e.to_string())?)
@@ -742,22 +625,33 @@ pub fn service(name: &str, action: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// At login (Windows): vorkd once Reticulum is up, and the libraries in
-/// Explorer (which wait for vorkd themselves). Says what it did.
+/// Starts this user's vØrk node (Windows) unless one answers already (the
+/// system's service, or one started before): `vork run` with its own
+/// configuration, made on first use. Says what it did.
+#[cfg(windows)]
+fn start_node(did: &mut Vec<String>) {
+    if node_up() || running("vork.exe") || !install_dir().join("vork.exe").is_file() {
+        return;
+    }
+    match service("vork", "start") {
+        Ok(()) => did.push("started the vØrk node".to_string()),
+        Err(e) => did.push(format!("vork: {e}")),
+    }
+    for _ in 0..40 {
+        if node_up() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+}
+
+/// At login (Windows): the vØrk node, vorkd (which waits for the node by
+/// itself), and the libraries in Explorer (which wait for vorkd). Says what it did.
 #[cfg(windows)]
 pub fn supervise() -> Vec<String> {
     let mut did = Vec::new();
-    // vorkd can't join a shared instance that isn't there yet: Prns may
-    // start after the utility at login.
-    for _ in 0..60 {
-        if shared_instance_up() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(500));
-    }
-    if !shared_instance_up() {
-        did.push("no Reticulum yet: start Reticulum on this device (any with a shared instance)".to_string());
-    } else if !running("vorkd.exe") {
+    start_node(&mut did);
+    if !running("vorkd.exe") {
         match service("vorkd", "start") {
             Ok(()) => did.push("started vorkd".to_string()),
             Err(e) => did.push(format!("vorkd: {e}")),
@@ -772,11 +666,10 @@ pub fn supervise() -> Vec<String> {
     did
 }
 
-/// Keeps vØrk storage running while the utility does (Windows), as the Android
-/// app does: vorkd started again if it stopped, and restarted when
-/// Reticulum is back after being away (vorkd doesn't attach to a new
-/// shared instance by itself). `away`: how many checks running Reticulum
-/// wasn't up (one missed check is a busy machine). Says what it did.
+/// Keeps vØrk running while the utility does (Windows), as the Android app
+/// does: the node and vorkd started again if they stopped (vorkd finds the
+/// node again by itself when it comes back). `away`: checks in a row the
+/// node didn't answer. Says what it did.
 #[cfg(windows)]
 pub fn keep(away: &mut u32) -> Vec<String> {
     let mut did = Vec::new();
@@ -792,13 +685,12 @@ pub fn keep(away: &mut u32) -> Vec<String> {
             Err(e) => did.push(format!("vork-cloudfiles: {e}")),
         }
     }
-    let up = shared_instance_up();
-    if up && *away >= 2 && running("vorkd.exe") {
-        match service("vorkd", "restart") {
-            Ok(()) => did.push("Reticulum is back: restarted vorkd".to_string()),
-            Err(e) => did.push(format!("vorkd: {e}")),
-        }
-    } else if up && !running("vorkd.exe") {
+    let up = node_up();
+    // Two missed checks in a row: the node is gone, not just busy.
+    if !up && *away >= 1 {
+        start_node(&mut did);
+    }
+    if !running("vorkd.exe") {
         match service("vorkd", "start") {
             Ok(()) => did.push("vorkd had stopped: started it again".to_string()),
             Err(e) => did.push(format!("vorkd: {e}")),
@@ -1137,53 +1029,39 @@ pub fn typed_setting(key: &str, what: &str, typed: &str, default: Option<&str>) 
 
 #[cfg(test)]
 mod tests {
-
-    /// Reticulum's own configuration, as Python's rnsd and prnsd both read it.
-    #[test]
-    fn reticulum_config_read_and_changed() {
-        let text = "[reticulum]
-  share_instance = Yes
-
-[interfaces]
-  [[Default Interface]]
-    type = AutoInterface
-    interface_enabled = True
-
-  [[RTR-3]]
-    type = TCPClientInterface
-    enabled = no
-    target_host = 10.0.0.1
-    target_port = 4242
-
-[logging]
-  loglevel = 4
-";
-        let list = parse_config_interfaces(text);
-        assert_eq!(list, [
-            Configured { name: "Default Interface".into(), kind: "AutoInterface".into(), enabled: true },
-            Configured { name: "RTR-3".into(), kind: "TCPClientInterface".into(), enabled: false },
-        ]);
-        let added = config_add_tcp(text, "hub", "hub.example", 4242).unwrap();
-        let after = parse_config_interfaces(&added);
-        assert_eq!(after.len(), 3);
-        assert_eq!(after[2], Configured { name: "hub".into(), kind: "TCPClientInterface".into(), enabled: true });
-        assert!(added.find("[[hub]]").unwrap() < added.find("[logging]").unwrap(), "added inside [interfaces]");
-        assert!(config_add_tcp(&added, "hub", "x", 1).is_err());
-        let on = config_set_enabled(&added, "RTR-3", true).unwrap();
-        assert!(parse_config_interfaces(&on).iter().all(|c| c.enabled));
-        let gone = config_remove(&on, "RTR-3").unwrap();
-        assert_eq!(parse_config_interfaces(&gone).iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["Default Interface", "hub"]);
-        assert!(gone.contains("[logging]") && gone.contains("loglevel = 4"));
-        // No [interfaces] yet: one is made.
-        let fresh = config_add_tcp("[reticulum]
-  share_instance = Yes
-", "hub", "h", 1).unwrap();
-        assert_eq!(parse_config_interfaces(&fresh).len(), 1);
-    }
-
     use super::*;
 
-    const FILE: &str = "# vork node settings.\n\n[store]\n# max_store = \"...\"          # store limit\n# no_storage = false         # keep nothing\n\n[node]\n# device = \"...\"             # this device's name\n";
+    /// The node's connections: `peers` and `peers_off` of its vork.toml.
+    #[test]
+    fn peers_read_and_changed() {
+        let text = "# vØrk node configuration.
+listen = \"0.0.0.0:51820\"
+
+# Bootstrap neighbors.
+peers = [\"10.0.0.1:51820\"]
+
+log = \"info\"
+";
+        assert_eq!(parse_config_peers(text), [Configured { name: "10.0.0.1:51820".into(), kind: "neighbor".into(), enabled: true }]);
+        let added = config_add_peer(text, "hub.example:51820").unwrap();
+        assert_eq!(parse_config_peers(&added).len(), 2);
+        assert!(config_add_peer(&added, "hub.example:51820").is_err());
+        let off = config_set_enabled(&added, "10.0.0.1:51820", false).unwrap();
+        assert_eq!(parse_config_peers(&off), [
+            Configured { name: "hub.example:51820".into(), kind: "neighbor".into(), enabled: true },
+            Configured { name: "10.0.0.1:51820".into(), kind: "neighbor".into(), enabled: false },
+        ]);
+        let gone = config_remove(&off, "10.0.0.1:51820").unwrap();
+        assert_eq!(parse_config_peers(&gone).len(), 1);
+        assert!(gone.contains("# Bootstrap neighbors.") && gone.contains("log = \"info\""));
+        // None yet: the list is made.
+        let fresh = config_add_peer("listen = \"0.0.0.0:51820\"\n", "a:1").unwrap();
+        assert_eq!(parse_config_peers(&fresh)[0].name, "a:1");
+        // The node reads what was written.
+        assert!(fresh.contains("peers = [\n    \"a:1\",\n]"));
+    }
+
+    const FILE: &str = "# vØrk storage node settings.\n\n[store]\n# max_store = \"...\"          # store limit\n# no_storage = false         # keep nothing\n\n[node]\n# device = \"...\"             # this device's name\n";
 
     #[test]
     fn sizes_are_shown_and_typed_with_units() {
@@ -1253,17 +1131,6 @@ mod tests {
     }
 
     #[test]
-    fn prnsd_interfaces_list() {
-        let l = parse_list("1. RTR-3: TCPClientInterface (enabled)
-2. Hopspot USB: PrnsUsbAuto (disabled)
-");
-        assert_eq!(l, vec![
-            Configured { name: "RTR-3".into(), kind: "TCPClientInterface".into(), enabled: true },
-            Configured { name: "Hopspot USB".into(), kind: "PrnsUsbAuto".into(), enabled: false },
-        ]);
-    }
-
-    #[test]
     fn haiku_ps_teams() {
         let ps = "Team                                                  Id #Threads  Gid  Uid \n\
                   kernel_team                                            1       51    0    0 \n\
@@ -1283,12 +1150,14 @@ mod tests {
     }
 
     #[test]
-    fn prnsd_status_json() {
-        let json = r#"{"interfaces":[{"name":"Shared Instance[09699a59]","type":"LocalServer","status":true,"rxb":10,"txb":20},{"name":"Backbone","type":"TcpClient","status":false,"rxb":0,"txb":5}],"transport_id":"832c","transport_uptime":626.5}"#;
-        let r = parse_status(json).unwrap();
-        assert_eq!((r.running, r.transport_id.as_deref(), r.uptime_s), (true, Some("832c"), Some(626.5)));
+    fn node_status_json() {
+        let r = parse_status(r#"{"address":"5f7a9ac63dc07c1176bff951d6a2641d","uptime_s":42,"destinations":7,"relay":{"paths":0,"packets":12},"outside":["1.2.3.4:51820"],"neighbors":[{"address":"aa","endpoint":"10.10.30.2:51820","up":true,"lite":false},{"address":null,"endpoint":"10.0.0.9:51820","up":false,"lite":null}]}"#).unwrap();
+        assert!(r.running);
+        assert_eq!(r.address.as_deref(), Some("5f7a9ac63dc07c1176bff951d6a2641d"));
+        assert_eq!((r.destinations, r.relayed), (7, 12));
         assert_eq!(r.interfaces.len(), 2);
-        assert!(r.interfaces[0].is_local() && !r.interfaces[1].is_local());
-        assert_eq!((r.interfaces[1].name.as_str(), r.interfaces[1].up, r.interfaces[1].tx), ("Backbone", false, 5));
+        assert!(r.interfaces[0].up && !r.interfaces[1].up);
+        assert_eq!(r.interfaces[0].name, "10.10.30.2:51820");
+        assert!(parse_status(r#"{"error":"unknown command"}"#).is_err());
     }
 }

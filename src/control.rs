@@ -37,8 +37,9 @@ pub fn listen(endpoint: &str) -> Result<mpsc::Receiver<Request>> {
         let _ = std::fs::remove_file(path);
     }
     let listener = tokio::net::UnixListener::bind(path).with_context(|| format!("control socket {endpoint}"))?;
-    // Owner and group only (a `vork` group can be given access).
-    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o660));
+    // Any local user: the status shows nothing secret, and the desktop
+    // utility runs as the user, not as the service's owner.
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o666));
     let (tx, rx) = mpsc::channel(16);
     tokio::spawn(async move {
         while let Ok((conn, _)) = listener.accept().await {

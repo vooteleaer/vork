@@ -2,18 +2,14 @@
 #
 #     powershell -ExecutionPolicy Bypass -File packaging\windows\build-setup.ps1 [-Out DIR]
 #
-# Needs Rust (MSVC), Prns 0.3.8 next to vork (..\Prns-0.3.8, or $env:PRNS:
-# vorkd's transport and its licenses), and vork-desktop next to it
-# (..\vork-desktop, or $env:VORK_DESKTOP) for the utility in the
-# notification area; without it the installer has no utility, and nothing
-# starts vork at login. No prnsd: vork joins Prns's own (or another
-# Reticulum shared instance), installed apart.
+# Needs Rust (MSVC). The vØrk node (vork.exe), storage (vorkd.exe,
+# vork-storage.exe), the Cloud Files provider and the utility in the
+# notification area (vork-desktop.exe, which starts the node and vorkd at
+# login) are all built from this repository.
 param([string]$Out = "")
 
 $ErrorActionPreference = "Stop"
 $Root = (Resolve-Path "$PSScriptRoot\..\..").Path
-$Prns = if ($env:PRNS) { $env:PRNS } else { Join-Path (Split-Path $Root) "Prns-0.3.8" }
-$Desktop = if ($env:VORK_DESKTOP) { $env:VORK_DESKTOP } else { Join-Path (Split-Path $Root) "vork-desktop" }
 # The apps, where they are next to vork with a Windows front end: Photos and Map.
 $Apps = @(@{ Repo = "vork-photos"; Package = "vork-photos-win"; Exe = "vork-photos.exe" }, @{ Repo = "vork-map"; Package = "vork-map-win"; Exe = "vork-map.exe" }) |
     Where-Object { Test-Path (Join-Path (Split-Path $Root) "$($_.Repo)\windows\Cargo.toml") }
@@ -28,14 +24,7 @@ function Step($what) { Write-Host "== $what" }
 function Invoke-Cargo { & cargo.exe @args; if ($LASTEXITCODE -ne 0) { throw "cargo $args failed" } }
 
 Step "vork"
-Invoke-Cargo build --release --locked --manifest-path "$Root\Cargo.toml" -p vork -p vork-storage-node -p vork-cloudfiles
-$HasDesktop = Test-Path "$Desktop\windows\Cargo.toml"
-if ($HasDesktop) {
-    Step "vork-desktop (from $Desktop)"
-    Invoke-Cargo build --release --manifest-path "$Desktop\Cargo.toml" -p vork-desktop-win
-} else {
-    Write-Warning "no vork-desktop at ${Desktop}: the installer won't have the utility"
-}
+Invoke-Cargo build --release --locked --manifest-path "$Root\Cargo.toml" -p vork -p vork-storage-node -p vork-cloudfiles -p vork-desktop-win
 
 foreach ($a in $Apps) {
     Step "$($a.Repo)"
@@ -45,15 +34,11 @@ foreach ($a in $Apps) {
 Step "files"
 if (Test-Path $Stage) { Remove-Item $Stage -Recurse -Force }
 New-Item -ItemType Directory -Force $Stage | Out-Null
-foreach ($b in "vorkd.exe", "vork.exe", "vork-storage.exe", "vork-cloudfiles.exe") { Copy-Item "$Built\$b" $Stage }
-if ($HasDesktop) { Copy-Item "$Built\vork-desktop.exe" $Stage }
+foreach ($b in "vorkd.exe", "vork.exe", "vork-storage.exe", "vork-cloudfiles.exe", "vork-desktop.exe") { Copy-Item "$Built\$b" $Stage }
 foreach ($a in $Apps) { Copy-Item "$Built\$($a.Exe)" $Stage }
 Copy-Item "$Root\LICENSE" "$Stage\LICENSE-vork.txt"
 # The libraries a new install joins (vorkd reads it next to itself).
 Copy-Item "$Root\packaging\default-libraries" "$Stage\default-libraries"
-# vorkd is built with Prns's crates: their licenses come along.
-Copy-Item "$Prns\LICENSE-MIT" "$Stage\LICENSE-prns-MIT.txt"
-Copy-Item "$Prns\LICENSE-APACHE" "$Stage\LICENSE-prns-APACHE.txt"
 Get-ChildItem $Stage | ForEach-Object { "   {0,-28} {1,8:N0} KB" -f $_.Name, ($_.Length / 1KB) }
 
 Step "installer"

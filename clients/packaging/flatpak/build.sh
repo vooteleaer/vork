@@ -3,23 +3,21 @@
 # repo's GTK app, from the manifest next to this (x86_64; aarch64 with
 # ARCH=aarch64 on an aarch64 machine). Needs flatpak and flatpak-builder; the
 # runtime (org.gnome.Platform//50) and the rust-stable extension come from
-# Flathub. vork is expected next to this repo (`../vork`), as for the
-# .deb. vork itself (vorkd) is the host's: the vork .deb.
+# Flathub. vØrk itself (the node, vorkd) is the host's: the vork .deb.
 #
-#     packaging/flatpak/build.sh [OUT_DIR] [NAME]
+#     clients/packaging/flatpak/build.sh [OUT_DIR] [NAME]
 #
 # Install: flatpak install --user <bundle> (the runtime comes from Flathub).
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-ROOT=$(cd "$HERE/../.." && pwd)
+ROOT=$(cd "$HERE/../../.." && pwd)
 PROJ=$(cd "$ROOT/.." && pwd)
 MANIFEST=$(ls "$HERE"/org.vork.*.yml | head -1)
 ID=$(basename "$MANIFEST" .yml)
-# The repos it builds from (the Android crate in the workspace takes
-# Calendar and Contacts too), named in the manifest as src/<repo>.
-SRCS="vork vork-calendar vork-contacts $(basename "$ROOT")"
+# The repo it builds from, named in the manifest as src/vork.
+SRCS=$(basename "$ROOT")
 OUT=${1:-$ROOT/target/flatpak}
-VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/Cargo.toml" | head -1 | tr -d '\r')
+VERSION=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' "$ROOT/Cargo.toml" | head -1 | tr -d '\r')
 COMMIT=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
 # The bundle named as a release when this commit is tagged with the version,
 # else as a build towards it (vork docs/storage/versioning.md).
@@ -41,11 +39,11 @@ mkdir -p "$OUT" "$WORK"
 # can't read here (a Windows worktree seen from WSL): all of it but those.
 rm -rf "$WORK/src"
 for r in $SRCS; do
-    mkdir -p "$WORK/src/$r"
+    mkdir -p "$WORK/src/vork"
     if FILES=$(git -c safe.directory='*' -C "$PROJ/$r" ls-files -z --cached --others --exclude-standard 2>/dev/null | tr '\0' '\n'); then
-        (cd "$PROJ/$r" && tr '\n' '\0' <<<"$FILES" | tar --null -T - --ignore-failed-read -cf - 2>/dev/null) | tar -C "$WORK/src/$r" -xf -
+        (cd "$PROJ/$r" && tr '\n' '\0' <<<"$FILES" | tar --null -T - --ignore-failed-read -cf - 2>/dev/null) | tar -C "$WORK/src/vork" -xf -
     else
-        tar -C "$PROJ/$r" --exclude=target --exclude=.git --exclude=node_modules -cf - . | tar -C "$WORK/src/$r" -xf -
+        tar -C "$PROJ/$r" --exclude=target --exclude=.git --exclude=node_modules -cf - . | tar -C "$WORK/src/vork" -xf -
     fi
 done
 cp "$MANIFEST" "$WORK/"

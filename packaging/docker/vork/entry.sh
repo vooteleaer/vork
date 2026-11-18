@@ -1,7 +1,7 @@
 #!/bin/sh
 # vorkd, then the extractor for $EXTRACT_NS (its app token made once, kept
-# in the store), then the web UI if VORK_WEB_LISTEN is set. Reticulum is a
-# shared instance on the host network (the compose file's other container).
+# in the store), then the web UI if VORK_WEB_LISTEN is set. The vØrk node is
+# the compose file's other container, reached through $VORK_API.
 # A stop (SIGTERM from docker) is passed on, so vorkd closes its store
 # cleanly; sh as PID 1 wouldn't (vorkd would be killed after the grace).
 set -e

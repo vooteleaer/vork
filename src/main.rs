@@ -12,7 +12,7 @@ mod wire;
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
-use std::net::{SocketAddr, ToSocketAddrs};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
@@ -154,11 +154,8 @@ pub struct RunArgs {
     control: Option<String>,
 }
 
-fn parse_peer(s: &str) -> Result<(SocketAddr, [u8; 32])> {
-    let (addr, key) = s.split_once('@').context("peer must be HOST:PORT@KEY")?;
-    let addr = addr.to_socket_addrs()?.next().context("peer address doesn't resolve")?;
-    let key: [u8; 32] = hex::decode(key)?.try_into().map_err(|_| anyhow::anyhow!("key must be 32 bytes"))?;
-    Ok((addr, key))
+fn parse_peer(s: &str) -> Result<(SocketAddr, Option<[u8; 32]>)> {
+    node::parse_peer_text(s).map_err(|e| anyhow::anyhow!("peer {s}: {e}"))
 }
 
 fn parse_address(h: Option<String>) -> Result<Option<[u8; 16]>> {
@@ -204,8 +201,9 @@ pub fn settings(a: RunArgs) -> Result<Settings> {
         },
     };
     let listen = a.listen.or(file.listen).unwrap_or_else(|| "0.0.0.0:51820".parse().unwrap());
-    let mut peers = file.peers.iter().map(|p| parse_peer(p)).collect::<Result<Vec<_>>>()?;
-    peers.extend(a.peers.iter().map(|p| parse_peer(p)).collect::<Result<Vec<_>>>()?);
+    let all = file.peers.iter().chain(&a.peers).map(|p| parse_peer(p)).collect::<Result<Vec<_>>>()?;
+    let peers: Vec<(SocketAddr, [u8; 32])> = all.iter().filter_map(|(a, k)| k.map(|k| (*a, k))).collect();
+    let peers_by_address: Vec<SocketAddr> = all.iter().filter(|(_, k)| k.is_none()).map(|(a, _)| *a).collect();
     let spread = match a.spread.or(file.spread).as_deref().unwrap_or("spray") {
         "spray" => node::Spread::Spray,
         "dup" => node::Spread::Dup,
@@ -216,6 +214,7 @@ pub fn settings(a: RunArgs) -> Result<Settings> {
     let cfg = node::Config {
         listen,
         peers,
+        peers_by_address,
         announce: !(a.no_announce || file.announce == Some(false)),
         ping: parse_address(a.ping)?,
         lite: a.lite || file.lite.unwrap_or(false),

@@ -255,7 +255,7 @@ fn api_call(method: &Method, url: &str, body: &Value) -> (Value, u16) {
     match (method, path) {
         (Method::Get, "/api/status") => (api::status(), 200),
         (Method::Get, "/api/heard") => (api::heard(), 200),
-        (Method::Get, "/api/reticulum") => (api::reticulum(), 200),
+        (Method::Get, "/api/network") => (api::network(), 200),
         (Method::Get, "/api/settings") => (api::settings(), 200),
         (Method::Get, "/api/members") => (api::members(&q(url, "ns")), 200),
         (Method::Get, "/api/invites") => (api::invites(&q(url, "ns")), 200),
@@ -277,12 +277,12 @@ fn api_call(method: &Method, url: &str, body: &Value) -> (Value, u16) {
         (Method::Post, "/api/delete") => done(api::delete_library(s(body, "ns"))),
         (Method::Post, "/api/settings") => done(api::save_settings(&body["values"].to_string())),
         (Method::Post, "/api/report") => done(api::crash_report("user", "web", s(body, "text"))),
-        // Reticulum (the shared instance vØrk storage runs on): its connections and configuration.
-        (Method::Get, "/api/reticulum/config") => (api::reticulum_config(), 200),
-        (Method::Post, "/api/reticulum/config") => ok_or(api::save_reticulum_config(s(body, "text")).map(|live| json!({ "ok": true, "live": live }))),
-        (Method::Post, "/api/reticulum/add") => done(api::add_connection(s(body, "name"), s(body, "host"), body["port"].as_u64().unwrap_or(0))),
-        (Method::Post, "/api/reticulum/switch") => done(api::set_connection(s(body, "name"), body["on"].as_bool().unwrap_or(false))),
-        (Method::Post, "/api/reticulum/remove") => done(api::remove_connection(s(body, "name"))),
+        // The vØrk node vØrk storage runs on: its connections and configuration.
+        (Method::Get, "/api/network/config") => (api::network_config(), 200),
+        (Method::Post, "/api/network/config") => ok_or(api::save_network_config(s(body, "text")).map(|live| json!({ "ok": true, "live": live }))),
+        (Method::Post, "/api/network/add") => done(api::add_connection(s(body, "name"), s(body, "host"), body["port"].as_u64().unwrap_or(0))),
+        (Method::Post, "/api/network/switch") => done(api::set_connection(s(body, "name"), body["on"].as_bool().unwrap_or(false))),
+        (Method::Post, "/api/network/remove") => done(api::remove_connection(s(body, "name"))),
         _ => (json!({ "error": "no such call" }), 404),
     }
 }

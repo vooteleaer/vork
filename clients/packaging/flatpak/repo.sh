@@ -8,7 +8,7 @@
 #
 # and installs from it (flatpak install vork org.vork.Photos), and from
 # then on gets new versions with flatpak update (or the desktop's software
-# app), fetched over Reticulum like any file in the library. No GPG key: who
+# app), fetched over vØrk like any file in the library. No GPG key: who
 # may write the library decides what's in it. The runtime (org.gnome.Platform)
 # comes from Flathub.
 #

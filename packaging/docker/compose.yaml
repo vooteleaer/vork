@@ -1,46 +1,45 @@
-# vork with Reticulum, in two containers (docker compose up -d).
+# vØrk in two containers (docker compose up -d), from one image.
 #
-# - reticulum: prnsd, the Reticulum shared instance. It owns every interface
-#   (TCP, AutoInterface on the LAN, radios) and keeps its configuration and
-#   identity in the volume `reticulum`.
+# - node: the vØrk node. It owns the network (UDP 51820) and keeps its
+#   configuration, identity and sockets in the volume `node`
+#   (/var/lib/vork/vork.toml; add other nodes to `peers` there, or on the
+#   web UI's network page).
 # - vork: vorkd, the attribute extractor and the web UI (port 8741). It
-#   joins the shared instance on 127.0.0.1:37428 and keeps its store in the
-#   volume `vork`. It also sees Reticulum's volume, so its web UI can show
-#   Reticulum's state and change its connections and configuration, applied
-#   live through prnsd's control files there. vork never starts Reticulum:
-#   it works the same with any shared instance (leave out `reticulum` and the
-#   volume line to use one running on the host).
+#   reaches the node through the sockets in the node's volume and keeps its
+#   store in the volume `vork`; it reconnects by itself when the node
+#   restarts.
 #
-# Both use the host's network: AutoInterface needs the LAN, and listeners
-# added later are reachable without a port mapping each.
+# Both use the host's network: the node's UDP port is the host's, and the
+# web UI's too.
 name: vork
 
 x-common: &common
+  image: vooteleaer/vork:latest
   network_mode: host
   restart: unless-stopped
   user: "65532:65532"  # both: the shared volume's files are theirs
 
 services:
-  reticulum:
+  node:
     <<: *common
-    image: vooteleaer/prnsd:0.3.8
-    container_name: reticulum
-    stop_grace_period: 30s
-    command: ["run", "--service", "--config", "/var/lib/prnsd"]
+    container_name: vork-node
+    command: ["sh", "/node.sh"]
+    stop_grace_period: 10s
+    stop_signal: SIGINT
     volumes:
-      - reticulum:/var/lib/prnsd
-    # Radios: uncomment, and add their /dev/serial/by-id/… links to the
-    # configuration (the web UI's Reticulum page).
-    # devices: ["/dev/ttyACM0"]
-    # group_add: ["20"]  # dialout
+      - node:/var/lib/vork
+    healthcheck:
+      test: ["CMD", "vork", "status", "--control", "/var/lib/vork/state/control.sock"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
 
   vork:
     <<: *common
-    image: vooteleaer/vork:latest
     container_name: vork
     stop_grace_period: 60s  # vorkd closes its store cleanly on SIGTERM
     depends_on:
-      reticulum:
+      node:
         condition: service_healthy
     environment:
       # This device's name for keep rules (default: the host's name).
@@ -55,8 +54,8 @@ services:
       VORK_WEB_PAIRING: "1"
     volumes:
       - vork:/data/store
-      - reticulum:/var/lib/prnsd
+      - node:/var/lib/vork
 
 volumes:
-  reticulum:
+  node:
   vork:

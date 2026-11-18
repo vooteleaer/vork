@@ -1,5 +1,5 @@
 //! The tray icon (StatusNotifierItem: KDE natively, GNOME with the
-//! AppIndicator extension): whether vØrk storage and Reticulum are up at a glance,
+//! AppIndicator extension): whether vØrk storage and the vØrk node are up at a glance,
 //! and a menu to open the window, restart vØrk storage or quit. It runs on a
 //! thread of its own with a small runtime (ksni is async); the window's
 //! status poll sends it what to show, and its menu sends commands back.

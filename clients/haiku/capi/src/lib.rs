@@ -48,10 +48,10 @@ pub extern "C" fn rd_heard() -> *mut c_char {
     out(api::heard().to_string())
 }
 
-/// Reticulum and its connections (JSON).
+/// The vØrk node and its connections (JSON).
 #[unsafe(no_mangle)]
-pub extern "C" fn rd_reticulum() -> *mut c_char {
-    out(api::reticulum().to_string())
+pub extern "C" fn rd_network() -> *mut c_char {
+    out(api::network().to_string())
 }
 
 /// The settings offered, with their values (JSON array).

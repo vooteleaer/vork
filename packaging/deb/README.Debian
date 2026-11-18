@@ -8,12 +8,13 @@ What runs
 ---------
 - vorkd, as a systemd user service in every user's session
   (`systemctl --user status vorkd`). Its store is ~/.local/share/vork.
-- Reticulum: vorkd joins a shared instance on the machine, which this
-  package doesn't bring: install any Reticulum implementation and run its
-  shared instance. vorkd waits for it at start. Its connections are
-  Reticulum's own, in its configuration file (~/.reticulum/config, read by
-  every implementation), e.g. a TCP connection to a node you trust; the
-  vork-desktop utility adds them there, or use your Reticulum's own tools.
+- The vØrk node, as a system service (`systemctl status vork`,
+  `vork status`). Its configuration is /etc/vork/vork.toml, its identity
+  and sockets /var/lib/vork. vorkd reaches it through
+  /var/lib/vork/api.sock and reconnects by itself when the node restarts.
+  Its connections are `peers` in vork.toml: another node's `host:port`
+  (its key is asked for on first contact) or `host:port@key`. The
+  vork-desktop utility adds them there and dials them at once.
 
 First steps
 -----------

@@ -15,9 +15,6 @@
 //! node (default 20 bits: about 0.1 s per lease on a desktop, a few seconds on a Pi;
 //! 0: none). `--max-stamp-cost`: the most this node pays when offering leases (default 24).
 //! A solver reuses the hash state after the workblock, so each try costs one small hash.
-//! `--nomadnet NS [--nomadnet-name NAME]`: also run a NomadNet node serving library NS
-//! (own or a followed channel's `ch-…`): a record with `path=/x.mu` is the page
-//! `/page/x.mu`; without an `/index.mu`, an index of the pages is generated.
 //! `--loss-target`: keep adding nearby holders for each needed file until the
 //! estimated chance of losing every copy is below P (default 0.001).
 //! `--min-copies`: and until there are at least N copies, this node's own
@@ -619,8 +616,6 @@ struct Args {
     treat_as_slow: Vec<PeerId>,
     stamp_cost: u8,
     max_stamp_cost: u8,
-    nomadnet: Option<String>,
-    nomadnet_name: String,
     /// This device's name for keep tags and rules (ADR-0005).
     device: String,
     /// The libraries a new install joins (`--default-libraries`, else the
@@ -719,8 +714,6 @@ fn args() -> Args {
         treat_as_slow: Vec::new(),
         stamp_cost: 20,
         max_stamp_cost: 24,
-        nomadnet: None,
-        nomadnet_name: "vork site".into(),
         device: hostname(),
         default_libraries: None,
         store_given: false,
@@ -763,8 +756,11 @@ fn args() -> Args {
             "--treat-as-slow" => a.treat_as_slow.push(*parse_destination(&it.next().expect("--treat-as-slow NODE")).expect("node hash").as_bytes()),
             "--stamp-cost" => a.stamp_cost = it.next().and_then(|v| v.parse().ok()).expect("--stamp-cost BITS"),
             "--max-stamp-cost" => a.max_stamp_cost = it.next().and_then(|v| v.parse().ok()).expect("--max-stamp-cost BITS"),
-            "--nomadnet" => a.nomadnet = Some(it.next().expect("--nomadnet LIBRARY")),
-            "--nomadnet-name" => a.nomadnet_name = it.next().expect("--nomadnet-name NAME"),
+            // NomadNet left with Reticulum (ADR-0022); old settings files still name it.
+            "--nomadnet" | "--nomadnet-name" => {
+                it.next();
+                eprintln!("vorkd: {arg} ignored: NomadNet went with Reticulum");
+            }
             "--loss-target" => a.loss_target = it.next().and_then(|v| v.parse().ok()).expect("--loss-target P (e.g. 0.001)"),
             "--site" => a.site = Some(it.next().filter(|s| !s.trim().is_empty()).expect("--site NAME")),
             "--compact" => a.compact = true,
@@ -788,7 +784,7 @@ fn args() -> Args {
                     "vorkd [--store DIR] [--max-store SIZE] [--min-free SIZE] [--cache-max SIZE] [--private-requests] [--spare]
                              [--hold-for-others SIZE] [--db-cache SIZE] [--lease-term DURATION] [--loss-target P] [--min-copies N] [--compact] [--no-storage] [--keep-joined all|rules] [--site NAME] [--slow-link-budget DURATION]\n        \
                      [--stamp-cost BITS] [--max-stamp-cost BITS] [--announce-every DURATION]\n        \
-                     [--nomadnet LIBRARY [--nomadnet-name NAME]] [--device NAME] [--crash-library LIBRARY] [--default-libraries FILE] [--no-mounts] [--app-socket PATH] [--public] [--put FILE]..."
+                     [--device NAME] [--crash-library LIBRARY] [--default-libraries FILE] [--no-mounts] [--app-socket PATH] [--public] [--put FILE]..."
                 );
                 std::process::exit(0);
             }
@@ -4014,34 +4010,6 @@ async fn handle(d: &Daemon, req: Request) -> Result<Response, String> {
         Request::RecoveryCreate => recovery_create(d).await,
         Request::RecoveryRestore { words } => recovery_restore(d, words).await,
 
-        Request::NomadNetPage { node, path, fields } => {
-            if !path.starts_with('/') || path.len() > 512 || path.contains("..") {
-                return Err(format!("not a NomadNet path: {path}"));
-            }
-            let peer = *parse_destination(&node).ok_or_else(|| format!("bad node address {node}"))?.as_bytes();
-            let link = tokio::time::timeout(Duration::from_secs(60), d.link_to(&peer))
-                .await
-                .map_err(|_| format!("<{node}>: no link within a minute"))??;
-            // Variables and fields go as a msgpack map, as NomadNet's own
-            // browser sends them; none as nil (an empty body).
-            let mut body = Vec::new();
-            if !fields.is_empty() {
-                vork_core::record::write_map_len(&mut body, fields.len());
-                for (k, v) in &fields {
-                    vork_core::record::write_str(&mut body, k);
-                    vork_core::record::write_str(&mut body, v);
-                }
-            }
-            let resp = match d.transport.request_any_path(link, &path, body, Duration::from_secs(120)).await {
-                Ok(r) => r,
-                Err(e) => {
-                    d.drop_link(&peer);
-                    return Err(format!("<{node}>{path}: {e}"));
-                }
-            };
-            Ok(Response::Page { data: msgpack_bytes(&resp) })
-        }
-
         Request::Want { cap, from } => {
             let (cap, hints) = FileRef::parse_with_hints(&cap).map_err(|e| e.to_string())?;
             let mut peers: Vec<PeerId> = from
@@ -5877,20 +5845,6 @@ async fn keyring_keeper(d: Arc<Daemon>) {
 fn answer_digest(records: &[libvork::RecordView]) -> String {
     let bytes = rmp_serde::to_vec(records).unwrap_or_default();
     hex(&<sha2::Sha256 as sha2::Digest>::digest(&bytes)[..16])
-}
-
-/// A response's body: NomadNet answers with msgpack bytes or a string (or
-/// nil); anything else is taken as it is.
-fn msgpack_bytes(r: &[u8]) -> Vec<u8> {
-    let (start, len) = match r.first() {
-        Some(0xc0) => return Vec::new(),
-        Some(&b) if (0xa0..=0xbf).contains(&b) => (1, (b & 0x1f) as usize),
-        Some(0xc4) | Some(0xd9) if r.len() >= 2 => (2, r[1] as usize),
-        Some(0xc5) | Some(0xda) if r.len() >= 3 => (3, u16::from_be_bytes([r[1], r[2]]) as usize),
-        Some(0xc6) | Some(0xdb) if r.len() >= 5 => (5, u32::from_be_bytes([r[1], r[2], r[3], r[4]]) as usize),
-        _ => return r.to_vec(),
-    };
-    if r.len() == start + len { r[start..].to_vec() } else { r.to_vec() }
 }
 
 /// The spare tier is filled at most this often (ADR-0012).

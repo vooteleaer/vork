@@ -16,6 +16,10 @@ pub struct FileConfig {
     pub state: Option<PathBuf>,
     #[serde(default)]
     pub peers: Vec<String>,
+    /// Neighbors switched off (kept for the desktop utility; not dialed).
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub peers_off: Vec<String>,
     pub announce: Option<bool>,
     pub lite: Option<bool>,
     pub direct: Option<bool>,
@@ -116,8 +120,9 @@ key = "KEY"
 # Directory for what the node keeps between runs (sequence counter, neighbors).
 state = "STATE"
 
-# Bootstrap neighbors, "host:port@wireguard-key". After the first contact the
-# node remembers its neighbors, so this can stay short.
+# Bootstrap neighbors: "host:port" (the key is asked for at first contact) or
+# "host:port@wireguard-key". After the first contact the node remembers its
+# neighbors, so this can stay short.
 peers = []
 
 # Announce this node so others can reach it.

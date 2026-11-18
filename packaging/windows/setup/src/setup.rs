@@ -16,7 +16,8 @@ const UNINSTALL_KEY: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\
 /// The `vork:` URL protocol, this user's.
 const LINK_KEY: PCWSTR = w!("Software\\Classes\\vork");
 /// Our own programs: stopped before files are replaced or removed.
-const PROGRAMS: [&str; 5] = ["vork-desktop.exe", "vorkd.exe", "vork-cloudfiles.exe", "vork-photos.exe", "vork-map.exe"];
+// vork.exe last of all: the node (and the command), after vorkd has stopped.
+const PROGRAMS: [&str; 6] = ["vork-desktop.exe", "vorkd.exe", "vork-cloudfiles.exe", "vork-photos.exe", "vork-map.exe", "vork.exe"];
 /// The Start menu's entries: (program, shortcut name, what it says), each
 /// made when the installer brings its program.
 const SHORTCUTS: [(&str, &str, &str); 3] = [
@@ -52,7 +53,7 @@ fn install() {
     if !quiet
         && ask(
             &format!(
-                "Install vork {VERSION} for this user?\n\nIt goes to {} and starts with your login (in the notification area). It runs on Reticulum: have a Reticulum shared instance running on this computer.\n\nvork is a prototype: its formats still change. Keep nothing in it you can't lose.",
+                "Install vork {VERSION} for this user?\n\nIt goes to {} and starts with your login (in the notification area). The vØrk node comes with it and runs while you're logged in; Windows may ask once to let it through the firewall (UDP port 51820).\n\nvork is a prototype: its formats still change. Keep nothing in it you can't lose.",
                 dir.display()
             ),
             MB_OKCANCEL | MB_ICONINFORMATION,
@@ -66,7 +67,7 @@ fn install() {
             let _ = Command::new(dir.join("vork-desktop.exe")).args(["--autostart", "--show"]).spawn();
             if !quiet {
                 ask(
-                    "vork is installed and running: its icon is in the notification area.\n\nOn the Network tab, add a connection to a Reticulum node you trust to reach others beyond this network. The vork command works in a new terminal.",
+                    "vork is installed and running: its icon is in the notification area.\n\nOn the Network tab, add a connection to another vØrk node (its address, host:port) to reach others beyond this network. The vork command works in a new terminal.",
                     MB_OK | MB_ICONINFORMATION,
                 );
             }
@@ -77,8 +78,7 @@ fn install() {
     }
 }
 
-/// Stops our programs (by name; Reticulum is Prns's, never ours, and is
-/// left alone). vorkd is asked to stop first, so it closes its store:
+/// Stops our programs (by name), the vØrk node last. vorkd is asked to stop first, so it closes its store:
 /// killed, its index is checked at the next start (minutes on a large
 /// store). Killed only if it hasn't stopped within 35 s.
 fn stop_programs() {
@@ -281,7 +281,7 @@ unsafe fn shortcut(target: &Path, at: &Path, about: &str) -> Result<(), String> 
 fn uninstall() {
     let dir = install_dir();
     if ask(
-        "Uninstall vork?\n\nIts programs are removed. Your data stays: the store in %LOCALAPPDATA%\\vork and Reticulum's settings in %USERPROFILE%\\.reticulum (delete them yourself if you no longer want them).",
+        "Uninstall vork?\n\nIts programs are removed. Your data stays: the store and the node's settings and identity in %LOCALAPPDATA%\\vork (delete them yourself if you no longer want them).",
         MB_OKCANCEL | MB_ICONQUESTION,
     ) != IDOK
     {

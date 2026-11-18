@@ -1,19 +1,20 @@
-# vork: vorkd, vork (CLI), vork-extractd and vork-web, from binaries
-# built beforehand (bin/amd64, bin/arm64; see ../README.md), for
-# `docker buildx build --platform linux/amd64,linux/arm64`.
-#
-# bin/ also holds prnsd, the same as the Reticulum image's, only as a control
-# command: the web UI asks it for Reticulum's state and has it apply
-# configuration changes, through the files in Reticulum's volume. It's never
-# started as a daemon here: Reticulum is the other container's (or the host's).
+# vork: the vØrk node (vork), vorkd, vork-storage, vork-extractd and
+# vork-web, from binaries built beforehand (bin/amd64, bin/arm64; see
+# ../README.md), for `docker buildx build --platform linux/amd64,linux/arm64`.
+# One image, two containers (../compose.yaml): the node (node.sh) and
+# storage (entry.sh, the default).
 FROM debian:trixie-slim
 ARG TARGETARCH
 COPY bin/${TARGETARCH}/ /usr/local/bin/
 COPY entry.sh /entry.sh
+COPY node.sh /node.sh
+# The node's paths in its volume (vork init --config writes state/ beside
+# the file), for the node and for storage's container.
 ENV VORK_STORE=/data/store \
-    RETICULUM_CONFIG_DIR=/var/lib/prnsd \
-    PRNSD_STATE_DIR=/var/lib/prnsd/.service
-RUN mkdir -p /data/store && chown 65532:65532 /data/store
+    VORK_CONFIG=/var/lib/vork/vork.toml \
+    VORK_API=/var/lib/vork/state/api.sock \
+    VORK_CONTROL=/var/lib/vork/state/control.sock
+RUN mkdir -p /data/store /var/lib/vork && chown 65532:65532 /data/store /var/lib/vork
 USER 65532:65532
 STOPSIGNAL SIGTERM
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 CMD ["vork", "ping"]

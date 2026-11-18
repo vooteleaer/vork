@@ -306,6 +306,51 @@ pub fn default_endpoint() -> String {
     }
 }
 
+// ---- the control endpoint: status and settings, one JSON line each way --------------
+
+/// The machine's node's control endpoint: `$VORK_CONTROL`, else the system
+/// node's, else the user's (Unix); the named pipe for UDP port 51820 (Windows).
+pub fn default_control_endpoint() -> String {
+    if let Ok(e) = std::env::var("VORK_CONTROL") {
+        return e;
+    }
+    #[cfg(windows)]
+    {
+        r"\\.\pipe\vork-51820".to_string()
+    }
+    #[cfg(unix)]
+    {
+        let system = "/var/lib/vork/control.sock";
+        if std::path::Path::new(system).exists() {
+            return system.to_string();
+        }
+        let state = std::env::var_os("XDG_STATE_HOME")
+            .map(std::path::PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/state")))
+            .unwrap_or_else(|| ".".into());
+        state.join("vork/control.sock").to_string_lossy().into_owned()
+    }
+}
+
+/// Sends one JSON request to the control endpoint and returns the answer
+/// (blocking; for programs without an async runtime).
+pub fn control_request(endpoint: &str, request: &str) -> io::Result<String> {
+    use std::io::{BufRead, Write};
+    #[cfg(unix)]
+    let conn = {
+        let c = std::os::unix::net::UnixStream::connect(endpoint)?;
+        c.set_read_timeout(Some(Duration::from_secs(5)))?;
+        c
+    };
+    #[cfg(windows)]
+    let conn = std::fs::OpenOptions::new().read(true).write(true).open(endpoint)?;
+    let mut w = conn.try_clone()?;
+    w.write_all(format!("{request}\n").as_bytes())?;
+    let mut line = String::new();
+    std::io::BufReader::new(conn).read_line(&mut line)?;
+    Ok(line)
+}
+
 // ---- the client ------------------------------------------------------------------
 
 /// What arrives from the node unasked.

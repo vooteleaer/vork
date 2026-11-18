@@ -36,6 +36,7 @@ const SETTINGS: &[(&str, &str, &str, Kind)] = &[
     ("placement", "max_stamp_cost", "--max-stamp-cost", Kind::Value),
     ("placement", "slow_link_budget", "--slow-link-budget", Kind::Value),
     ("placement", "treat_as_slow", "--treat-as-slow", Kind::List),
+    // NomadNet went with Reticulum: still read, so old files stay valid; vorkd ignores it.
     ("nomadnet", "library", "--nomadnet", Kind::Value),
     ("nomadnet", "namespace", "--nomadnet", Kind::Value), // its name before 0.3.0
     ("nomadnet", "name", "--nomadnet-name", Kind::Value),
@@ -71,10 +72,6 @@ const TEMPLATE: &str = r#"# vork node settings. Flags given to vorkd override th
 # max_stamp_cost = 24        # at most this many bits paid for an offer
 # slow_link_budget = "10m"   # transfers over a slow link (LoRa) take at most this
 # treat_as_slow = []         # nodes to treat as behind a slow link
-
-[nomadnet]
-# library = "..."            # serve this library's micron pages as a NomadNet node
-# name = "vork site"       # the node name it announces
 "#;
 
 /// The flags `<store>/vork.toml` stands for, and its path. A missing file

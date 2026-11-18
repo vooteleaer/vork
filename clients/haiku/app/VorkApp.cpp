@@ -2,7 +2,7 @@
  * vork for Haiku: the status and settings utility (vork-desktop), with
  * the Haiku API. The same three parts as on Linux, Windows and Android:
  * this device (vork, its storage, libraries, libraries heard on the
- * network), the network (Reticulum's connections) and settings.
+ * network), the network (the vØrk node's connections) and settings.
  *
  * Everything it shows comes from the shared Rust core through
  * vork_desktop.h, as JSON, parsed into BMessages with BJson. The core's
@@ -322,7 +322,7 @@ public:
 			{
 				BMessage state(kState);
 				state.AddMessage("status", new BMessage(Take(rd_status())));
-				state.AddMessage("reticulum", new BMessage(Take(rd_reticulum())));
+				state.AddMessage("reticulum", new BMessage(Take(rd_network())));
 				state.AddMessage("heard", new BMessage(Take(rd_heard())));
 				state.AddMessage("services", new BMessage(Take(rd_services())));
 				state.AddMessage("settings", new BMessage(Take(rd_settings())));
@@ -1116,7 +1116,7 @@ public:
 					&& error.IsEmpty()) {
 					fName->SetText("");
 					fHost->SetText("");
-					fPort->SetText("4242");
+					fPort->SetText("51820");
 				}
 				break;
 			}
@@ -1573,7 +1573,7 @@ private:
 		fConnections = new BListView("connections");
 		fName = new BTextControl("Name", "", NULL);
 		fHost = new BTextControl("Host", "", NULL);
-		fPort = new BTextControl("Port", "4242", NULL);
+		fPort = new BTextControl("Port", "51820", NULL);
 
 		BView* view = new BView("Network", 0);
 		BLayoutBuilder::Group<>(view, B_VERTICAL)
@@ -1587,7 +1587,7 @@ private:
 				.Add(new BButton("Remove", new BMessage(kRemove)))
 			.End()
 			.Add(new BSeparatorView(B_HORIZONTAL))
-			.Add(new BStringView("a", "Connect to another Reticulum node over TCP"))
+			.Add(new BStringView("a", "Connect to another vØrk node by its address"))
 			.AddGrid()
 				.AddTextControl(fName, 0, 0)
 				.AddTextControl(fHost, 0, 1)
@@ -1867,11 +1867,11 @@ private:
 
 		// Network.
 		if (reticulum.GetBool("running", false)) {
-			BString r("Reticulum is running, transport ");
-			r << reticulum.GetString("transport", "?");
+			BString r("The vØrk node is running, node ");
+			r << reticulum.GetString("address", "?");
 			fReticulum->SetText(r);
 		} else {
-			BString r("Reticulum: ");
+			BString r("vØrk node: ");
 			r << reticulum.GetString("error", "not running");
 			fReticulum->SetText(r);
 		}

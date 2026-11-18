@@ -209,55 +209,59 @@ pub fn favorite(ns: &str, on: bool) -> Result<(), String> {
     Daemon::new().favorite(ns, on)
 }
 
-/// Reticulum and its connections (configured, and as they are now).
-pub fn reticulum() -> Value {
-    let r = device::reticulum();
+/// The vØrk node and its connections (configured, and as they are now).
+pub fn network() -> Value {
+    let r = device::network();
     let configured = device::configured().unwrap_or_default();
+    // A configured "host:port" matches a neighbor at the address it resolves to.
+    let resolves = |name: &str| -> Vec<String> {
+        use std::net::ToSocketAddrs;
+        let addr = name.split('@').next().unwrap_or(name);
+        addr.to_socket_addrs().map(|a| a.map(|x| x.to_string()).collect()).unwrap_or_default()
+    };
     let connections: Vec<Value> = configured
         .iter()
         .map(|c| {
-            let live = r.interfaces.iter().find(|i| i.name == c.name);
-            json!({
-                "name": c.name,
-                "kind": c.kind.trim_end_matches("Interface"),
-                "enabled": c.enabled,
-                "up": live.is_some_and(|i| i.up),
-                "rx": live.map_or(0, |i| i.rx),
-                "tx": live.map_or(0, |i| i.tx),
-            })
+            let at = resolves(&c.name);
+            let live = r.interfaces.iter().find(|i| i.name == c.name || at.contains(&i.name));
+            json!({ "name": c.name, "kind": c.kind, "enabled": c.enabled, "up": live.is_some_and(|i| i.up), "rx": 0, "tx": 0 })
         })
         .collect();
-    // Interfaces running that aren't in the file: discovered ones, and
-    // those the implementation makes itself (not the local socket).
+    // Neighbors that aren't in the file: remembered, or that came to us.
+    let all_at: Vec<String> = configured.iter().flat_map(|c| resolves(&c.name)).collect();
     let others: Vec<Value> = r
         .interfaces
         .iter()
-        .filter(|i| !i.is_local() && !configured.iter().any(|c| c.name == i.name))
-        .map(|i| json!({ "name": i.name, "kind": i.kind.trim_end_matches("Interface"), "up": i.up, "rx": i.rx, "tx": i.tx }))
+        .filter(|i| !configured.iter().any(|c| c.name == i.name) && !all_at.contains(&i.name))
+        .map(|i| json!({ "name": i.name, "kind": i.kind, "up": i.up, "rx": i.rx, "tx": i.tx }))
         .collect();
     json!({
         "running": r.running,
-        "transport": r.transport_id,
+        "address": r.address,
+        "transport": r.address,
         "uptime": r.uptime_s,
+        "destinations": r.destinations,
+        "relayed": r.relayed,
+        "seen_at": r.seen_at,
         "error": r.error,
         "connections": connections,
         "others": others,
-        // Changes are applied live (prnsd), else at Reticulum's next start.
-        "live": r.prnsd.is_some(),
+        // A new connection is dialed at once; other changes at the node's next start.
+        "live": true,
         "config": device::config_path().display().to_string(),
     })
 }
 
-/// Reticulum's configuration file, to edit as a whole.
-pub fn reticulum_config() -> Value {
+/// The node's configuration file, to edit as a whole.
+pub fn network_config() -> Value {
     match device::config_text() {
         Ok(text) => json!({ "path": device::config_path().display().to_string(), "text": text }),
         Err(e) => json!({ "error": e }),
     }
 }
 
-/// Saves Reticulum's configuration; Ok(true) when it's in use already.
-pub fn save_reticulum_config(text: &str) -> Result<bool, String> {
+/// Saves the node's configuration; Ok(true) when it's in use already.
+pub fn save_network_config(text: &str) -> Result<bool, String> {
     device::save_config(text)
 }
 
@@ -320,7 +324,7 @@ pub fn save_settings(values: &str) -> Result<(), String> {
 /// lines of text for its tooltip or menu.
 pub fn tray() -> Value {
     use crate::status_icon::{Health, TrayState};
-    let t = TrayState::of(&Daemon::new().status(), &device::reticulum());
+    let t = TrayState::of(&Daemon::new().status(), &device::network());
     let health = match t.health() {
         Health::Good => "good",
         Health::Partly => "partly",

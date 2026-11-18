@@ -1,5 +1,5 @@
 //! The window (Overview, Network, Settings), the notification-area icon and
-//! the worker thread that asks the daemon and Reticulum every few seconds.
+//! the worker thread that asks the daemon and the vØrk node every few seconds.
 //! The UI thread only draws: everything that can block runs on a thread and
 //! posts a message back.
 
@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::{Condvar, Mutex};
 use std::time::Duration;
 
-use vork_desktop_core::device::{self, Configured, Reticulum};
+use vork_desktop_core::device::{self, Configured, Network};
 use vork_desktop_core::status_icon::{self, Health, TrayState};
 use vork_desktop_core::{human, Daemon, Status};
 use windows::core::{w, HSTRING, PCWSTR, PWSTR};
@@ -54,7 +54,7 @@ const IDM_QUIT: u32 = 3;
 struct Snapshot {
     status: Status,
     libraries: usize,
-    reticulum: Reticulum,
+    network: Network,
     configured: Vec<Configured>,
     services: Vec<Option<String>>,
     /// Daemon::libraries, and the libraries heard (the Libraries and Announces pages).
@@ -245,7 +245,7 @@ pub fn run() {
             open(hwnd);
             crate::libraries::open_link(hwnd, link);
         }
-        // At login: vØrk storage once a Reticulum shared instance is up; the window stays hidden.
+        // At login: the vØrk node, then vØrk storage; the window stays hidden.
         if autostart {
             std::thread::spawn(|| {
                 let did = device::supervise();
@@ -253,7 +253,7 @@ pub fn run() {
                     note(did.join("; "));
                 }
                 poke();
-                // From then on: vorkd kept running, and restarted after Reticulum was.
+                // From then on: the node and vorkd kept running.
                 let mut away = 0;
                 loop {
                     std::thread::sleep(std::time::Duration::from_secs(10));
@@ -296,7 +296,7 @@ pub fn run() {
     }
 }
 
-/// Asks the daemon, Reticulum and the services, every 5 s or when poked.
+/// Asks the daemon, the vØrk node and the services, every 5 s or when poked.
 fn worker() {
     let daemon = Daemon::new();
     loop {
@@ -306,7 +306,7 @@ fn worker() {
         let snapshot = Snapshot {
             status,
             libraries,
-            reticulum: device::reticulum(),
+            network: device::network(),
             configured: device::configured().unwrap_or_default(),
             services: device::SERVICES.iter().map(|(s, _)| device::service_state(s)).collect(),
             libs,
@@ -407,7 +407,7 @@ unsafe fn build(hwnd: HWND, icons: [HICON; 3]) {
     let recover = button("Recover from a kit…", ID_RECOVER_KIT);
 
     // Network.
-    let net = label("Asking Reticulum…");
+    let net = label("Asking the vØrk node…");
     let list = child(hwnd, WC_LISTVIEWW, "", WS_BORDER | WS_TABSTOP | WINDOW_STYLE((LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS) as u32), ID_LIST, font);
     SendMessageW(list, LVM_SETEXTENDEDLISTVIEWSTYLE, WPARAM(0), LPARAM((LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER) as isize));
     for (i, (title, width)) in [("Connection", 180), ("Type", 130), ("State", 120), ("Traffic", 180)].iter().enumerate() {
@@ -568,7 +568,7 @@ pub(crate) unsafe fn text_of(h: HWND) -> String {
 }
 
 fn tray_state(s: &Snapshot) -> TrayState {
-    TrayState::of(&s.status, &s.reticulum)
+    TrayState::of(&s.status, &s.network)
 }
 
 unsafe fn tray_data(hwnd: HWND, icon: HICON, tip: &str) -> NOTIFYICONDATAW {
@@ -625,8 +625,8 @@ unsafe fn refreshed() {
         set_text(u.overview, &lines.join("\r\n"));
         show_starting(u, st);
 
-        let r = &s.reticulum;
-        set_text(u.net, &format!("{}\r\n{}", if r.running { "Reticulum is running." } else { "Reticulum isn't running." }, device::summary(r)));
+        let r = &s.network;
+        set_text(u.net, &format!("{}\r\n{}", if r.running { "The vØrk node is running." } else { "The vØrk node isn't running." }, device::summary(r)));
         // The connections, keeping the selection.
         let selected = SendMessageW(u.list, LVM_GETNEXTITEM, WPARAM(usize::MAX), LPARAM(LVNI_SELECTED as isize)).0;
         SendMessageW(u.list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
@@ -921,10 +921,10 @@ unsafe fn ask_add(owner: HWND) {
         return;
     };
     let font = UI.with(|u| u.borrow().as_ref().map(|u| u.font)).unwrap_or_default();
-    let intro = child(h, WC_STATICW, "A TCP connection to another Reticulum node: someone's you trust, or a public one. Everything vork sends is encrypted end to end either way.", WS_VISIBLE, 0, font);
+    let intro = child(h, WC_STATICW, "A connection to another vØrk node, by its address. Its key is asked for when it's first reached; the node only ever relays for you, and everything is encrypted end to end either way.", WS_VISIBLE, 0, font);
     let _ = MoveWindow(intro, s(14), s(10), s(380), s(52), true);
     let mut fields = Vec::new();
-    for (i, (label, value)) in [("Name", ""), ("Host", ""), ("Port", "4242")].iter().enumerate() {
+    for (i, (label, value)) in [("Name", ""), ("Host", ""), ("Port", "51820")].iter().enumerate() {
         let l = child(h, WC_STATICW, label, WS_VISIBLE, 0, font);
         let e = child(h, WC_EDITW, value, WS_VISIBLE | WS_BORDER | WS_TABSTOP | WINDOW_STYLE(ES_AUTOHSCROLL as u32), 300 + i as i32, font);
         let _ = MoveWindow(l, s(14), s(72 + i as i32 * 34), s(80), s(24), true);
@@ -963,7 +963,7 @@ unsafe extern "system" fn addproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     let field = |id: i32| text_of(GetDlgItem(hwnd, id).unwrap_or_default()).trim().to_string();
                     let (name, host, port) = (field(300), field(301), field(302));
                     let Ok(port) = port.parse::<u16>() else {
-                        MessageBoxW(hwnd, w!("The port is a number (4242 by default)."), w!("vork"), MB_OK | MB_ICONWARNING);
+                        MessageBoxW(hwnd, w!("The port is a number (51820 by default)."), w!("vork"), MB_OK | MB_ICONWARNING);
                         return LRESULT(0);
                     };
                     if host.is_empty() {

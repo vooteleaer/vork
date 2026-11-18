@@ -2978,6 +2978,7 @@ dependencies = [
  "libvork",
  "serde_json",
  "tokio",
+ "vork-api",
  "vork-core",
  "vork-tree",
 ]

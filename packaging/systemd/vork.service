@@ -1,0 +1,20 @@
+# The vØrk node as a systemd user service, for a machine where it isn't a
+# system service (packaging/vork.service): a user's own node, its settings in
+# ~/.config/vork/vork.toml and its sockets in ~/.local/state/vork.
+#   cp packaging/systemd/vork.service ~/.config/systemd/user/
+#   systemctl --user enable --now vork      (the first start runs vork init)
+# Not with the system node running: both would take UDP port 51820.
+[Unit]
+Description=vØrk node (this user's)
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStartPre=/bin/sh -c 'test -e %h/.config/vork/vork.toml || exec %h/.cargo/bin/vork init'
+ExecStart=%h/.cargo/bin/vork run --config %h/.config/vork/vork.toml
+Restart=on-failure
+RestartSec=3
+KillSignal=SIGINT
+
+[Install]
+WantedBy=default.target

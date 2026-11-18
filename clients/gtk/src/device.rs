@@ -1,4 +1,4 @@
-//! This device: Reticulum and its connections, the services, and the node's
+//! This device: Network and its connections, the services, and the node's
 //! settings. What a tester needs to get a fresh install talking to others.
 
 use std::{cell::RefCell, rc::Rc, sync::Arc};
@@ -6,8 +6,8 @@ use std::{cell::RefCell, rc::Rc, sync::Arc};
 use adw::prelude::*;
 use gtk::glib;
 use vork_desktop_core::{
-    device::{self, Configured, Reticulum},
-    human, Daemon,
+    device::{self, Configured, Network},
+    Daemon,
 };
 
 use crate::bg;
@@ -29,13 +29,13 @@ impl DevicePage {
         // First: what matters most to do once.
         page.add(&crate::recovery::group(daemon.clone()));
 
-        let reticulum = adw::PreferencesGroup::builder()
-            .title("Reticulum")
-            .description("The network vork runs on. Out of the box it finds others on the local network; add a connection to reach further.")
+        let network = adw::PreferencesGroup::builder()
+            .title("Network")
+            .description("The vØrk node this device runs on. It reaches the network through its connections, and remembers the neighbors it met.")
             .build();
-        let shared = adw::ActionRow::builder().title("Shared instance").subtitle("…").subtitle_selectable(true).build();
-        reticulum.add(&shared);
-        page.add(&reticulum);
+        let shared = adw::ActionRow::builder().title("vØrk node").subtitle("…").subtitle_selectable(true).build();
+        network.add(&shared);
+        page.add(&network);
 
         let add = gtk::Button::builder().label("Add connection…").valign(gtk::Align::Center).build();
         let connections = adw::PreferencesGroup::builder().title("Connections").header_suffix(&add).build();
@@ -118,18 +118,18 @@ impl DevicePage {
         me
     }
 
-    /// Reticulum and the services, asked again.
+    /// Network and the services, asked again.
     pub fn refresh(self: &Rc<Self>) {
         let me = self.clone();
-        bg(&self.daemon, |_| (device::reticulum(), device::configured(), device::SERVICES.iter().map(|(u, _)| device::service_state(u)).collect::<Vec<_>>()), move |(r, conf, states)| {
-            me.show_reticulum(&r, conf.unwrap_or_default());
+        bg(&self.daemon, |_| (device::network(), device::configured(), device::SERVICES.iter().map(|(u, _)| device::service_state(u)).collect::<Vec<_>>()), move |(r, conf, states)| {
+            me.show_network(&r, conf.unwrap_or_default());
             for ((_, what, row), state) in me.services.iter().zip(states) {
                 row.set_title(&format!("{what} — {}", state.unwrap_or_else(|| "?".into())));
             }
         });
     }
 
-    fn show_reticulum(self: &Rc<Self>, r: &Reticulum, configured: Vec<Configured>) {
+    fn show_network(self: &Rc<Self>, r: &Network, configured: Vec<Configured>) {
         self.shared.set_title(if r.running { "Running" } else { "Not running" });
         self.shared.set_subtitle(&device::summary(r));
         for w in self.connection_rows.borrow_mut().drain(..) {
@@ -139,7 +139,7 @@ impl DevicePage {
         for c in &configured {
             let live = r.interfaces.iter().find(|i| i.name == c.name);
             let state = match live {
-                Some(i) if i.up => format!("connected · ↓ {} ↑ {}", human(i.rx), human(i.tx)),
+                Some(i) if i.up => "connected".to_string(),
                 Some(_) => "not connected".to_string(),
                 None if c.enabled => "enabled".to_string(),
                 None => "off".to_string(),
@@ -166,7 +166,7 @@ impl DevicePage {
             rows.push(row.upcast());
         }
         if configured.is_empty() {
-            let row = adw::ActionRow::builder().title("None yet").subtitle("Only the local network is reached. Add a connection to a Reticulum node you trust.").build();
+            let row = adw::ActionRow::builder().title("None yet").subtitle("Add a connection to another vØrk node: one of your own, or a public one.").build();
             self.connections.add(&row);
             rows.push(row.upcast());
         }
@@ -176,14 +176,14 @@ impl DevicePage {
     fn ask_add(self: &Rc<Self>, window: Option<gtk::Window>) {
         let name = adw::EntryRow::builder().title("Name").build();
         let host = adw::EntryRow::builder().title("Host (name or address)").build();
-        let port = adw::EntryRow::builder().title("Port").text("4242").build();
+        let port = adw::EntryRow::builder().title("Port").text("51820").build();
         let list = gtk::ListBox::builder().css_classes(["boxed-list"]).selection_mode(gtk::SelectionMode::None).build();
         for r in [&name, &host, &port] {
             list.append(r);
         }
         let d = adw::MessageDialog::builder()
             .heading("Add a connection")
-            .body("A TCP connection to another Reticulum node: someone's you trust, or a public one. Everything vork sends is encrypted end to end either way.")
+            .body("A connection to another vØrk node, by its address. Its key is asked for when it's first reached; the node only ever relays for you, and everything is encrypted end to end either way.")
             .extra_child(&list)
             .build();
         d.add_responses(&[("cancel", "Cancel"), ("add", "Add")]);
@@ -195,7 +195,7 @@ impl DevicePage {
             }
             let (n, h) = (name.text().trim().to_string(), host.text().trim().to_string());
             let Ok(p) = port.text().trim().parse::<u16>() else {
-                me.shared.set_subtitle("The port is a number (4242 by default)");
+                me.shared.set_subtitle("The port is a number (51820 by default)");
                 return;
             };
             if h.is_empty() {
@@ -215,7 +215,7 @@ impl DevicePage {
     }
 
     fn ask_remove(self: &Rc<Self>, name: &str, window: Option<gtk::Window>) {
-        let d = adw::MessageDialog::builder().heading(format!("Remove {name}?")).body("The connection is taken out of the Reticulum configuration.").build();
+        let d = adw::MessageDialog::builder().heading(format!("Remove {name}?")).body("The connection is taken out of the node's configuration.").build();
         d.add_responses(&[("cancel", "Cancel"), ("remove", "Remove")]);
         d.set_response_appearance("remove", adw::ResponseAppearance::Destructive);
         let (me, name) = (self.clone(), name.to_string());

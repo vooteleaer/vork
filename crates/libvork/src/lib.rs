@@ -395,16 +395,6 @@ pub enum Request {
     /// Owner only: recovers the user's libraries on this (fresh) node from the
     /// recovery words (ADR-0033). Answers when done, which may take minutes.
     RecoveryRestore { words: Vec<String> },
-    /// Owner only: a page or file from a NomadNet node over Reticulum, for
-    /// browsing NomadNet through the gateway. `node`: its `nomadnetwork.node`
-    /// address (32 hex digits); `path`: `/page/index.mu`, `/file/…`;
-    /// `fields`: the request's variables and fields (`var_*`, `field_*`).
-    NomadNetPage {
-        node: String,
-        path: String,
-        #[serde(default)]
-        fields: Vec<(String, String)>,
-    },
     /// A crash or trouble report (ADR-0036), from an app or the user: kept
     /// on this node until it goes into its crash library (`vork-crashlogs`
     /// by default), with the daemon's own last output added. `kind`:
@@ -693,11 +683,6 @@ pub enum Response {
     Paths { paths: Vec<PathInfo> },
     /// A live query's answer: `records` when it changed, else none.
     LiveRecords { digest: String, records: Option<Vec<RecordView>> },
-    /// A NomadNet page or file (NomadNetPage).
-    Page {
-        #[serde(with = "serde_bytes")]
-        data: Vec<u8>,
-    },
     Pong {
         node: String,
         chunks: u64,

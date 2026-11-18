@@ -1,7 +1,7 @@
 #!/bin/bash
 # Builds vork_<version>_<arch>.deb for amd64 and arm64 (Debian, Ubuntu,
-# Raspberry Pi OS). No prnsd: vorkd joins Prns's own (or another Reticulum
-# shared instance), installed apart.
+# Raspberry Pi OS): the vØrk node (a system service) and vØrk storage (vorkd
+# and its helpers, user services).
 #
 #     packaging/deb/build-deb.sh [OUT_DIR] [ARCH...]
 #
@@ -11,13 +11,10 @@
 # Ubuntu 20.04 and 22.04, elementary OS 6 and 7, Raspberry Pi OS bullseye and
 # later), whatever the build machine has; without it,
 # against the build machine's glibc, and arm64 needs gcc-aarch64-linux-gnu.
-# Prns 0.3.8 (vorkd's transport, and its licenses) is expected next to
-# vork (`../Prns-0.3.8`, see the README), or at $PRNS.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
-PRNS=${PRNS:-$(cd "$ROOT/../Prns-0.3.8" && pwd)}
 OUT=${1:-$ROOT/target/deb}
 shift || true
 ARCHS=${*:-amd64 arm64}
@@ -58,26 +55,23 @@ for ARCH in $ARCHS; do
     STAGE=$(mktemp -d)
     chmod 0755 "$STAGE"
     trap 'rm -rf "$STAGE"' EXIT
-    install -d "$STAGE/DEBIAN" "$STAGE/usr/bin" "$STAGE/usr/lib/vork" "$STAGE/usr/lib/systemd/user" "$STAGE/usr/share/doc/vork"
+    install -d "$STAGE/DEBIAN" "$STAGE/usr/bin" "$STAGE/usr/lib/systemd/system" "$STAGE/usr/lib/systemd/user" "$STAGE/usr/share/doc/vork"
     for b in $BINS; do
         install -m 0755 "$BIN/$b" "$STAGE/usr/bin/$b"
     done
-    install -m 0755 "$HERE/wait-shared-instance" "$STAGE/usr/lib/vork/"
     # The libraries a new install joins (vorkd reads ../share/vork/ from /usr/bin).
     install -D -m 0644 "$ROOT/packaging/default-libraries" "$STAGE/usr/share/vork/default-libraries"
     # The user units, pointed at the installed binaries.
+    # Not the user's own node (systemd/vork.service): the package's is a system service.
     for u in "$ROOT"/packaging/systemd/*.service; do
+        [ "$(basename "$u")" = vork.service ] && continue
         sed -e 's|%h/.cargo/bin/|/usr/bin/|g' -e '/^#   cp packaging/d' "$u" > "$STAGE/usr/lib/systemd/user/$(basename "$u")"
     done
-    # vorkd waits for Reticulum (Prns's, or another shared instance).
-    sed -i -e 's|^ExecStart=/usr/bin/vorkd|ExecStartPre=/usr/lib/vork/wait-shared-instance\nExecStart=/usr/bin/vorkd|' \
-        "$STAGE/usr/lib/systemd/user/vorkd.service"
-    # Licenses: vork's, and Prns's (vorkd is built with its crates).
+    # The node, a system service (its sockets in /var/lib/vork are every user's).
+    sed -e 's|/usr/local/bin/vork|/usr/bin/vork|g' -e '/^#   /d' -e '/^#$/d' "$ROOT/packaging/vork.service" \
+        > "$STAGE/usr/lib/systemd/system/vork.service"
     DOC=$STAGE/usr/share/doc/vork
     install -m 0644 "$ROOT/LICENSE" "$DOC/copyright"
-    install -m 0644 "$PRNS/LICENSE-MIT" "$DOC/prns-LICENSE-MIT"
-    install -m 0644 "$PRNS/LICENSE-APACHE" "$DOC/prns-LICENSE-APACHE"
-    install -m 0644 "$PRNS/THIRD_PARTY_NOTICES.md" "$DOC/prns-THIRD_PARTY_NOTICES.md"
     install -m 0644 "$HERE/README.Debian" "$DOC/"
 
     SIZE=$(du -sk "$STAGE/usr" | cut -f1)
@@ -85,21 +79,23 @@ for ARCH in $ARCHS; do
 Package: vork
 Version: $DEBVER
 Architecture: $ARCH
-Maintainer: vork <https://github.com/vooteleaer/retifs>
+Maintainer: vork <https://github.com/vooteleaer/vork>
 Installed-Size: $SIZE
 Depends: libc6 (>= $GLIBC), fuse3
 Suggests: ffmpeg
 Section: net
 Priority: optional
-Homepage: https://github.com/vooteleaer/retifs
-Description: distributed, always-encrypted data over Reticulum (prototype)
- Records and libraries instead of files, synced between your devices and
- others' over Reticulum, encrypted end to end. A working prototype: the
- formats still change, keep no data in it you can't lose.
+Homepage: https://github.com/vooteleaer/vork
+Description: serverless encrypted network and distributed data (prototype)
+ vØrk: a network of equal nodes over WireGuard-style UDP, addressed by
+ identity, where any node can relay. On it, records and libraries instead
+ of files, synced between your devices and others', encrypted end to end.
+ A working prototype: the formats still change, keep no data in it you
+ can't lose.
  .
- Includes vorkd, the vork command, the FUSE mount, the local web
- gateway and the attribute extractor. Reticulum is not included: run a
- Reticulum shared instance on the machine (any implementation).
+ Includes the vØrk node (vork, a system service), vorkd, the vork-storage
+ commands, the FUSE mount, the local web gateway and the attribute
+ extractor.
 EOF
     install -m 0755 "$HERE/postinst" "$HERE/prerm" "$STAGE/DEBIAN/"
     DEB="$OUT/vork_${DEBVER}_${ARCH}.deb"

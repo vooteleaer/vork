@@ -1,6 +1,6 @@
 //! vork-desktop for Windows: native Win32 controls over the shared core,
 //! and an icon in the notification area. It's also what starts vØrk storage at
-//! login (`--autostart`): Reticulum where none runs yet, then vorkd.
+//! login (`--autostart`): the vØrk node where none runs yet, then vorkd.
 
 #![cfg_attr(windows, windows_subsystem = "windows")]
 

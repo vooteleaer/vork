@@ -6,12 +6,12 @@
   <metadata_license>MIT</metadata_license>
   <project_license>MIT</project_license>
   <description>
-    <p>The vork node at a glance, in the tray and in a window: Reticulum, the
-    daemon, settings, storage, libraries and their members, and Find. vork
-    itself comes from the vork .deb, and Reticulum (Prns, or another shared
-    instance) is installed apart. A prototype.</p>
+    <p>The vØrk node at a glance, in the tray and in a window: the network
+    and its connections, the daemon, settings, storage, libraries and their
+    members, and Find. vØrk itself (the node and vorkd) comes from the vork
+    .deb. A prototype.</p>
   </description>
   <launchable type="desktop-id">org.vork.Desktop.desktop</launchable>
-  <url type="homepage">https://github.com/vooteleaer/retifs</url>
+  <url type="homepage">https://github.com/vooteleaer/vork</url>
   <content_rating type="oars-1.1"/>
 </component>

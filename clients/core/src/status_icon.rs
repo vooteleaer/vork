@@ -1,5 +1,5 @@
 //! What the tray icon says, on every platform: whether vØrk storage and
-//! Reticulum are up and others reachable, its lines of text, and the icon
+//! the vØrk node are up and others reachable, its lines of text, and the icon
 //! itself drawn in code (no image files to ship).
 
 /// What the icon shows.
@@ -9,15 +9,15 @@ pub struct TrayState {
     pub node: Option<String>,
     /// While vØrk storage starts: what it's doing.
     pub starting: Option<String>,
-    pub reticulum_up: bool,
-    /// Connections to other nodes that are up, of those configured.
+    pub network_up: bool,
+    /// Neighbors that are up, of those the node knows.
     pub links_up: usize,
     pub links: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Health {
-    /// vØrk storage and Reticulum up, others reachable.
+    /// vØrk storage and the node up, others reachable.
     Good,
     /// vØrk storage up, but no connection to others is.
     Partly,
@@ -26,22 +26,21 @@ pub enum Health {
 }
 
 impl TrayState {
-    /// From the daemon's status and Reticulum's: links are the connections
-    /// to other nodes (the shared instance's local ones don't count).
-    pub fn of(status: &crate::Status, r: &crate::device::Reticulum) -> TrayState {
+    /// From the daemon's status and the node's: links are its neighbors.
+    pub fn of(status: &crate::Status, r: &crate::device::Network) -> TrayState {
         let outward: Vec<_> = r.interfaces.iter().filter(|i| !i.is_local()).collect();
         TrayState {
             vork_up: status.up,
             node: status.node.clone(),
             starting: status.starting_text(),
-            reticulum_up: r.running,
+            network_up: r.running,
             links_up: outward.iter().filter(|i| i.up).count(),
             links: outward.len(),
         }
     }
 
     pub fn health(&self) -> Health {
-        match (self.vork_up, self.reticulum_up) {
+        match (self.vork_up, self.network_up) {
             (true, true) if self.links_up > 0 || self.links == 0 => Health::Good,
             (true, _) => Health::Partly,
             (false, _) => Health::Down,
@@ -57,7 +56,7 @@ impl TrayState {
                     None => "vork: not running".to_string(),
                 },
             },
-            if self.reticulum_up { format!("Reticulum: running, {} of {} connection(s) up", self.links_up, self.links) } else { "Reticulum: no shared instance".to_string() },
+            if self.network_up { format!("vØrk network: {} of {} neighbor(s) up", self.links_up, self.links) } else { "vØrk network: the node isn't running".to_string() },
         ]
     }
 }
@@ -96,11 +95,11 @@ mod tests {
 
     #[test]
     fn health_and_lines() {
-        let mut s = TrayState { vork_up: true, node: Some("1b95a9e9cafe".into()), starting: None, reticulum_up: true, links_up: 0, links: 2 };
+        let mut s = TrayState { vork_up: true, node: Some("1b95a9e9cafe".into()), starting: None, network_up: true, links_up: 0, links: 2 };
         assert_eq!(s.health(), Health::Partly, "up but nobody reachable");
         s.links_up = 1;
         assert_eq!(s.health(), Health::Good);
-        assert_eq!(s.lines(), vec!["vork: running, node 1b95a9e9…", "Reticulum: running, 1 of 2 connection(s) up"]);
+        assert_eq!(s.lines(), vec!["vork: running, node 1b95a9e9…", "vØrk network: 1 of 2 neighbor(s) up"]);
         assert_eq!(TrayState::default().health(), Health::Down);
         let icon = draw(32, Health::Good);
         assert_eq!(icon.len(), 32 * 32);

@@ -17,7 +17,7 @@ char* rd_status(void);      /* {"up", "store", "node", "chunks", "usage", "error
                                libraries: NsInfo views, favorites first, with "access",
                                "own", "public", "favorite" */
 char* rd_heard(void);       /* [{"name", "about", "address", "node", "hops", ...}] or {"error"} */
-char* rd_reticulum(void);   /* {"running", "transport", "uptime", "error", "connections"} */
+char* rd_network(void);     /* {"running", "address", "uptime", "error", "connections", "others"} */
 char* rd_settings(void);    /* [{"section", "key", "what", "switch", "value"}] */
 char* rd_services(void);    /* [{"name", "what", "state"}] */
 char* rd_tray(void);       /* {"health": "good" | "partly" | "down", "lines": [...]} */

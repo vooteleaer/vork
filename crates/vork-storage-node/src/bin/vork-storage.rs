@@ -1,6 +1,6 @@
 //! vØrk storage CLI (prototype): a thin client of the local vorkd (libvork).
 //!
-//!     vØrk storage [--store DIR] ping | nodes | stop | nomadnet NODE [PATH] [--var K=V]... | recovery create | recovery restore
+//!     vØrk storage [--store DIR] ping | nodes | stop | recovery create | recovery restore
 //!     vØrk storage [--store DIR] put FILE [--public] [--compress] [--publish] [--record NAME | --one-off] [--hint]
 //!
 //! `put` treats the file's absolute path as its record by default, so putting
@@ -211,30 +211,6 @@ Covered ({}): {}", covered.len(), if covered.is_empty() { "none".into() } else {
             }
             _ => usage(),
         },
-        // A NomadNet node's page (micron) or file, fetched by vorkd over Reticulum.
-        "nomadnet" => {
-            let node = it.next().unwrap_or_else(|| usage());
-            let (mut path, mut fields) = ("/page/index.mu".to_string(), Vec::new());
-            while let Some(a) = it.next() {
-                match a.as_str() {
-                    // A link's variable, as NomadNet sends it (var_NAME).
-                    "--var" => {
-                        let kv = it.next().unwrap_or_else(|| usage());
-                        let (k, v) = kv.split_once('=').unwrap_or_else(|| usage());
-                        fields.push((format!("var_{k}"), v.to_string()));
-                    }
-                    p => path = p.to_string(),
-                }
-            }
-            match client.call(libvork::Request::NomadNetPage { node, path, fields }).await.unwrap_or_else(|e| fail(e)) {
-                libvork::Response::Page { data } => {
-                    use std::io::Write;
-                    let _ = std::io::stdout().write_all(&data);
-                }
-                libvork::Response::Error { message } => fail(message),
-                _ => fail("unexpected response"),
-            }
-        }
         "stop" => {
             client.stop().await.unwrap_or_else(|e| fail(e));
             println!("vorkd is stopping");

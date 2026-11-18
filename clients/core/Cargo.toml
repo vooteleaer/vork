@@ -13,7 +13,9 @@ vork-tree = { path = "../../crates/vork-tree" }
 # Fingerprint words, to tell members apart (ADR-0020).
 vork-core = { path = "../../crates/vork-core" }
 tokio = { version = "1", features = ["rt"] }
-# prnsd status --json
+# vork status --json
 serde_json = "1"
+# The vØrk node: its control endpoint
+vork-api = { path = "../../crates/vork-api" }
 # The disk the store is on: the defaults the settings show
 fs4 = "0.13"
