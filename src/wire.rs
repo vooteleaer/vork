@@ -65,8 +65,9 @@ pub fn unframe(packet: &[u8]) -> Option<&[u8]> {
 
 #[derive(Debug, Clone)]
 pub enum Msg {
-    /// Binds the neighbor's WireGuard key to its signing key.
-    Hello { ed_pub: [u8; 32], sig: [u8; 64] },
+    /// Binds the neighbor's WireGuard key to its signing key, and says what
+    /// the neighbor does ([`FLAG_RELAY`] unset: a Lite node).
+    Hello { ed_pub: [u8; 32], flags: u8, sig: [u8; 64] },
     /// "This is the address I see you at" (STUN from peers).
     Observed { addr: SocketAddr },
     /// A destination's signed announce; `hops` is added by forwarders and is
@@ -77,6 +78,9 @@ pub enum Msg {
     /// inner WireGuard receiver index, so relays don't see the destination
     /// in every packet, and no packet carries a source.
     Fwd { ttl: u8, dest: Option<Hash>, inner: Vec<u8> },
+    /// "Where is `dest`?" Lite nodes don't receive floods; they ask. Answered
+    /// with the destination's announce.
+    PathReq { dest: Hash, nonce: u64 },
 }
 
 #[derive(Debug, Clone)]
@@ -105,29 +109,21 @@ const T_HELLO: u8 = 1;
 const T_OBSERVED: u8 = 2;
 const T_ANNOUNCE: u8 = 3;
 const T_FWD: u8 = 4;
+const T_PATH_REQ: u8 = 5;
 
 impl Msg {
     pub fn encode(&self) -> Vec<u8> {
         let mut b = Vec::new();
         match self {
-            Msg::Hello { ed_pub, sig } => {
+            Msg::Hello { ed_pub, flags, sig } => {
                 b.push(T_HELLO);
                 b.extend_from_slice(ed_pub);
+                b.push(*flags);
                 b.extend_from_slice(sig);
             }
             Msg::Observed { addr } => {
                 b.push(T_OBSERVED);
-                match addr.ip() {
-                    IpAddr::V4(ip) => {
-                        b.push(4);
-                        b.extend_from_slice(&ip.octets());
-                    }
-                    IpAddr::V6(ip) => {
-                        b.push(6);
-                        b.extend_from_slice(&ip.octets());
-                    }
-                }
-                b.extend_from_slice(&addr.port().to_be_bytes());
+                put_addr(&mut b, addr);
             }
             Msg::Announce(a) => {
                 b.push(T_ANNOUNCE);
@@ -150,6 +146,11 @@ impl Msg {
                 }
                 b.extend_from_slice(inner);
             }
+            Msg::PathReq { dest, nonce } => {
+                b.push(T_PATH_REQ);
+                b.extend_from_slice(dest);
+                b.extend_from_slice(&nonce.to_be_bytes());
+            }
         }
         b
     }
@@ -157,16 +158,8 @@ impl Msg {
     pub fn decode(b: &[u8]) -> Result<Msg> {
         let mut r = Reader { b, i: 0 };
         Ok(match r.u8()? {
-            T_HELLO => Msg::Hello { ed_pub: r.arr()?, sig: r.arr()? },
-            T_OBSERVED => {
-                let ip = match r.u8()? {
-                    4 => IpAddr::V4(Ipv4Addr::from(r.arr::<4>()?)),
-                    6 => IpAddr::V6(Ipv6Addr::from(r.arr::<16>()?)),
-                    _ => bail!("bad address family"),
-                };
-                let port = u16::from_be_bytes(r.arr()?);
-                Msg::Observed { addr: SocketAddr::new(ip, port) }
-            }
+            T_HELLO => Msg::Hello { ed_pub: r.arr()?, flags: r.u8()?, sig: r.arr()? },
+            T_OBSERVED => Msg::Observed { addr: get_addr(&mut r)? },
             T_ANNOUNCE => Msg::Announce(Announce {
                 ed_pub: r.arr()?,
                 x_pub: r.arr()?,
@@ -184,12 +177,51 @@ impl Msg {
                 };
                 Msg::Fwd { ttl, dest, inner: r.rest().to_vec() }
             }
+            T_PATH_REQ => Msg::PathReq { dest: r.arr()?, nonce: u64::from_be_bytes(r.arr()?) },
             t => bail!("unknown message type {t}"),
         })
     }
 }
 
-struct Reader<'a> {
+pub fn put_addr(b: &mut Vec<u8>, addr: &SocketAddr) {
+    match addr.ip() {
+        IpAddr::V4(ip) => {
+            b.push(4);
+            b.extend_from_slice(&ip.octets());
+        }
+        IpAddr::V6(ip) => {
+            b.push(6);
+            b.extend_from_slice(&ip.octets());
+        }
+    }
+    b.extend_from_slice(&addr.port().to_be_bytes());
+}
+
+fn get_addr(r: &mut Reader) -> Result<SocketAddr> {
+    let ip = match r.u8()? {
+        4 => IpAddr::V4(Ipv4Addr::from(r.arr::<4>()?)),
+        6 => IpAddr::V6(Ipv6Addr::from(r.arr::<16>()?)),
+        _ => bail!("bad address family"),
+    };
+    Ok(SocketAddr::new(ip, u16::from_be_bytes(r.arr()?)))
+}
+
+/// A list of addresses (candidates for a direct link): count, then each address.
+pub fn encode_addrs(addrs: &[SocketAddr]) -> Vec<u8> {
+    let mut b = vec![addrs.len().min(255) as u8];
+    for a in addrs.iter().take(255) {
+        put_addr(&mut b, a);
+    }
+    b
+}
+
+pub fn decode_addrs(b: &[u8]) -> Result<Vec<SocketAddr>> {
+    let mut r = Reader { b, i: 0 };
+    let n = r.u8()?;
+    (0..n).map(|_| get_addr(&mut r)).collect()
+}
+
+pub struct Reader<'a> {
     b: &'a [u8],
     i: usize,
 }
@@ -248,7 +280,8 @@ mod tests {
     #[test]
     fn roundtrip() {
         let msgs = [
-            Msg::Hello { ed_pub: [1; 32], sig: [2; 64] },
+            Msg::Hello { ed_pub: [1; 32], flags: 1, sig: [2; 64] },
+            Msg::PathReq { dest: [7; 16], nonce: 42 },
             Msg::Observed { addr: "1.2.3.4:5678".parse().unwrap() },
             Msg::Observed { addr: "[2001:db8::1]:51820".parse().unwrap() },
             Msg::Announce(Announce { ed_pub: [3; 32], x_pub: [4; 32], seq: 7, flags: 1, sig: [5; 64], hops: 2 }),
@@ -259,6 +292,12 @@ mod tests {
             let back = Msg::decode(&m.encode()).unwrap();
             assert_eq!(format!("{m:?}"), format!("{back:?}"));
         }
+    }
+
+    #[test]
+    fn addrs() {
+        let a: Vec<SocketAddr> = vec!["1.2.3.4:5".parse().unwrap(), "[::1]:6".parse().unwrap()];
+        assert_eq!(decode_addrs(&encode_addrs(&a)).unwrap(), a);
     }
 
     #[test]

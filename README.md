@@ -2,7 +2,7 @@
 
 *Working name.* A serverless, identity-addressed network over WireGuard: Reticulum's ideas on plain IP, fast, with no central servers. Any node can relay for others, and any node is assumed hostile.
 
-> **Status: phase-1 prototype.** Not for real use. The wire format will change.
+> **Status: prototype (phase 1 done, phase 2 in progress).** Not for real use. The wire format will change. Tested only on one machine so far (localhost).
 
 ## Principles
 
@@ -27,6 +27,8 @@
 - **Forwarding:** an inner handshake initiation is forwarded by destination address. Each relay remembers where it came from, keyed by the initiator's WireGuard index. Every later packet is switched by its receiver index alone, so **no packet carries a source, and only the first carries a destination**.
 - **Anonymous initiators:** a node needn't announce itself to reach others (`--no-announce`). The destination learns its key, not its address or location.
 - **Roaming:** a neighbor's endpoint is wherever its last authenticated packet came from.
+- **Lite nodes** (`--lite`) never relay, receive no floods and ask for the paths they need (`PATH_REQ`). Nobody routes through a Lite node unless it is the destination.
+- **Direct links** (`--direct`, opt-in on both ends): once a session works through relays, the two ends send each other the addresses their neighbors see them at, then both send WireGuard handshakes to those addresses at once (hole punching). When the link comes up, the session moves to it and the relays drop out. This reveals each end's address to the other, so it's off by default.
 
 ### Tested (localhost)
 
@@ -34,12 +36,15 @@
 |---|---|
 | C → B through A (1 relay), C anonymous | ~0.8 ms ping; A relayed 21 packets with 0 sessions |
 | C → D through A and B (2 relays), 193 s | 184 pings, 0 lost, survives the inner rekey at 120 s; each relay switched 356 packets with 0 sessions |
+| Lite node L behind A pings B; C pings L | both work; L learned only the 2 destinations it asked for and relayed nothing |
+| C and B with `--direct`, meeting through A | 1 ping relayed, then 20 direct; A stopped at 7 relayed packets |
 
 ## Try it
 
+Prebuilt static binaries are in `dist/` (Linux x86_64, Linux aarch64 for a Raspberry Pi, Windows x86_64), or `cargo build --release`.
+
 ```sh
-cargo build --release
-V=target/release/vork
+V=dist/vork-linux-x86_64          # or target/release/vork
 $V keygen --out a.key; $V keygen --out b.key; $V keygen --out c.key   # prints address and wg key
 
 $V run --key a.key --listen 0.0.0.0:51820                             # e.g. cafa-cloud (public IP)
@@ -47,6 +52,17 @@ $V run --key b.key --listen 0.0.0.0:51821 --peer HOST:51820@<A wg key>  # home (
 $V run --key c.key --listen 0.0.0.0:51822 --peer HOST:51820@<A wg key> \
        --no-announce --ping <B address>                                 # laptop, anonymous
 ```
+
+Options: `--lite` (don't relay, small devices), `--direct` (try a direct link to the far end of a session; reveals your address to it), `--no-announce` (reach others without being findable).
+
+### Testing on real machines
+
+1. **A public node** (e.g. cafa-cloud): `vork run --key a.key --listen 0.0.0.0:51820`, with UDP 51820 forwarded to it.
+2. **Two nodes behind different NATs** (home, a laptop on a phone hotspot), each with `--peer <A public IP>:51820@<A wg key>`.
+3. Ping one from the other by address: first through A, then with `--direct` on both to see whether the hole punch gets through. Symmetric NAT and CGNAT on both ends won't; the session then simply stays relayed.
+4. A Lite node anywhere with `--lite`.
+
+Watch the logs for `link up`, `a neighbor sees us at` (your public address as others see it), `dialing … directly`, `session … now goes direct`, and the `(relayed)` / `(direct)` tag on each pong.
 
 ## Lite nodes (ESP32, ESPHome)
 
@@ -59,7 +75,7 @@ ESPHome's WireGuard component has **one peer and IPv4 only**, and it can't accep
     peer_allowed_ips: [10.89.0.1/32]
     peer_persistent_keepalive: 25s
   ```
-- **No flooding to Lite nodes.** The upstream doesn't send a Lite node every announce. The Lite node asks for the path it needs (path request, phase 2) and uses the upstream as its default route.
+- **No flooding to Lite nodes.** The upstream doesn't send a Lite node every announce. The Lite node asks for the path it needs (`PATH_REQ`, implemented) and uses the upstream as its default route.
 - **End-to-end layer** needs a second WireGuard-compatible session engine on the device, running over `FWD` instead of a socket. To check: whether the Noise core of wireguard-lwip (which esp_wireguard is built on) can be used without its netif, or whether the fugo101/wireguard_lwip fork (16 peers, custom output for relays) fits.
 - **Time:** WireGuard handshakes carry a timestamp the responder checks, so the device needs SNTP (ESPHome's `time:`). Announce sequence numbers must not depend on the clock (see below).
 - **Identity:** the device's own (server-type) identity in encrypted flash, delegated by its owner. Ed25519 via libsodium (an ESP-IDF component).
@@ -72,7 +88,7 @@ ESPHome's WireGuard component has **one peer and IPv4 only**, and it can't accep
 - **A responder can't start a handshake to an anonymous initiator** (it has no address to route to). The initiator rekeys, so it works in practice; path labels like RNS link IDs would fix it properly.
 - **Index collisions:** relays switch on 24-bit random WireGuard indices. Collisions are rare but possible; the switch key could include a short path label.
 - **Route choice** still uses the advertised hop count. Next: score paths by measured delivery (otherwise a hostile node can attract traffic as a sinkhole).
-- **No hole punching yet** (phase 2): everything goes through relays.
+- **Direct links are untested through real NATs.** Candidates are the addresses neighbors observe plus the listening address if it is a specific one; a node listening on `0.0.0.0` doesn't yet offer its LAN addresses, and observed addresses aren't yet cross-checked by several neighbors (a hostile neighbor could report a wrong one).
 - **Eclipse resistance:** several bootstrap sources, diverse neighbors, long-lived anchors.
 - **Sybil:** proof-of-work stamps on announces.
 - **boringtun** 0.7.1 is used as-is; it needs payloads framed as IP packets. Check its maintenance status against the forks (defguard, nordisk) before relying on it.
@@ -80,7 +96,7 @@ ESPHome's WireGuard component has **one peer and IPv4 only**, and it can't accep
 ## Phases
 
 1. **Links, gossip, hash routing, forwarding** (this).
-2. NAT: addresses observed by peers, hole punching, path requests, Lite profile.
+2. NAT: addresses observed by peers, hole punching, path requests, Lite profile. *(First version done; needs testing on real networks.)*
 3. Overlay IPv6 as a compatibility view (TUN): SSH, SMB and browsers by identity.
 4. retifs as the storage layer (its `Transport` trait over this network).
 5. YubiKey identities, device delegation, islands.

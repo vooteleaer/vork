@@ -41,6 +41,12 @@ enum Cmd {
         /// Ping a destination by its address (hex) once a second.
         #[arg(long)]
         ping: Option<String>,
+        /// Lite: never relay, get no floods, ask for paths (small devices).
+        #[arg(long)]
+        lite: bool,
+        /// Offer and accept direct links (reveals this node's addresses to the peer).
+        #[arg(long)]
+        direct: bool,
     },
 }
 
@@ -68,14 +74,14 @@ async fn main() -> Result<()> {
             print_identity(&id);
         }
         Cmd::Show { key } => print_identity(&identity::Identity::load(&key)?),
-        Cmd::Run { key, listen, peers, no_announce, ping } => {
+        Cmd::Run { key, listen, peers, no_announce, ping, lite, direct } => {
             let me = identity::Identity::load(&key)?;
             let peers = peers.iter().map(|p| parse_peer(p)).collect::<Result<Vec<_>>>()?;
             let ping = match ping {
                 Some(h) => Some(hex::decode(&h)?.try_into().map_err(|_| anyhow::anyhow!("address must be 16 bytes"))?),
                 None => None,
             };
-            let cfg = node::Config { listen, peers, announce: !no_announce, ping };
+            let cfg = node::Config { listen, peers, announce: !no_announce, ping, lite, direct };
             node::Node::new(me, cfg).await?.run().await?;
         }
     }

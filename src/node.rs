@@ -35,12 +35,17 @@ struct Neighbor {
     x_pub: [u8; 32],
     addr: Option<SocketAddr>,
     hash: Option<Hash>,
+    /// From its HELLO; `None` until then.
+    flags: Option<u8>,
+    /// The address this neighbor sees us at.
+    observed_me: Option<SocketAddr>,
     bootstrap: bool,
     up: bool,
 }
 
 struct Session {
     tunn: Tunn,
+    peer_x: [u8; 32],
     peer_hash: Option<Hash>,
     via: u32,
 }
@@ -56,6 +61,11 @@ pub struct Config {
     pub peers: Vec<(SocketAddr, [u8; 32])>,
     pub announce: bool,
     pub ping: Option<Hash>,
+    /// Lite: never relay, receive no floods, ask for paths (ESP32 and the like).
+    pub lite: bool,
+    /// Offer and accept direct links with the far end of a session. Reveals
+    /// this node's addresses to that peer, so it's opt-in.
+    pub direct: bool,
 }
 
 enum Out {
@@ -67,7 +77,11 @@ enum Out {
 pub struct Node {
     me: Identity,
     my_hash: Hash,
+    /// Receives through tokio; sends through the same socket's std handle,
+    /// because tokio's `try_send_to` drops a datagram (WouldBlock) until the
+    /// reactor has seen the socket writable, which loses the first handshake.
     sock: Arc<UdpSocket>,
+    send_sock: std::net::UdpSocket,
     cfg: Config,
     neighbors: HashMap<u32, Neighbor>,
     neighbor_by_key: HashMap<[u8; 32], u32>,
@@ -79,6 +93,12 @@ pub struct Node {
     seen: HashSet<(Hash, u64)>,
     pings: HashMap<u64, Instant>,
     relayed: u64,
+    /// Neighbors waiting for an answer to a path request we passed on.
+    pending: HashMap<Hash, (Vec<u32>, Instant)>,
+    seen_req: HashSet<(Hash, u64)>,
+    asked: HashMap<Hash, Instant>,
+    /// Sessions in which our direct-link candidates were already sent.
+    punched: HashSet<u32>,
 }
 
 fn rand_u64() -> u64 {
@@ -138,12 +158,16 @@ fn timers(tunn: &mut Tunn) -> Option<Vec<u8>> {
 
 impl Node {
     pub async fn new(me: Identity, cfg: Config) -> anyhow::Result<Node> {
-        let sock = Arc::new(UdpSocket::bind(cfg.listen).await?);
+        let std_sock = std::net::UdpSocket::bind(cfg.listen)?;
+        std_sock.set_nonblocking(true)?;
+        let send_sock = std_sock.try_clone()?;
+        let sock = Arc::new(UdpSocket::from_std(std_sock)?);
         let my_hash = me.hash();
         Ok(Node {
             my_hash,
             me,
             sock,
+            send_sock,
             cfg,
             neighbors: HashMap::new(),
             neighbor_by_key: HashMap::new(),
@@ -154,6 +178,10 @@ impl Node {
             seen: HashSet::new(),
             pings: HashMap::new(),
             relayed: 0,
+            pending: HashMap::new(),
+            seen_req: HashSet::new(),
+            asked: HashMap::new(),
+            punched: HashSet::new(),
         })
     }
 
@@ -176,17 +204,27 @@ impl Node {
     fn add_neighbor(&mut self, x_pub: [u8; 32], addr: Option<SocketAddr>, bootstrap: bool) -> u32 {
         let id = self.new_id();
         let tunn = self.new_tunn(x_pub, Some(KEEPALIVE), id);
-        self.neighbors.insert(id, Neighbor { tunn, x_pub, addr, hash: None, bootstrap, up: false });
+        self.neighbors.insert(id, Neighbor { tunn, x_pub, addr, hash: None, flags: None, observed_me: None, bootstrap, up: false });
         self.neighbor_by_key.insert(x_pub, id);
         id
     }
 
+    fn my_flags(&self) -> u8 {
+        if self.cfg.lite { 0 } else { FLAG_RELAY }
+    }
+
+    /// A neighbor that said it doesn't relay.
+    fn is_lite(&self, id: u32) -> bool {
+        self.neighbors.get(&id).and_then(|n| n.flags).is_some_and(|f| f & FLAG_RELAY == 0)
+    }
+
     pub async fn run(mut self) -> anyhow::Result<()> {
         log(format!(
-            "node {} listening on {} (x25519 {})",
+            "node {} listening on {} (x25519 {}){}",
             hex::encode(self.my_hash),
             self.cfg.listen,
-            hex::encode(self.me.x_pub().as_bytes())
+            hex::encode(self.me.x_pub().as_bytes()),
+            if self.cfg.lite { " [lite]" } else { "" }
         ));
         for (addr, key) in self.cfg.peers.clone() {
             let id = self.add_neighbor(key, Some(addr), true);
@@ -232,7 +270,9 @@ impl Node {
     // ---- outer layer: neighbors ------------------------------------------------
 
     fn send_raw(&self, addr: SocketAddr, p: &[u8]) {
-        let _ = self.sock.try_send_to(p, addr);
+        if let Err(e) = self.send_sock.send_to(p, addr) {
+            log(format!("send to {addr}: {e}"));
+        }
     }
 
     fn initiate(&mut self, id: u32) {
@@ -325,8 +365,10 @@ impl Node {
     }
 
     fn on_link_up(&mut self, id: u32, addr: Option<SocketAddr>) {
-        let x_pub = *self.me.x_pub().as_bytes();
-        let hello = Msg::Hello { ed_pub: self.me.ed_pub(), sig: self.me.sign(LABEL_BIND, &x_pub) };
+        let flags = self.my_flags();
+        let mut bound = self.me.x_pub().as_bytes().to_vec();
+        bound.push(flags);
+        let hello = Msg::Hello { ed_pub: self.me.ed_pub(), flags, sig: self.me.sign(LABEL_BIND, &bound) };
         self.send_msg(id, &hello);
         if let Some(addr) = addr {
             self.send_msg(id, &Msg::Observed { addr });
@@ -334,12 +376,6 @@ impl Node {
         if self.cfg.announce {
             let own = self.own_announce();
             self.send_msg(id, &Msg::Announce(own));
-        }
-        // Hand the new neighbor what we know, so it can reach destinations at once.
-        let known: Vec<Announce> =
-            self.routes.values().filter(|r| r.via != id).map(|r| Announce { hops: r.hops, ..r.ann.clone() }).collect();
-        for a in known {
-            self.send_msg(id, &Msg::Announce(a));
         }
     }
 
@@ -349,19 +385,45 @@ impl Node {
             Err(e) => return log(format!("bad message: {e}")),
         };
         match msg {
-            Msg::Hello { ed_pub, sig } => {
+            Msg::Hello { ed_pub, flags, sig } => {
                 let n = self.neighbors.get_mut(&from).unwrap();
-                if identity::verify(&ed_pub, LABEL_BIND, &n.x_pub, &sig) {
-                    let h = node_hash(&ed_pub, &n.x_pub);
-                    n.hash = Some(h);
-                    log(format!("neighbor is {}", hex::encode(h)));
-                } else {
-                    log("neighbor hello with a bad signature");
+                let mut bound = n.x_pub.to_vec();
+                bound.push(flags);
+                if !identity::verify(&ed_pub, LABEL_BIND, &bound, &sig) {
+                    return log("neighbor hello with a bad signature");
+                }
+                let h = node_hash(&ed_pub, &n.x_pub);
+                let first = n.hash.is_none();
+                n.hash = Some(h);
+                n.flags = Some(flags);
+                if first {
+                    let lite = flags & FLAG_RELAY == 0;
+                    log(format!("neighbor is {}{}", hex::encode(h), if lite { " [lite]" } else { "" }));
+                    // Hand a full neighbor what we know, so it can reach
+                    // destinations at once. Lite nodes ask instead.
+                    if !self.cfg.lite && !lite {
+                        let known: Vec<Announce> = self
+                            .routes
+                            .values()
+                            .filter(|r| r.via != from)
+                            .map(|r| Announce { hops: r.hops, ..r.ann.clone() })
+                            .collect();
+                        for a in known {
+                            self.send_msg(from, &Msg::Announce(a));
+                        }
+                    }
                 }
             }
-            Msg::Observed { addr } => log(format!("a neighbor sees us at {addr}")),
+            Msg::Observed { addr } => {
+                let n = self.neighbors.get_mut(&from).unwrap();
+                if n.observed_me != Some(addr) {
+                    n.observed_me = Some(addr);
+                    log(format!("a neighbor sees us at {addr}"));
+                }
+            }
             Msg::Announce(a) => self.on_announce(from, a),
             Msg::Fwd { ttl, dest, inner } => self.on_fwd(from, ttl, dest, inner),
+            Msg::PathReq { dest, nonce } => self.on_path_req(from, dest, nonce),
         }
     }
 
@@ -370,7 +432,7 @@ impl Node {
     fn own_announce(&self) -> Announce {
         let x_pub = *self.me.x_pub().as_bytes();
         let seq = now_seq();
-        let flags = FLAG_RELAY;
+        let flags = self.my_flags();
         let sig = self.me.sign(LABEL_ANNOUNCE, &Announce::signed_part(&self.my_hash, &x_pub, seq, flags));
         Announce { ed_pub: self.me.ed_pub(), x_pub, seq, flags, sig, hops: 0 }
     }
@@ -408,19 +470,78 @@ impl Node {
             }
             self.routes.insert(hash, Route { via: from, hops, ann: a.clone() });
         }
-        if self.seen.insert((hash, a.seq)) {
-            let fwd = Announce { hops, ..a };
-            for id in self.up_neighbors() {
+        let fwd = Announce { hops, ..a };
+        // Answer neighbors that asked for this destination.
+        if let Some((askers, _)) = self.pending.remove(&hash) {
+            for id in askers {
                 if id != from {
+                    self.send_msg(id, &Msg::Announce(fwd.clone()));
+                }
+            }
+        }
+        // Lite nodes don't flood, and nobody floods to them.
+        if !self.cfg.lite && self.seen.insert((hash, fwd.seq)) {
+            for id in self.up_neighbors() {
+                if id != from && !self.is_lite(id) {
                     self.send_msg(id, &Msg::Announce(fwd.clone()));
                 }
             }
         }
     }
 
+    /// The next hop toward `dest`: an up neighbor, and never a Lite node
+    /// unless it is the destination itself.
     fn route_via(&self, dest: &Hash) -> Option<u32> {
         let r = self.routes.get(dest)?;
-        self.neighbors.get(&r.via).is_some_and(|n| n.up).then_some(r.via)
+        let n = self.neighbors.get(&r.via)?;
+        (n.up && (!self.is_lite(r.via) || n.hash == Some(*dest))).then_some(r.via)
+    }
+
+    fn request_path(&mut self, dest: Hash) {
+        if self.asked.get(&dest).is_some_and(|t| t.elapsed() < Duration::from_secs(2)) {
+            return;
+        }
+        self.asked.insert(dest, Instant::now());
+        let nonce = rand_u64();
+        self.seen_req.insert((dest, nonce));
+        for id in self.up_neighbors() {
+            if !self.is_lite(id) {
+                self.send_msg(id, &Msg::PathReq { dest, nonce });
+            }
+        }
+    }
+
+    fn on_path_req(&mut self, from: u32, dest: Hash, nonce: u64) {
+        if !self.neighbors.get(&from).is_some_and(|n| n.up) || !self.seen_req.insert((dest, nonce)) {
+            return;
+        }
+        if dest == self.my_hash {
+            if self.cfg.announce {
+                let a = self.own_announce();
+                self.send_msg(from, &Msg::Announce(a));
+            }
+            return;
+        }
+        if let Some(r) = self.routes.get(&dest) {
+            let a = Announce { hops: r.hops, ..r.ann.clone() };
+            if r.via != from {
+                self.send_msg(from, &Msg::Announce(a));
+            }
+            return;
+        }
+        if self.cfg.lite {
+            return;
+        }
+        // Not known here: remember who asked and pass the question on.
+        let entry = self.pending.entry(dest).or_insert_with(|| (Vec::new(), Instant::now()));
+        if !entry.0.contains(&from) {
+            entry.0.push(from);
+        }
+        for id in self.up_neighbors() {
+            if id != from && !self.is_lite(id) {
+                self.send_msg(id, &Msg::PathReq { dest, nonce });
+            }
+        }
     }
 
     // ---- forwarding (relay role) -------------------------------------------------
@@ -435,6 +556,9 @@ impl Node {
                 if dest == self.my_hash {
                     return self.on_inner(from, &inner);
                 }
+                if self.cfg.lite {
+                    return; // Lite nodes don't relay
+                }
                 let Some(via) = self.route_via(&dest) else {
                     return log(format!("no route to {}", short(&dest)));
                 };
@@ -448,6 +572,12 @@ impl Node {
             }
             Some(_) => {
                 let Some(ridx) = wg::receiver_idx(&inner) else { return };
+                if self.cfg.lite {
+                    if self.sessions.contains_key(&(ridx >> 8)) {
+                        self.on_inner(from, &inner);
+                    }
+                    return;
+                }
                 if let Some((to, used)) = self.switch.get_mut(&(from, ridx)) {
                     *used = Instant::now();
                     let to = *to;
@@ -483,7 +613,7 @@ impl Node {
                         // The initiator may be anonymous: we learn its key, not where it is.
                         let sid = self.new_id();
                         let tunn = self.new_tunn(half.peer_static_public, None, sid);
-                        self.sessions.insert(sid, Session { tunn, peer_hash: None, via: from });
+                        self.sessions.insert(sid, Session { tunn, peer_x: half.peer_static_public, peer_hash: None, via: from });
                         self.session_by_key.insert(half.peer_static_public, sid);
                         log(format!("new end-to-end session from {}", hex::encode(&half.peer_static_public[..4])));
                         sid
@@ -514,7 +644,31 @@ impl Node {
         }
     }
 
+    /// For a session we opened, follow the current best route: a direct link
+    /// to the peer needs nothing more; a different relay path has no switch
+    /// entries yet, so a new handshake lays them.
+    fn refresh_via(&mut self, sid: u32) {
+        let Some(s) = self.sessions.get(&sid) else { return };
+        let Some(h) = s.peer_hash else { return };
+        let Some(v) = self.route_via(&h) else { return };
+        if v == s.via {
+            return;
+        }
+        let direct = self.neighbors.get(&v).and_then(|n| n.hash) == Some(h);
+        log(format!("session to {} now goes {}", short(&h), if direct { "direct" } else { "by another path" }));
+        let s = self.sessions.get_mut(&sid).unwrap();
+        s.via = v;
+        if !direct {
+            let mut buf = vec![0u8; BUF];
+            if let TunnResult::WriteToNetwork(p) = s.tunn.format_handshake_initiation(&mut buf, true) {
+                let p = p.to_vec();
+                self.send_msg(v, &Msg::Fwd { ttl: TTL, dest: Some(h), inner: p });
+            }
+        }
+    }
+
     fn send_inner(&mut self, sid: u32, p: Vec<u8>) {
+        self.refresh_via(sid);
         let Some(s) = self.sessions.get(&sid) else { return };
         let dest = if wg::kind(&p) == Some(wg::INIT) {
             match s.peer_hash {
@@ -547,7 +701,7 @@ impl Node {
         }
         let sid = self.new_id();
         let tunn = self.new_tunn(x_pub, None, sid);
-        self.sessions.insert(sid, Session { tunn, peer_hash: Some(dest), via });
+        self.sessions.insert(sid, Session { tunn, peer_x: x_pub, peer_hash: Some(dest), via });
         self.session_by_key.insert(x_pub, sid);
         log(format!("opening end-to-end session to {}", short(&dest)));
         Some(sid)
@@ -556,6 +710,7 @@ impl Node {
     fn ping(&mut self) {
         let dest = self.cfg.ping.unwrap();
         let Some(sid) = self.session_to(dest) else {
+            self.request_path(dest);
             return log(format!("waiting for a route to {}", short(&dest)));
         };
         let nonce = rand_u64();
@@ -566,23 +721,84 @@ impl Node {
     }
 
     fn on_app(&mut self, sid: u32, body: &[u8]) {
-        if body.len() != 9 {
-            return;
-        }
-        let nonce = u64::from_be_bytes(body[1..9].try_into().unwrap());
-        match body[0] {
-            1 => {
+        match body.first() {
+            Some(1) if body.len() == 9 => {
                 let mut reply = vec![2u8];
-                reply.extend_from_slice(&nonce.to_be_bytes());
+                reply.extend_from_slice(&body[1..9]);
                 self.send_app(sid, &reply);
             }
-            2 => {
+            Some(2) if body.len() == 9 => {
+                let nonce = u64::from_be_bytes(body[1..9].try_into().unwrap());
                 if let Some(t) = self.pings.remove(&nonce) {
-                    let who = self.sessions[&sid].peer_hash.map(|h| short(&h)).unwrap_or_default();
-                    log(format!("pong from {who}: {:.2} ms", t.elapsed().as_secs_f64() * 1000.0));
+                    let s = &self.sessions[&sid];
+                    let who = s.peer_hash.map(|h| short(&h)).unwrap_or_default();
+                    let path = if self.neighbors.get(&s.via).and_then(|n| n.hash) == s.peer_hash { "direct" } else { "relayed" };
+                    log(format!("pong from {who}: {:.2} ms ({path})", t.elapsed().as_secs_f64() * 1000.0));
+                }
+                if self.cfg.direct && self.punched.insert(sid) {
+                    self.send_punch(sid);
                 }
             }
+            Some(3) => match wire::decode_addrs(&body[1..]) {
+                Ok(cands) => self.on_punch(sid, cands),
+                Err(e) => log(format!("bad direct-link offer: {e}")),
+            },
             _ => {}
+        }
+    }
+
+    // ---- direct links ----------------------------------------------------------
+
+    /// Where others might reach us: the addresses our neighbors see us at, and
+    /// our own listening address if it is a specific one (a LAN address).
+    fn candidates(&self) -> Vec<SocketAddr> {
+        let mut c: Vec<SocketAddr> = self.neighbors.values().filter_map(|n| n.observed_me).collect();
+        if !self.cfg.listen.ip().is_unspecified() {
+            c.push(self.cfg.listen);
+        }
+        c.sort();
+        c.dedup();
+        c
+    }
+
+    fn send_punch(&mut self, sid: u32) {
+        let cands = self.candidates();
+        if cands.is_empty() {
+            return;
+        }
+        log(format!("offering a direct link at {cands:?}"));
+        let mut body = vec![3u8];
+        body.extend_from_slice(&wire::encode_addrs(&cands));
+        self.send_app(sid, &body);
+    }
+
+    /// The far end offered its addresses: answer with ours (once), then both
+    /// sides send WireGuard handshakes to each other at the same time, which
+    /// also opens the way through most NATs.
+    fn on_punch(&mut self, sid: u32, cands: Vec<SocketAddr>) {
+        if !self.cfg.direct {
+            return log("peer offered a direct link; not enabled here (--direct)");
+        }
+        if self.punched.insert(sid) {
+            self.send_punch(sid);
+        }
+        let peer = self.sessions[&sid].peer_x;
+        if self.neighbor_by_key.get(&peer).is_some_and(|id| self.neighbors[id].up) {
+            return;
+        }
+        let Some(first) = cands.first().copied() else { return };
+        let id = match self.neighbor_by_key.get(&peer) {
+            Some(id) => *id,
+            None => self.add_neighbor(peer, Some(first), false),
+        };
+        let mut buf = vec![0u8; BUF];
+        let n = self.neighbors.get_mut(&id).unwrap();
+        if let TunnResult::WriteToNetwork(p) = n.tunn.format_handshake_initiation(&mut buf, true) {
+            let p = p.to_vec();
+            log(format!("dialing {} directly at {cands:?}", hex::encode(&peer[..4])));
+            for c in &cands {
+                self.send_raw(*c, &p);
+            }
         }
     }
 
@@ -606,6 +822,10 @@ impl Node {
             }
         }
         self.switch.retain(|_, (_, used)| used.elapsed() < SWITCH_IDLE);
+        self.pending.retain(|_, (_, t)| t.elapsed() < Duration::from_secs(30));
+        if self.seen_req.len() > 10_000 {
+            self.seen_req.clear();
+        }
         self.pings.retain(|_, t| t.elapsed() < Duration::from_secs(10));
     }
 
