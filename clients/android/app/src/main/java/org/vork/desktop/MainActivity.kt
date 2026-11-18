@@ -61,8 +61,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * vork on Android: this device (the node, storage, libraries), Reticulum
- * (Prns's app, which vork joins), and the settings. The same three views as the
+ * vork on Android: this device (the vØrk node and its connections,
+ * storage, libraries), the announces, and the settings. The same three views as the
  * desktop utility, over the same core.
  */
 class MainActivity : ComponentActivity() {
@@ -131,7 +131,7 @@ fun human(n: Long): String {
 fun App() {
     var tab by remember { mutableIntStateOf(0) }
     var status by remember { mutableStateOf(JSONObject()) }
-    var reticulum by remember { mutableStateOf(false) }
+    var network by remember { mutableStateOf(JSONObject()) }
     var tick by remember { mutableIntStateOf(0) }
     var note by remember { mutableStateOf("") }
     // A vork: link opened elsewhere, wherever the app is.
@@ -139,7 +139,7 @@ fun App() {
     LaunchedEffect(tick) {
         while (true) {
             status = JSONObject(core { Core.status() })
-            reticulum = core { Core.sharedInstanceUp() }
+            network = JSONObject(core { Core.network() })
             // Often while it starts, so its steps and progress move.
             delay(if (status.optBoolean("up")) 5_000 else 1_000)
         }
@@ -160,7 +160,7 @@ fun App() {
                 Text(note, Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.bodySmall)
             }
             when (tab) {
-                0 -> Overview(status, reticulum) { note = it; refresh() }
+                0 -> Overview(status, network) { note = it; refresh() }
                 1 -> Announces(status) { note = it; refresh() }
                 else -> SettingsView { note = it; refresh() }
             }
@@ -169,7 +169,7 @@ fun App() {
 }
 
 @Composable
-fun Overview(s: JSONObject, reticulum: Boolean, said: (String) -> Unit) {
+fun Overview(s: JSONObject, network: JSONObject, said: (String) -> Unit) {
     val context = LocalContext.current
     var newLibrary by remember { mutableStateOf(false) }
     var joinLink by remember { mutableStateOf(false) }
@@ -179,7 +179,7 @@ fun Overview(s: JSONObject, reticulum: Boolean, said: (String) -> Unit) {
         item {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
-                    DaemonState(s, reticulum)
+                    DaemonState(s, network.optBoolean("running"))
                     s.optJSONObject("usage")?.let { u ->
                         Spacer(Modifier.padding(4.dp))
                         Text("Own data: ${human(u.optLong("pinned"))} of ${human(u.optLong("store_limit"))}")
@@ -187,7 +187,6 @@ fun Overview(s: JSONObject, reticulum: Boolean, said: (String) -> Unit) {
                         Text("Cache: ${human(u.optLong("cache"))} of ${human(u.optLong("cache_max"))}")
                         Text("Free on the phone: ${human(u.optLong("disk_available"))}")
                     }
-                    Reticulum(reticulum)
                     Row(Modifier.padding(top = 12.dp)) {
                         Button(onClick = { VorkService.start(context); said("Starting vork") }) { Text("Start") }
                         Spacer(Modifier.width(8.dp))
@@ -198,6 +197,7 @@ fun Overview(s: JSONObject, reticulum: Boolean, said: (String) -> Unit) {
                 }
             }
         }
+        item { Network(network, said) }
         val libraries = s.optJSONArray("libraries") ?: JSONArray()
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -256,16 +256,12 @@ fun Announces(s: JSONObject, said: (String) -> Unit) {
 }
 
 /**
- * Reticulum on the phone is Prns's app (or another one with a shared
- * instance): vork only joins it. Its connections are set up there.
- */
-/**
  * What vork is doing: running, starting (the step vorkd is at, with a
- * progress bar), waiting for Reticulum, stopped by itself (why), or not
+ * progress bar), waiting for the vØrk node, stopped by itself (why), or not
  * started. Never a bare "not running" while it starts.
  */
 @Composable
-fun DaemonState(s: JSONObject, reticulum: Boolean) {
+fun DaemonState(s: JSONObject, nodeUp: Boolean) {
     val starting = s.optJSONObject("starting")
     val title = MaterialTheme.typography.titleMedium
     val small = MaterialTheme.typography.bodySmall
@@ -292,9 +288,9 @@ fun DaemonState(s: JSONObject, reticulum: Boolean) {
                 Text("vork wasn't stopped cleanly last time, so it checks its store first. On a large store this takes a few minutes.", style = small)
             }
         }
-        VorkService.waitingForReticulum || !reticulum -> {
-            Text("Waiting for Reticulum", style = title)
-            Text("vork starts as soon as Reticulum is running.", style = small)
+        VorkService.waitingForNode || !nodeUp -> {
+            Text("Waiting for the vØrk node", style = title)
+            Text("Storage starts as soon as the node is running.", style = small)
         }
         VorkService.lastExit != null -> {
             Text("vork stopped", style = title, color = MaterialTheme.colorScheme.error)
@@ -308,15 +304,62 @@ fun DaemonState(s: JSONObject, reticulum: Boolean) {
     }
 }
 
-/** Reticulum on this device: any implementation with a shared instance, none named. */
+/**
+ * The app's vØrk node and its connections: other nodes by address
+ * (`host:port`, their key asked for on first contact), kept in the node's
+ * vork.toml and dialed at once.
+ */
 @Composable
-fun Reticulum(up: Boolean) {
-    Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            if (up) "Reticulum is running" else "Reticulum isn't running: start your Reticulum app (one with a shared instance)",
-            Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyMedium,
-        )
+fun Network(n: JSONObject, said: (String) -> Unit) {
+    val scope = rememberCoroutineScope()
+    var address by remember { mutableStateOf("") }
+    val small = MaterialTheme.typography.bodySmall
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp)) {
+            Text("Network", style = MaterialTheme.typography.titleMedium)
+            if (n.optBoolean("running")) {
+                Text("The vØrk node is running: ${n.optString("address")}", style = small)
+            } else {
+                Text(n.optString("error").ifEmpty { "The vØrk node isn't running" }, style = small)
+            }
+            val connections = n.optJSONArray("connections") ?: JSONArray()
+            val others = n.optJSONArray("others") ?: JSONArray()
+            for (c in (0 until connections.length()).map { connections.getJSONObject(it) }) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    val state = when {
+                        !c.optBoolean("enabled", true) -> "off"
+                        c.optBoolean("up") -> "connected"
+                        else -> "not connected"
+                    }
+                    Text("${c.optString("name")} · $state", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                    TextButton(onClick = {
+                        scope.launch { said(core { Core.removeConnection(c.optString("name")) }.ifEmpty { "Removed ${c.optString("name")}" }) }
+                    }) { Text("Remove") }
+                }
+            }
+            for (o in (0 until others.length()).map { others.getJSONObject(it) }) {
+                Text("${o.optString("name")} · ${if (o.optBoolean("up")) "connected" else "not connected"} (found by itself)", style = small)
+            }
+            Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = address,
+                    onValueChange = { address = it },
+                    label = { Text("Another node: host:port") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(8.dp))
+                Button(enabled = address.isNotBlank(), onClick = {
+                    val at = address.trim()
+                    val host = at.substringBeforeLast(':', at)
+                    val port = at.substringAfterLast(':', "51820").toIntOrNull() ?: 51820
+                    scope.launch {
+                        said(core { Core.addConnection(host, port) }.ifEmpty { "Connecting to $host:$port" })
+                        address = ""
+                    }
+                }) { Text("Add") }
+            }
+        }
     }
 }
 

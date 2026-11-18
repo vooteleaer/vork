@@ -17,7 +17,13 @@ object Core {
     external fun status(): String
     /** Whether vorkd answers: a ping, nothing more (status asks about every library). */
     external fun up(): Boolean
-    external fun sharedInstanceUp(): Boolean
+    /** Whether the app's vØrk node answers. */
+    external fun nodeUp(): Boolean
+    /** The node and its connections (JSON: running, address, connections, others, error). */
+    external fun network(): String
+    /** Another node by address, kept and dialed at once: "" or the error. */
+    external fun addConnection(host: String, port: Int): String
+    external fun removeConnection(name: String): String
     external fun settings(): String
     external fun saveSettings(values: String): String
     external fun heard(): String
@@ -107,6 +113,10 @@ object Core {
         val logs: File = File(context.filesDir, "logs")
         private val native = File(context.applicationInfo.nativeLibraryDir)
         val vorkd: File = File(native, "libvorkd.so")
+        /** The vØrk node's program, and its settings, identity and sockets. */
+        val vork: File = File(native, "libvork.so")
+        val node: File = File(context.filesDir, "node")
+        val nodeConfig: File = File(node, "vork.toml")
     }
 
     @Volatile private var ready = false

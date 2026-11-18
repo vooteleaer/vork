@@ -23,12 +23,17 @@ fn result(env: &mut JNIEnv, r: Result<(), String>) -> jstring {
 }
 
 /// Where everything is: the app's files folder as HOME, and the store.
-/// Reticulum is Prns's app, not run by this one.
+/// The vØrk node is the app's own (VorkService runs it).
 #[no_mangle]
 pub extern "system" fn Java_org_vork_desktop_Core_init<'l>(mut env: JNIEnv<'l>, _: JClass<'l>, home: JString<'l>, store: JString<'l>) {
     let (home, store) = (arg(&mut env, &home), arg(&mut env, &store));
-    std::env::set_var("HOME", home);
+    std::env::set_var("HOME", &home);
     std::env::set_var("VORK_STORE", store);
+    // The app's own vØrk node (VorkService runs it): its settings and sockets.
+    let node = std::path::Path::new(&home).join("node");
+    std::env::set_var("VORK_CONFIG", node.join("vork.toml"));
+    std::env::set_var("VORK_API", node.join("state").join("api.sock"));
+    std::env::set_var("VORK_CONTROL", node.join("state").join("control.sock"));
 }
 
 #[no_mangle]
@@ -311,8 +316,30 @@ pub extern "system" fn Java_org_vork_desktop_Core_deleteLibrary<'l>(mut env: JNI
 }
 
 #[no_mangle]
-pub extern "system" fn Java_org_vork_desktop_Core_sharedInstanceUp<'l>(_: JNIEnv<'l>, _: JClass<'l>) -> jboolean {
-    device::shared_instance_up() as jboolean
+pub extern "system" fn Java_org_vork_desktop_Core_nodeUp<'l>(_: JNIEnv<'l>, _: JClass<'l>) -> jboolean {
+    device::node_up() as jboolean
+}
+
+/// The vØrk node and its connections (JSON, as the desktop's network page).
+#[no_mangle]
+pub extern "system" fn Java_org_vork_desktop_Core_network<'l>(mut env: JNIEnv<'l>, _: JClass<'l>) -> jstring {
+    out(&mut env, api::network().to_string())
+}
+
+/// Adds a connection to another node (`host:port`), written to the node's
+/// vork.toml and dialed at once; "" or the error.
+#[no_mangle]
+pub extern "system" fn Java_org_vork_desktop_Core_addConnection<'l>(mut env: JNIEnv<'l>, _: JClass<'l>, host: JString<'l>, port: jni::sys::jint) -> jstring {
+    let host = arg(&mut env, &host);
+    let r = api::add_connection(&host, &host, port.max(0) as u64);
+    result(&mut env, r)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_vork_desktop_Core_removeConnection<'l>(mut env: JNIEnv<'l>, _: JClass<'l>, name: JString<'l>) -> jstring {
+    let name = arg(&mut env, &name);
+    let r = api::remove_connection(&name);
+    result(&mut env, r)
 }
 
 #[no_mangle]

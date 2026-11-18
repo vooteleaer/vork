@@ -25,7 +25,7 @@ On your computer it looks like an ordinary folder (in Windows Explorer, on Linux
 | **Sharing** | A link to their server, or an account with them | With a person: an invitation they open on their device, read-only or to add to it |
 | **Taking it back** | Ask the company to delete it | Delete a shared library on every member's device at once |
 
-vØrk storage runs on [Reticulum](https://reticulum.network), a networking system that works without any central infrastructure: over the internet, a local network, or long-range radio (LoRa) when there's nothing else. Your devices find each other by their keys, not by addresses a provider hands out.
+vØrk storage runs on [vØrk](../../README.md), a network of equal nodes without any central infrastructure, where any node can relay for the others. Your devices find each other by their keys, not by addresses a provider hands out. (It began on [Reticulum](https://reticulum.network) and kept its formats when it moved: [ADR-0022](../adr/0022-storage-leaves-reticulum.md).)
 
 ### The honest trade-offs
 
@@ -45,7 +45,7 @@ The details are in the [architecture](01-architecture.md).
 
 ## Try it
 
-**[Getting started](getting-started.md)** walks you through two devices and the apps in about half an hour. In short: you need Reticulum running on the machine first (any implementation with a shared instance); vØrk storage joins it. Installers are on the [releases page](https://github.com/vooteleaer/retifs/releases).
+**[Getting started](getting-started.md)** walks you through two devices and the apps in about half an hour. In short: install it on two devices and give one the other's address. Every installer brings the vØrk node. Installers are on the [releases page](https://github.com/vooteleaer/vork/releases).
 
 - **Windows 10 and 11:** `vork-setup-*.exe` installs for the current user, no administrator needed. Your libraries appear in Explorer under `%USERPROFILE%\vork`.
 - **Debian, Ubuntu, Raspberry Pi OS:** `sudo apt install ./vork_*.deb`.
@@ -60,9 +60,9 @@ The details are in the [architecture](01-architecture.md).
 
 ## For developers
 
-**vØrk storage** is a distributed, always-encrypted data system built on [Reticulum](https://reticulum.network) (RNS), in Rust, with [Prns](https://github.com/KenAKAFrosty/Prns) as the transport. It combines **IPFS-style content addressing**, **BeFS-style attributes and queries** and **RNS identity and crypto**.
+**vØrk storage** is a distributed, always-encrypted data system on the vØrk network, in Rust. It combines **IPFS-style content addressing**, **BeFS-style attributes and queries** and **identity-addressed networking** (the identity and crypto it took from Reticulum, kept byte for byte).
 
-It has no files as such: it has **records** (a stable ID, attributes and encrypted data blocks) and a **database**. Applications use it directly through a native API (records, attributes, queries, history; no paths), the way apps attach to a shared Reticulum instance. A file tree is one view of that database, for software that needs one.
+It has no files as such: it has **records** (a stable ID, attributes and encrypted data blocks) and a **database**. Applications use it directly through a native API (records, attributes, queries, history; no paths), the way apps attach to the vØrk node. A file tree is one view of that database, for software that needs one.
 
 ### The shift
 
@@ -73,9 +73,9 @@ It has no files as such: it has **records** (a stable ID, attributes and encrypt
 - **From network dependence to independence**: the network is for syncing, not a prerequisite (local-first).
 - **From machine to person**: the computer is hardware, and you are your key.
 
-### Why Reticulum
+### Why a network like this
 
-| Reticulum | vØrk storage |
+| The network (Reticulum, then vØrk) | vØrk storage |
 |---|---|
 | No IP addresses, only identities | No file paths, only records and libraries |
 | No central address allocation | No central server or owner |
@@ -130,10 +130,10 @@ See the [vision](00-vision.md).
 | Content layer | Per-chunk encryption, placement and repair, leases and storage proofs, three copies (one at another site) | prototype works |
 | Database | Records and queries, multi-writer commit chains merged as a CRDT, Prolly-tree state and checkpoints, keep rules, blind index | prototype works |
 | Identity and permissions | Grants (also limited by key and time), revokes with key rotation, invitations, shares, contacts | prototype works; recovery kit and YubiKey next |
-| Linux | `vorkd` as a user service, FUSE mount with xattrs and query folders, local web gateway, `.deb` packages | prototype works |
+| Linux | the vØrk node as a system service and `vorkd` as a user service, FUSE mount with xattrs and query folders, local web gateway, `.deb` packages | prototype works |
 | Windows | Explorer folder (Cloud Files: placeholders fetched on open), installer | prototype works |
 | Haiku | Libraries as volumes with native attributes and live queries in Tracker, packages | prototype works |
-| Android | `vorkd` inside an app, on Prns's shared instance | prototype works |
+| Android | `vorkd` and the vØrk node inside an app | prototype works on Reticulum; on vØrk, not yet tried on a device |
 
 See the [prototype plan](05-prototype-plan.md).
 

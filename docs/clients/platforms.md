@@ -1,13 +1,15 @@
 # vØrk storage on every platform
 
-One vØrk storage (the same Rust daemon, `vorkd`, and the same transport, Prns) and one shared core (`core/`), with a native front end per platform (the user's choice, 2026-10-21: no webview). This is where each platform stands and what's next (2026-10-30).
+One vØrk storage (the same Rust daemon, `vorkd`) on the vØrk node of each device, and one shared core (`clients/core/`), with a native front end per platform (the user's choice, 2026-10-21: no webview). This is where each platform stands and what's next.
 
-| | Daemon | Reticulum | Utility | Files | Packaging |
+| | Storage | Network | Utility | Files | Packaging |
 |---|---|---|---|---|---|
-| **Linux** | runs (amd64, arm64) | Prns (prnsd), or the machine's rnsd | GTK 4 / libadwaita, tray (StatusNotifierItem) | FUSE mount | .deb (vØrk storage amd64+arm64, utility amd64) |
-| **Windows** | runs | Prns (prnsd-managed), or another shared instance | Win32, notification area | Cloud Files | vork-setup.exe (per user) |
-| **Android** | runs (phone, arm64; emulator, x86_64) | Prns's app (`org.personal.hopspot`), or another app's shared instance (Columba, Sideband) | Kotlin + Compose, foreground service | — (DocumentsProvider planned) | debug APK (`android/build-apk.ps1`) |
-| **Haiku** | runs (x86_64, native build) | the Prns package (prnsd-haiku: prnsd, its app and Deskbar icon) | Haiku API (BeAPI) window, Deskbar replicant | userlandfs module (vork-haikufs): attributes, queries | hpkg (`haiku/package.sh`), system package |
+| **Linux** | runs (amd64, arm64) | the vØrk node: a system service (.deb), or a user unit (`packaging/systemd/vork.service`) | GTK 4 / libadwaita, tray (StatusNotifierItem) | FUSE mount | .deb (vork amd64+arm64, utility amd64), Flatpak (utility) |
+| **Windows** | runs | the vØrk node, started and kept running by the utility | Win32, notification area | Cloud Files | vork-setup.exe (per user) |
+| **Android** | runs (phone, arm64; emulator, x86_64) | the vØrk node inside the app (`libvork.so`, run by the foreground service) | Kotlin + Compose, foreground service | — (DocumentsProvider planned) | debug APK (`clients/android/build-apk.ps1`) |
+| **Haiku** | runs (x86_64, native build) | the vØrk node, a launch_daemon job of the vork package | Haiku API (BeAPI) window, Deskbar replicant | userlandfs module (vork-haikufs): attributes, queries | hpkg (`clients/haiku/package.sh`), system package |
+
+**Off Reticulum (2026-11-18).** Every client now shows the vØrk node and its connections instead of Reticulum's: the node's address and uptime, the connections from `peers` in its `vork.toml` (another node's `host:port`, its key asked for on first contact, or `host:port@key`) and the neighbors that found it. Adding one writes it to `vork.toml` and dials it at once through the control socket. No package needs Prns or a shared instance any more. Not yet tried on a device: the Android app's node (the node and core type-check for `aarch64-linux-android`; the JNI crate still takes the retifs Contacts and Calendar cores and is built outside the workspace), the Haiku package, and the Flatpak's access to the host node. The sections below are the history up to then.
 
 ## Linux
 Done: the `vork` .deb for amd64 and arm64 (glibc 2.36+: Debian 12, Ubuntu 22.04, Raspberry Pi OS bookworm), vorkd started once Reticulum (Prns, installed apart) is up; the utility's .deb for amd64 (GTK 4.12+, libadwaita 1.4+: Debian 13, Ubuntu 24.04), in the tray from login.

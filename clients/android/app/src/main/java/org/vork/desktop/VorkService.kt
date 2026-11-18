@@ -15,13 +15,14 @@ import org.json.JSONObject
 import java.io.File
 
 /**
- * Keeps vorkd running (a program from the app's native libraries),
- * restarted if it stops. Reticulum is Prns's app (or another one with a
- * shared instance): vorkd joins it once it's up, as on the desktop. Its notification is Android's
+ * Keeps the vØrk node and vorkd running (programs from the app's native
+ * libraries), each restarted if it stops; vorkd starts once the node
+ * answers, and reconnects to it by itself. Its notification is Android's
  * tray: the same state as the desktop icon, with Open and Stop.
  */
 class VorkService : Service() {
     private var vorkd: Process? = null
+    private var node: Process? = null
     @Volatile private var running = false
     /** Wakes the supervisor before its next round (Restart). */
     private val wake = java.util.concurrent.Semaphore(0)
@@ -78,6 +79,11 @@ class VorkService : Service() {
         supervisor?.interrupt()
         watcher?.interrupt()
         vorkd?.destroy()
+        // The node after vorkd, which may still be saying goodbye through it.
+        Thread {
+            vorkd?.waitFor()
+            node?.destroy()
+        }.start()
         super.onDestroy()
     }
 
@@ -87,6 +93,9 @@ class VorkService : Service() {
             .apply {
                 environment()["HOME"] = p.home.absolutePath
                 environment()["VORK_STORE"] = p.store.absolutePath
+                environment()["VORK_CONFIG"] = p.nodeConfig.absolutePath
+                environment()["VORK_API"] = File(p.node, "state/api.sock").absolutePath
+                environment()["VORK_CONTROL"] = File(p.node, "state/control.sock").absolutePath
                 redirectErrorStream(true)
                 redirectOutput(ProcessBuilder.Redirect.appendTo(File(p.logs, "$name.log")))
             }
@@ -109,7 +118,6 @@ class VorkService : Service() {
         val p = Core.Paths(this)
         var firstStart = true
         var booksAt = System.currentTimeMillis()
-        var downs = 0
         while (running) {
             try {
                 // A library that came (or went) with contacts: its address book, hourly.
@@ -117,18 +125,17 @@ class VorkService : Service() {
                     booksAt = System.currentTimeMillis()
                     Accounts.syncContacts(this)
                 }
-                // At boot vork may come before Prns: vorkd starts once the
-                // shared instance is up (it can't join one that isn't).
-                val up = Core.sharedInstanceUp()
-                // Reticulum went away and came back (Prns restarted): vorkd
-                // doesn't attach to a new shared instance by itself. Away for
-                // two checks running: one missed check is a busy phone.
-                if (up && downs >= 2 && vorkd?.isAlive == true) {
-                    restarting = true
-                    vorkd?.destroy()
-                    vorkd?.waitFor()
+                // The node first: its settings and identity made once, then
+                // run (restarted if it stops).
+                if (node?.isAlive != true) {
+                    if (!p.nodeConfig.exists()) {
+                        p.node.mkdirs()
+                        start(p.vork, "node-init", "init", "--config", p.nodeConfig.absolutePath).waitFor()
+                    }
+                    node = start(p.vork, "node", "run", "--config", p.nodeConfig.absolutePath)
                 }
-                downs = if (up) 0 else downs + 1
+                // vorkd once the node answers (it reconnects by itself later).
+                val up = Core.nodeUp()
                 // Stopped by itself (not by Restart): why, for the app to show.
                 vorkd?.let { old ->
                     if (!old.isAlive && !restarting) lastExit = "exit code ${old.exitValue()}" + logTail(File(p.logs, "vorkd.log")).let { if (it.isEmpty()) "" else ":\n$it" }
@@ -140,10 +147,10 @@ class VorkService : Service() {
                     firstStart = false
                 }
                 daemonAlive = vorkd?.isAlive == true
-                waitingForReticulum = !up
+                waitingForNode = !up
                 when {
                     up -> update()
-                    else -> update("waiting for Reticulum")
+                    else -> update("waiting for the vØrk node")
                 }
                 wake.tryAcquire(if (vorkd?.isAlive == true) 15_000L else 3_000L, java.util.concurrent.TimeUnit.MILLISECONDS)
                 wake.drainPermits()
@@ -270,8 +277,8 @@ class VorkService : Service() {
 
         /** Whether vorkd's process runs (it may not answer yet: starting). */
         @Volatile var daemonAlive = false
-        /** Waiting for Reticulum before vorkd can start. */
-        @Volatile var waitingForReticulum = false
+        /** Waiting for the vØrk node before vorkd can start. */
+        @Volatile var waitingForNode = false
         /** Why vorkd last stopped by itself: its exit and last log lines. */
         @Volatile var lastExit: String? = null
         @Volatile private var restarting = false

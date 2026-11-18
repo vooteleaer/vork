@@ -4,20 +4,16 @@ Everything the apps do goes through `vorkd`'s local API ([native API](07-api.md)
 
 ## Installing
 
-vØrk storage runs on Linux, Windows and Haiku. The daemon, `vorkd`, attaches to the machine's Reticulum shared instance, so start [prnsd](https://github.com/KenAKAFrosty/Prns) (or Python `rnsd`) first. vØrk storage never brings its own.
+vØrk storage runs on Linux, Windows, Android and Haiku. The daemon, `vorkd`, attaches to the machine's vØrk node through its local API (`/var/lib/vork/api.sock` for the system node, else `~/.local/state/vork/api.sock`; `VORK_API` names another), and reconnects by itself when the node restarts. Every package below brings the node.
 
-**Debian, Ubuntu, Raspberry Pi OS (amd64, arm64):** install a `vork_*.deb` (built by `packaging/deb/build-deb.sh`) with `sudo apt install ./vork_*.deb`. It starts `vorkd` in every user's session once Reticulum is up; see `/usr/share/doc/vork/README.Debian`. It needs glibc 2.31 or newer: Debian 11, Ubuntu 20.04 and 22.04, elementary OS 6 and 7, Raspberry Pi OS bullseye and later. The GTK apps (vork-desktop, Photos, Map, Contacts, Calendar) as .deb need GTK 4.12 and libadwaita 1.4 (Debian 13, Ubuntu 24.04); on older systems use their Flatpaks.
+**Debian, Ubuntu, Raspberry Pi OS (amd64, arm64):** install a `vork_*.deb` (built by `packaging/deb/build-deb.sh`) with `sudo apt install ./vork_*.deb`. It runs the vØrk node as a system service (`vork status`) and starts `vorkd` in every user's session; see `/usr/share/doc/vork/README.Debian`. It needs glibc 2.31 or newer: Debian 11, Ubuntu 20.04 and 22.04, elementary OS 6 and 7, Raspberry Pi OS bullseye and later. The GTK apps (vork-desktop, Photos, Map, Contacts, Calendar) as .deb need GTK 4.12 and libadwaita 1.4 (Debian 13, Ubuntu 24.04); on older systems use their Flatpaks.
 
-**Windows 10 and 11:** run `vork-setup-*.exe` (built by `packaging\windows\build-setup.ps1`). It installs for the current user, no administrator needed: the programs in `%LOCALAPPDATA%\Programs\vork`, `vork` on the PATH, and a utility in the notification area, started at login, which starts `vorkd` once Reticulum is up. Uninstall from Apps & features; your data stays.
+**Windows 10 and 11:** run `vork-setup-*.exe` (built by `packaging\windows\build-setup.ps1`). It installs for the current user, no administrator needed: the programs in `%LOCALAPPDATA%\Programs\vork`, `vork` on the PATH, and a utility in the notification area, started at login, which starts the vØrk node and `vorkd` on it. Uninstall from Apps & features; your data stays.
 
-**From source:** vØrk storage builds against Prns 0.3.8, which isn't on crates.io yet. Check it out next to vØrk storage (Cargo can't fetch the Prns repository on Windows: its paths are too long):
-
-```sh
-git clone https://github.com/KenAKAFrosty/Prns.git Prns-0.3.8
-git -C Prns-0.3.8 checkout v0.3.8-hotfix.1
-```
+**From source:**
 
 ```sh
+cargo install --path .                     # vork: the vØrk node (vork init, vork run)
 cargo install --path crates/vork-storage-node      # vorkd and the vork CLI
 cargo install --path crates/vork-fuse      # vork-mount (needs fuse3)
 cargo install --path crates/vork-gateway   # vork-gateway
@@ -57,7 +53,7 @@ vork mount photos --via home # a library your home node holds, nothing of it kep
 - **Haiku:** each library is a volume in `~/vork`, with its attributes as Haiku attributes and live queries in Tracker.
 - Photos in albums also show under `Albums/<album>/`: the same files, and deleting one there only takes it out of the album.
 
-As websites, one origin per library, read-only: `systemctl --user enable --now vork-gateway`, then open <http://localhost:8740/>. The same gateway opens NomadNet nodes over Reticulum: `http://nn-<address>.localhost:8740/` (the node's 32 hex digits), its pages rendered from micron; `vork nomadnet <address> [/page/x.mu]` prints a page's micron.
+As websites, one origin per library, read-only: `systemctl --user enable --now vork-gateway`, then open <http://localhost:8740/>.
 
 ## Attributes from what's in files
 
@@ -93,7 +89,7 @@ Every file has three copies by default, yours and two on nearby nodes (encrypted
 
 ## When something goes wrong
 
-Each node keeps its last output in `<store>/crash/log`. It writes a report when it panics, when it finds that its last run didn't stop cleanly, and when Reticulum has been unreachable for five minutes. Join a library named `vork-crashlogs` with a write grant on each of your devices, and the reports go there as `/<device>/<time>-<kind>-<source>.txt`, readable from any of them ([ADR-0036](adr/0036-crash-reports.md)). Crashes of the Android apps go there too.
+Each node keeps its last output in `<store>/crash/log`. It writes a report when it panics and when it finds that its last run didn't stop cleanly. Join a library named `vork-crashlogs` with a write grant on each of your devices, and the reports go there as `/<device>/<time>-<kind>-<source>.txt`, readable from any of them ([ADR-0036](adr/0036-crash-reports.md)). Crashes of the Android apps go there too.
 
 - `vork report "Music stopped while playing"` adds your own report, with the daemon's last output.
 - `vork query vork-crashlogs device=tablet` lists one device's reports.

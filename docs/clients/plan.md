@@ -26,7 +26,7 @@ Native widgets on each platform (the user's choice, 2026-10-21: no webview), ove
 - **Haiku:** a BeAPI app; Tracker already shows attributes.
 - The tray: StatusNotifierItem on Linux (KDE natively, GNOME with the AppIndicator extension; built 2026-10-29), the notification area on Windows.
 - `libvork` comes from the vØrk storage repo (a path or git dependency).
-- **Android: other apps' access.** vorkd's sockets are in this app's private files, out of other apps' reach, so this app connects for them (as Prns's hub hands out Reticulum connections): an app (vØrk storage Photos, vØrk storage Map) binds `AccessService` (action `org.retifs.action.ACCESS`) and gets a connection already past its `Hello`. The user lets an app in once (`AccessActivity`, action `org.retifs.action.LET_IN`, started for a result): the libraries it may use, ticked by purpose (vØrk storage ADR-0032) or generic, and whether it may change them. That makes it an app with its own token (vØrk storage ADR-0004, named `android:<package>`), which stays in this app: the other app never holds it, and vorkd checks every request against it. An app is known by its package and signing certificate. Started again, the same dialog changes or removes its access.
+- **Android: other apps' access.** vorkd's sockets are in this app's private files, out of other apps' reach, so this app connects for them (as a hub hands out connections): an app (vØrk storage Photos, vØrk storage Map) binds `AccessService` (action `org.retifs.action.ACCESS`) and gets a connection already past its `Hello`. The user lets an app in once (`AccessActivity`, action `org.retifs.action.LET_IN`, started for a result): the libraries it may use, ticked by purpose (vØrk storage ADR-0032) or generic, and whether it may change them. That makes it an app with its own token (vØrk storage ADR-0004, named `android:<package>`), which stays in this app: the other app never holds it, and vorkd checks every request against it. An app is known by its package and signing certificate. Started again, the same dialog changes or removes its access.
 
 ## Views
 | View | Shows | Local API today |
@@ -71,6 +71,7 @@ Each one is usable on its own.
 9. **Mounts and the context menu:** the file tree on/off per library; Share with vØrk storage… in Nautilus/Dolphin, and in Explorer with the Cloud Files provider.
 10. **Packaging:** a .deb (Linux, `packaging/build-deb.sh`, needs the vØrk storage package), Windows with vØrk storage's installer; start at login.
 11. **This device** (2026-10-29, for testers): Reticulum and its connections through prnsd's own command line (status, add a TCP connection, switch on and off, remove), the user services, and the settings in `vork.toml` (edited in place, the daemon restarted).
+12. **The vØrk node** (2026-11-18): in place of Reticulum, the node and its connections through its control socket (status; a connection by `host:port`, written to the node's `vork.toml` and dialed at once; switch off, remove). The Windows utility, the Haiku package and the Android app run the node themselves; on Linux it's a system service from the .deb.
 
 ## Open
 - Whether the utility also manages a node over `--via` (a headless home server from the laptop).

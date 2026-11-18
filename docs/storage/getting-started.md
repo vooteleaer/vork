@@ -4,30 +4,24 @@ This walks you through trying vØrk storage on two of your own devices, then the
 
 You'll need two devices: a computer (Windows or Linux) and a phone (Android), or two computers. Haiku works too.
 
-## 1. Reticulum first
+## 1. The network
 
-vØrk storage runs on [Reticulum](https://reticulum.network) and joins the device's Reticulum *shared instance*; it never brings its own. Any Reticulum implementation with a shared instance will do; start one on each device. Ones that have been used with vØrk storage:
-
-- **Linux, Windows, macOS:** the reference implementation's `rnsd` (`pip install rns`), or `prnsd` from [Prns](https://github.com/KenAKAFrosty/Prns/releases/tag/v0.3.8) (Debian packages: [Prns packages for vØrk storage](https://github.com/vooteleaer/Prns/releases), a fork's build until Prns publishes its own).
-- **Android:** a Reticulum app that runs a shared instance, e.g. Prns's Android app (`personal-hopspot-*.apk` from the [Prns packages for vØrk storage](https://github.com/vooteleaer/Prns/releases), a development build). Sideband or Columba may also work, but haven't been tried.
-- **Haiku:** the `prns` package from the same release; it starts at login.
-
-The two devices must reach each other over Reticulum: on the same network they find each other by themselves (AutoInterface); otherwise give both the same TCP interface to a hub in their Reticulum config.
+vØrk storage runs on vØrk: every install brings a vØrk node, and the node starts with the device. Two nodes reach each other once one knows the other's address: give one of them the other's `host:port` (UDP 51820 by default) on the utility's network page, or in `peers` of the node's `vork.toml`. Its key is asked for on first contact. A node behind a router needs that port forwarded for nodes outside the network to reach it; a node that can't be reached still reaches out, and others relay for it.
 
 ## 2. Install vØrk storage
 
-From the [release](https://github.com/vooteleaer/retifs/releases):
+From the [release](https://github.com/vooteleaer/vork/releases):
 
 - **Windows 10/11:** run `vork-setup-*.exe`. It installs for you only (no administrator) and puts the vØrk storage utility in the notification area.
 - **Debian, Ubuntu, Raspberry Pi OS, elementary OS:** `sudo apt install ./vork_*.deb` (vØrk storage itself, with your libraries as folders in `~/vork`; Debian 11, Ubuntu 20.04 and newer).
   - The apps (the utility, Photos, Map, Contacts, Calendar) on Debian 13 or Ubuntu 24.04 and newer: their `.deb`s (`vork-desktop_*.deb` and so on).
   - On older systems (elementary OS 7, Ubuntu 22.04) or any other distribution: their Flatpaks, `flatpak install --user ./org.vork.Desktop-*.flatpak` (and `org.vork.Photos`, `.Map`, `.Contacts`, `.Calendar`). They use the vØrk storage the `.deb` installed.
-- **Android:** install `vork-android-*.apk` (allow installing from your browser or file manager). Open it once: it starts vØrk storage and stays running.
-- **Haiku:** `pkgman install` the `prns` and `vork` packages (or open them in Tracker), then restart.
+- **Android:** install `vork-android-*.apk` (allow installing from your browser or file manager). Open it once: it starts its vØrk node and vØrk storage, and stays running.
+- **Haiku:** `pkgman install` the `vork` package (or open it in Tracker), then restart.
 
 Every install also joins the library **vork-installers** by itself (nothing of it is fetched until you open it): new versions of vØrk storage and the apps arrive there, through vØrk storage. Leave it if you don't want it; it isn't joined again.
 
-Open the utility (the tray icon, or the vØrk storage app). It should say vØrk storage is running and show this device. If it waits for Reticulum, check step 1.
+Open the utility (the tray icon, or the vØrk storage app). It should say vØrk storage is running and show this device. If it waits for the vØrk node, start it: `sudo systemctl start vork` on Linux; on the others the utility starts it.
 
 ## 3. Your first library
 
