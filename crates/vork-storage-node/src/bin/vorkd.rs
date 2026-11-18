@@ -48,7 +48,6 @@ use libvork::{
     Request, Response, Status, TxStep,
     PROTOCOL_VERSION,
 };
-use personal_rns::prelude::*;
 use vork_core::{
     channel::{key_id, ChannelAddr, ChannelKey, Commit, Head, NsId},
     index,
@@ -64,12 +63,12 @@ use vork_core::{
     share,
     open, ChunkToken, Cid, ConvergenceSecret, FileRef,
 };
-use personal_rns::node_introspection::DestinationIdentityQuery;
-use personal_rns::routing::request_handlers::{RequestPathHash, RequestPolicy};
-use personal_rns::routing::links::LinkId;
+use vork_storage_net::endpoints::{dispatch, Decline, Incoming, NodeApi, RequestContext, RequestEndpoint, RequestEndpointPolicy, RespondToken};
+use vork_storage_net::node::{Net, NetEvent};
+use vork_storage_net::transport::LinkId;
 use vork_storage_net::{
     fetch::{fetch_file, FetchOpts},
-    node::{self, attach, destination_hex, load_or_create_identity, parse_destination},
+    node::{self, destination_hex, load_or_create_identity, parse_destination},
     protocol::{
         decode_lease_request, decode_lease_status, decode_lease_statuses, decode_prove, decode_prove_reply,
         decode_receipt_replies, decode_receipt_request, encode_receipt_replies, encode_receipt_request, MAX_BUNDLE,
@@ -80,7 +79,7 @@ use vork_storage_net::{
         READER_ENDPOINT, MAX_READER_PROOFS, GET_ITEM, encode_request,
     },
     seek::{pull_round, seek_round},
-    transport::{PrnsTransport, Transport},
+    transport::{Transport, VorkTransport},
 };
 use vork_store::{tier, Accept, MadeInvite, OwnLease, PeerId, ProofState, Want};
 use tokio::sync::{mpsc, Notify};
@@ -112,7 +111,7 @@ impl RequestEndpoint<Arc<Shared>> for QueryEndpoint {
     const ENDPOINT_ID: &'static str = QUERY_ENDPOINT;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
-    async fn handle(mut context: RequestContext<'_, Arc<Shared>>, _node: &impl PrnsNodeApi) -> Result<(), Decline> {
+    async fn handle(mut context: RequestContext<'_, Arc<Shared>>, _node: &impl NodeApi) -> Result<(), Decline> {
         let data = context.data;
         let n = data.len().saturating_sub(48) / 16;
         if data.len() < 64 || !(data.len() - 48).is_multiple_of(16) || n > MAX_QUERY_TOKENS {
@@ -202,7 +201,7 @@ impl RequestEndpoint<Arc<Shared>> for ApiEndpoint {
     const ENDPOINT_ID: &'static str = API_ENDPOINT;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
-    async fn handle(context: RequestContext<'_, Arc<Shared>>, _node: &impl PrnsNodeApi) -> Result<(), Decline> {
+    async fn handle(context: RequestContext<'_, Arc<Shared>>, _node: &impl NodeApi) -> Result<(), Decline> {
         let call = ApiCall {
             requester: context.requester.map(|r| *r.as_bytes()),
             body: context.data.to_vec(),
@@ -228,7 +227,7 @@ impl RequestEndpoint<Arc<Shared>> for InviteEndpoint {
     const ENDPOINT_ID: &'static str = INVITE_ENDPOINT;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
-    async fn handle(context: RequestContext<'_, Arc<Shared>>, _node: &impl PrnsNodeApi) -> Result<(), Decline> {
+    async fn handle(context: RequestContext<'_, Arc<Shared>>, _node: &impl NodeApi) -> Result<(), Decline> {
         let token = context.respond_token();
         let call = InviteCall { link_id: token.link_id.as_bytes().to_vec(), body: context.data.to_vec(), token };
         let _ = context.state.invites.send(call);
@@ -246,7 +245,7 @@ impl RequestEndpoint<Arc<Shared>> for ReaderEndpoint {
     const ENDPOINT_ID: &'static str = READER_ENDPOINT;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
-    async fn handle(mut context: RequestContext<'_, Arc<Shared>>, _node: &impl PrnsNodeApi) -> Result<(), Decline> {
+    async fn handle(mut context: RequestContext<'_, Arc<Shared>>, _node: &impl NodeApi) -> Result<(), Decline> {
         let data = context.data;
         if data.len() < 16 + GET_ITEM || !(data.len() - 16).is_multiple_of(GET_ITEM) || (data.len() - 16) / GET_ITEM > MAX_READER_PROOFS {
             return Err(Decline::Ignore);
@@ -359,7 +358,7 @@ impl RequestEndpoint<Arc<Shared>> for Get {
     /// published chunks need no proof. Anything else gets the same answer as
     /// "don't have" (holder privacy, ADR-0010). Fetched/cached chunks are never
     /// in the serving index, so they're never served.
-    async fn handle(mut context: RequestContext<'_, Arc<Shared>>, _node: &impl PrnsNodeApi) -> Result<(), Decline> {
+    async fn handle(mut context: RequestContext<'_, Arc<Shared>>, _node: &impl NodeApi) -> Result<(), Decline> {
         let nonce = context.respond_token().link_id.as_bytes().to_vec();
         match vork_storage_net::serve::answer_get(&StoreHoldings(&context.state.store), &nonce, context.data) {
             Ok(answer) => context.respond(answer),
@@ -396,7 +395,7 @@ impl RequestEndpoint<Arc<Shared>> for Have {
     const ENDPOINT_ID: &'static str = HAVE_ENDPOINT;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
-    async fn handle(mut context: RequestContext<'_, Arc<Shared>>, _node: &impl PrnsNodeApi) -> Result<(), Decline> {
+    async fn handle(mut context: RequestContext<'_, Arc<Shared>>, _node: &impl NodeApi) -> Result<(), Decline> {
         let nonce = context.respond_token().link_id.as_bytes().to_vec();
         match vork_storage_net::serve::answer_have(&StoreHoldings(&context.state.store), &nonce, context.data) {
             Ok(answer) => context.respond(answer),
@@ -412,7 +411,7 @@ impl RequestEndpoint<Arc<Shared>> for LeaseEndpoint {
     const ENDPOINT_ID: &'static str = LEASE_ENDPOINT;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
-    async fn handle(mut context: RequestContext<'_, Arc<Shared>>, _node: &impl PrnsNodeApi) -> Result<(), Decline> {
+    async fn handle(mut context: RequestContext<'_, Arc<Shared>>, _node: &impl NodeApi) -> Result<(), Decline> {
         let s = context.state.clone();
         let renew = |r: &Renewal| match s.store.held_lease(&r.id) {
             Ok(Some(_)) if s.store.renew_lease(r).unwrap_or(false) => LeaseStatus::Accepted,
@@ -452,7 +451,7 @@ impl RequestEndpoint<Arc<Shared>> for ReceiptEndpoint {
     const ENDPOINT_ID: &'static str = RECEIPT_ENDPOINT;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
-    async fn handle(mut context: RequestContext<'_, Arc<Shared>>, _node: &impl PrnsNodeApi) -> Result<(), Decline> {
+    async fn handle(mut context: RequestContext<'_, Arc<Shared>>, _node: &impl NodeApi) -> Result<(), Decline> {
         let Ok(ids) = decode_receipt_request(context.data) else {
             return Err(Decline::Ignore);
         };
@@ -475,7 +474,7 @@ impl RequestEndpoint<Arc<Shared>> for ProveEndpoint {
     const ENDPOINT_ID: &'static str = PROVE_ENDPOINT;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
-    async fn handle(mut context: RequestContext<'_, Arc<Shared>>, _node: &impl PrnsNodeApi) -> Result<(), Decline> {
+    async fn handle(mut context: RequestContext<'_, Arc<Shared>>, _node: &impl NodeApi) -> Result<(), Decline> {
         let Ok((id, nonce, indices)) = decode_prove(context.data) else {
             return Err(Decline::Ignore);
         };
@@ -495,7 +494,7 @@ impl RequestEndpoint<Arc<Shared>> for PutEndpoint {
     const ENDPOINT_ID: &'static str = PUT_ENDPOINT;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
-    async fn handle(mut context: RequestContext<'_, Arc<Shared>>, _node: &impl PrnsNodeApi) -> Result<(), Decline> {
+    async fn handle(mut context: RequestContext<'_, Arc<Shared>>, _node: &impl NodeApi) -> Result<(), Decline> {
         let Ok((id, chunks)) = decode_put(context.data) else {
             return Err(Decline::Ignore);
         };
@@ -533,7 +532,7 @@ impl RequestEndpoint<Arc<Shared>> for HeadEndpoint {
     const ENDPOINT_ID: &'static str = HEAD_ENDPOINT;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
-    async fn handle(mut context: RequestContext<'_, Arc<Shared>>, _node: &impl PrnsNodeApi) -> Result<(), Decline> {
+    async fn handle(mut context: RequestContext<'_, Arc<Shared>>, _node: &impl NodeApi) -> Result<(), Decline> {
         let store = &context.state.store;
         let head = match context.data.len() {
             16 => store.head_for(context.data.try_into().unwrap()).ok().flatten().unwrap_or_default(),
@@ -1084,7 +1083,7 @@ fn close_store(mut store: Arc<SlabStore>) {
 
 struct Daemon {
     store: Arc<SlabStore>,
-    transport: PrnsTransport,
+    transport: VorkTransport,
     node_hex: String,
     /// Wakes the seeker (new want).
     wake: Arc<Notify>,
@@ -2080,7 +2079,7 @@ impl Daemon {
         // never did). So a failed path check doesn't stop the attempt: the
         // link request goes to the shared instance, which routes it.
         let path = t.ensure_path(dest).await;
-        let attempt = |t: &PrnsTransport| {
+        let attempt = |t: &VorkTransport| {
             let t = t.clone();
             async move {
                 tokio::time::timeout(Duration::from_secs(90), t.link_with_rtt(dest))
@@ -2229,16 +2228,31 @@ impl Daemon {
 }
 
 async fn serve(store: Arc<SlabStore>, identity: node::IdentitySecret, endpoint: String, args: Args) {
-    let identity_bytes: [u8; 64] = identity[..].try_into().expect("RNS identity secrets are 64 bytes");
-    let lib_dest = node::library_destination(identity.clone());
-    let lib_hash = lib_dest.destination_hash().expect("valid destination");
-    let keyring_dest = node::keyring_destination(identity.clone());
-    let keyring_hash = keyring_dest.destination_hash().expect("valid destination");
-    let dest = node::destination_announcing(identity, true, args.announce_s, args.site.as_deref().map(vork_core::announce::site_tag), args.hold_limit != Some(0));
+    let identity_bytes: [u8; 64] = identity;
+    // On the machine's vØrk node (ADR-0022), waited for if it isn't running yet.
+    libvork::set_starting(&args.store, "joining vØrk", None, now_ms());
+    let api_endpoint = vork_api::default_endpoint();
+    let wait_store = args.store.clone();
+    let mut said = false;
+    let (net, mut net_events) = Net::connect(&api_endpoint, move |why| {
+        if !said {
+            eprintln!("{why}; waiting for it");
+            said = true;
+        }
+        libvork::set_starting(&wait_store, "waiting for the vØrk node", None, now_ms());
+    })
+    .await;
+    let dest_hash = net.register(identity, node::NODE_NAME).await.expect("registering retifs.node");
+    let lib_hash = net.register(identity, node::LIBRARY_NAME).await.expect("registering retifs.library");
+    let keyring_hash = net.register(identity, node::KEYRING_NAME).await.expect("registering retifs.keyring");
+    let _ = net.announce(
+        dest_hash,
+        &vork_core::announce::node_app_data(args.announce_s, args.site.as_deref().map(vork_core::announce::site_tag), args.hold_limit != Some(0)),
+    );
+    let _ = net.subscribe();
     if let Some(site) = &args.site {
         println!("site: {site} (one copy of this node's files is kept at another site)");
     }
-    let dest_hash = dest.destination_hash().expect("valid destination");
     // Receipts are signed with the node identity and checked against the node's
     // address, so the identity layout must be RNS's (X25519 ‖ Ed25519).
     if node_destination(&lease::identity_public(&identity_bytes)) != *dest_hash.as_bytes() {
@@ -2261,77 +2275,11 @@ async fn serve(store: Arc<SlabStore>, identity: node::IdentitySecret, endpoint: 
     // on the network (found by the overnight soak test).
     let (heard_tx, mut heard_rx) = mpsc::channel::<(PeerId, u8, vork_core::announce::NodeAnnounce)>(4096);
     let (lib_tx, mut lib_rx) = mpsc::channel::<(PeerId, u8, u32, Option<vork_core::announce::LibraryAnnounce>)>(1024);
-    // Optionally a NomadNet node (its own identity and destination) serving a library.
-    let nomadnet = args.nomadnet.as_ref().map(|_| {
-        let id = load_or_create_identity(&store.root().join("nomadnet_identity")).expect("nomadnet identity");
-        let name: &'static [u8] = Box::leak(args.nomadnet_name.clone().into_bytes().into_boxed_slice());
-        nomadnet::destination(id, name)
-    });
-    let nn_hash = nomadnet.as_ref().map(|d| d.destination_hash().expect("valid destination"));
-    let (nn_tx, nn_rx) = mpsc::unbounded_channel::<(RequestPathHash, RespondToken)>();
-    let mut destinations = vec![dest, lib_dest, keyring_dest];
     let (keyring_tx, mut keyring_rx) = mpsc::channel::<(PeerId, [u8; 16])>(1024);
-    destinations.extend(nomadnet);
-    let node = PrnsNode::new(PrnsNodeRecipe {
-        transport_identity: None,
-        pre_configured_destinations: destinations,
-        app_state: shared.clone(),
-        storage: GrowableHeap,
-        request_endpoints: request_endpoints![Get, Have, LeaseEndpoint, ReceiptEndpoint, ProveEndpoint, PutEndpoint, HeadEndpoint, ApiEndpoint, QueryEndpoint, InviteEndpoint, ReaderEndpoint],
-        on_event: move |event, _state| {
-            match event {
-                PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, hops, app_data, .. }) => {
-                    // Perhaps a node keeping someone's keyring (ADR-0033): a 16-byte tag.
-                    if let Ok(tag) = <[u8; 16]>::try_from(&app_data[..]) {
-                        let _ = keyring_tx.try_send((*destination.as_bytes(), tag));
-                    }
-                    match vork_core::announce::library_announce(app_data) {
-                        Some((v, lib)) => {
-                            let _ = lib_tx.try_send((*destination.as_bytes(), hops, v, lib));
-                        }
-                        None => {
-                            let _ = heard_tx.try_send((*destination.as_bytes(), hops, vork_core::announce::node_announce(app_data)));
-                        }
-                    }
-                }
-                // Page requests to the NomadNet destination (dynamically registered paths).
-                PrnsEvent::Message(Message::Request { destination, link_id, request_id, path_hash, rtt, .. })
-                    if Some(destination) == nn_hash =>
-                {
-                    let _ = nn_tx.send((path_hash, RespondToken { link_id, request_id, rtt }));
-                }
-                _ => {}
-            }
-        },
-        interfaces: ManuallyAttached,
-        persistence: NoPersistence,
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
-    });
-    let handle = node.handle();
-    libvork::set_starting(&args.store, "joining Reticulum", None, now_ms());
-    // No shared instance yet (Reticulum starting after vØrk storage, or stopped):
-    // waited for, saying so, rather than ending (on Android nothing would
-    // start vØrk storage again; elsewhere a restart loop only fills the log).
-    let of = {
-        let mut said = false;
-        loop {
-            match attach(&handle).await {
-                Ok(of) => break of,
-                Err(e) => {
-                    if !said {
-                        eprintln!("{e}; waiting for one (trying every 5 s)");
-                        said = true;
-                    }
-                    libvork::set_starting(&args.store, "waiting for Reticulum (no shared instance yet)", None, now_ms());
-                    tokio::time::sleep(Duration::from_secs(5)).await;
-                }
-            }
-        }
-    };
     libvork::set_starting(&args.store, "starting its services", None, now_ms());
     let daemon = Arc::new(Daemon {
         store: store.clone(),
-        transport: PrnsTransport::new(handle.clone()),
+        transport: VorkTransport::new(net.clone(), dest_hash),
         node_hex: destination_hex(&dest_hash),
         wake: Arc::new(Notify::new()),
         links: Mutex::new(HashMap::new()),
@@ -2391,7 +2339,66 @@ async fn serve(store: Arc<SlabStore>, identity: node::IdentitySecret, endpoint: 
                 .collect(),
         ),
     });
-    println!("attached to shared instance {of}");
+    println!("attached to the vØrk node <{}> at {api_endpoint}", hex(&net.node_address()));
+    // What the node passes on: announces heard, requests to our destinations,
+    // its return after a restart. Answered on a thread of its own.
+    let ev_net = net.clone();
+    let ev_shared = shared.clone();
+    let ev_daemon = daemon.clone();
+    std::thread::Builder::new()
+        .name("network events".into())
+        .stack_size(16 << 20)
+        .spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
+            rt.block_on(async move {
+                while let Some(ev) = net_events.recv().await {
+                    match ev {
+                        NetEvent::Heard { dest, known } => {
+                            let (destination, hops, app_data) = (dest, known.hops, &known.app_data[..]);
+                            // Perhaps a node keeping someone's keyring (ADR-0033): a 16-byte tag.
+                            if let Ok(tag) = <[u8; 16]>::try_from(app_data) {
+                                let _ = keyring_tx.try_send((*destination.as_bytes(), tag));
+                            }
+                            match vork_core::announce::library_announce(app_data) {
+                                Some((v, lib)) => {
+                                    let _ = lib_tx.try_send((*destination.as_bytes(), hops, v, lib));
+                                }
+                                None => {
+                                    let _ = heard_tx.try_send((*destination.as_bytes(), hops, vork_core::announce::node_announce(app_data)));
+                                }
+                            }
+                        }
+                        NetEvent::Incoming { token, session, nonce, requester, path, body, .. } => {
+                            let req = Incoming { token, session, nonce, requester, path, body };
+                            let (n, s) = (&ev_net, &ev_shared);
+                            let served = dispatch::<_, Get>(n, s, &req).await
+                                || dispatch::<_, Have>(n, s, &req).await
+                                || dispatch::<_, LeaseEndpoint>(n, s, &req).await
+                                || dispatch::<_, ReceiptEndpoint>(n, s, &req).await
+                                || dispatch::<_, ProveEndpoint>(n, s, &req).await
+                                || dispatch::<_, PutEndpoint>(n, s, &req).await
+                                || dispatch::<_, HeadEndpoint>(n, s, &req).await
+                                || dispatch::<_, ApiEndpoint>(n, s, &req).await
+                                || dispatch::<_, QueryEndpoint>(n, s, &req).await
+                                || dispatch::<_, InviteEndpoint>(n, s, &req).await
+                                || dispatch::<_, ReaderEndpoint>(n, s, &req).await;
+                            if !served {
+                                n.respond(req.token, vork_api::STATUS_NO_PATH, Vec::new());
+                            }
+                        }
+                        NetEvent::Reconnected => {
+                            // The node restarted: sessions over it are gone; be found again.
+                            println!("the vØrk node is back; destinations registered again");
+                            ev_daemon.links.lock().unwrap().clear();
+                            ev_daemon.lanes.lock().unwrap().clear();
+                            ev_daemon.lib_wake.notify_one();
+                            ev_daemon.ns_wake.notify_one();
+                        }
+                    }
+                }
+            });
+        })
+        .expect("network events thread");
     println!("serving {} chunks as retifs.node <{}>", store.len().unwrap_or(0), daemon.node_hex);
     println!("local API at {endpoint}");
     println!("device name for keep tags and rules: {}", args.device);
@@ -2419,8 +2426,8 @@ async fn serve(store: Arc<SlabStore>, identity: node::IdentitySecret, endpoint: 
             let Some(dest) = parse_destination(&hex(&from)) else { continue };
             let node = match lib.as_ref().and_then(|l| l.node) {
                 Some(n) => n,
-                None => match listener.transport.handle.destination_identity(DestinationIdentityQuery::Destination(dest)).await {
-                    Some(id) => node_destination(id.public.as_bytes()),
+                None => match listener.transport.net.destination_identity(dest).await {
+                    Some(id) => node_destination(&id),
                     None => from,
                 },
             };
@@ -2451,7 +2458,7 @@ async fn serve(store: Arc<SlabStore>, identity: node::IdentitySecret, endpoint: 
     // (All of them every interval, 15 s apart, got every node's library
     // announces blocked, 2026-11-17.)
     let lib_announcer = daemon.clone();
-    let lib_handle = handle.clone();
+    let lib_handle = net.clone();
     let lib_every = Duration::from_secs(args.announce_s.max(60) as u64);
     worker("library announces", async move {
         tokio::time::sleep(Duration::from_secs(20)).await;
@@ -2491,14 +2498,11 @@ async fn serve(store: Arc<SlabStore>, identity: node::IdentitySecret, endpoint: 
                     Err(_) => continue,
                 };
                 let data = vork_core::announce::library_app_data(&lib);
-                let Ok(bytes) = personal_rns::routing::announce::emit::AnnounceAppDataBytes::from_slice(&data) else {
+                if data.len() > 512 {
                     eprintln!("announce {ns}: {} bytes don't fit an announce", data.len());
                     continue;
-                };
-                if lib_handle
-                    .issue(PrnsCommand::AnnounceNow(AnnounceNow { destination: lib_hash, target: AnnounceTarget::AllInterfaces, app_data: AnnounceAppData::Data(bytes) }))
-                    .is_none()
-                {
+                }
+                if lib_handle.announce(lib_hash, &data).is_err() {
                     return;
                 }
                 println!("announced library {ns} as \"{}\" ({} bytes)", lib.name, data.len());
@@ -2512,47 +2516,6 @@ async fn serve(store: Arc<SlabStore>, identity: node::IdentitySecret, endpoint: 
             }
         }
     });
-    // Prns doesn't join a shared instance again once it went away (its
-    // Reticulum app restarted, or was killed on a phone): this node would be
-    // gone from the network until restarted. Watched here: joined again once
-    // it's back, links made over the old one dropped, and announced on it, so
-    // the network finds this node again.
-    let watcher = daemon.clone();
-    let watch_handle = handle.clone();
-    worker("shared instance watch", async move {
-        use personal_rns::interfaces::ConnectionState;
-        // Gone since, and whether that was reported (ADR-0036).
-        let mut gone: Option<(Instant, bool)> = None;
-        loop {
-            tokio::time::sleep(Duration::from_secs(5)).await;
-            let up = watch_handle.interfaces().iter().any(|i| !matches!(i.connection, ConnectionState::Disconnected | ConnectionState::Failed));
-            if up {
-                gone = None;
-                continue;
-            }
-            let (since, reported) = gone.get_or_insert((Instant::now(), false));
-            if !*reported && since.elapsed() >= NO_NETWORK_REPORT_AFTER {
-                *reported = true;
-                eprintln!("the shared instance has been unreachable for {} minutes", NO_NETWORK_REPORT_AFTER.as_secs() / 60);
-                crashlog::write_pending(
-                    "no_network",
-                    "vorkd",
-                    "The Reticulum shared instance has been unreachable for 5 minutes: this node is off the network until it's back.",
-                    true,
-                );
-                CRASH_WAKE.notify_one();
-            }
-            let Ok(of) = attach(&watch_handle).await else { continue };
-            let away = gone.take().map(|(t, _)| t.elapsed().as_secs()).unwrap_or(0);
-            println!("shared instance went away; joined it again after {away} s ({of})");
-            watcher.links.lock().unwrap().clear();
-            watcher.lanes.lock().unwrap().clear();
-            let _ = watch_handle.issue(PrnsCommand::AnnounceNow(AnnounceNow { destination: dest_hash, target: AnnounceTarget::AllInterfaces, app_data: AnnounceAppData::Registered }));
-            watcher.lib_wake.notify_one();
-            watcher.ns_wake.notify_one();
-        }
-    });
-    let daemon_for_nn = daemon.clone();
     tokio::spawn(local_api(endpoint, daemon.clone(), false, Some(args.store.clone())));
     tokio::spawn(local_api(libvork::app_endpoint(&args.store), daemon.clone(), true, None));
     if let Some(p) = &args.app_socket {
@@ -2561,8 +2524,8 @@ async fn serve(store: Arc<SlabStore>, identity: node::IdentitySecret, endpoint: 
         }
         tokio::spawn(local_api(p.to_string_lossy().into_owned(), daemon.clone(), true, None));
     }
-    worker("remote API", api_server(daemon.clone(), handle.clone(), api_rx));
-    worker("invitations", invite_server(daemon.clone(), handle.clone(), invite_rx));
+    worker("remote API", api_server(daemon.clone(), net.clone(), api_rx));
+    worker("invitations", invite_server(daemon.clone(), net.clone(), invite_rx));
     worker("lease puller", lease_puller(daemon.clone(), shared.clone()));
     worker("lease upkeep", lease_upkeep(daemon.clone()));
     worker("follower", follower(daemon.clone()));
@@ -2622,14 +2585,14 @@ async fn serve(store: Arc<SlabStore>, identity: node::IdentitySecret, endpoint: 
                 not_vork.clear(); // a very large network: forget and re-learn
             }
             let dest = parse_destination(&hex(&peer)).expect("destination hash");
-            match watcher.transport.handle.destination_identity(DestinationIdentityQuery::Destination(dest)).await {
+            match watcher.transport.net.destination_identity(dest).await {
                 // It holds nothing for others: not a candidate, and one it was is set aside.
-                Some(id) if node_destination(id.public.as_bytes()) == peer && said.holds_nothing => {
+                Some(id) if node_destination(&id) == peer && said.holds_nothing => {
                     if watcher.store.storage_nodes().map(|n| n.iter().any(|n| n.peer == peer && n.avoid_until_ms < now_ms())).unwrap_or(false) {
                         let _ = watcher.store.avoid_storage_node(&peer, now_ms() + FORGET_SILENT_MS);
                     }
                 }
-                Some(id) if node_destination(id.public.as_bytes()) == peer => {
+                Some(id) if node_destination(&id) == peer => {
                     let known = watcher.store.storage_nodes().map(|n| n.iter().any(|n| n.peer == peer)).unwrap_or(true);
                     if watcher.store.heard_storage_node(&peer, hops, every, said.site, now_ms()).is_ok() && !known {
                         let every = every.map_or("an older node: interval unsaid".to_string(), |s| format!("announces every {s} s"));
@@ -2664,12 +2627,8 @@ async fn serve(store: Arc<SlabStore>, identity: node::IdentitySecret, endpoint: 
         }
     });
 
-    if let (Some(ns), Some(nn)) = (args.nomadnet.clone(), nn_hash) {
-        println!("NomadNet node \"{}\" <{}> serving library {ns}", args.nomadnet_name, destination_hex(&nn));
-        worker("nomadnet", nomadnet::serve(daemon_for_nn.clone(), handle.clone(), nn, ns, args.nomadnet_name.clone(), nn_rx));
-    }
 
-    let keyring_announcer = handle.clone();
+    let keyring_announcer = net.clone();
     let keyring_daemon = daemon.clone();
     let keyring_every = args.announce_s;
     worker("keyring announces", async move {
@@ -2682,9 +2641,7 @@ async fn serve(store: Arc<SlabStore>, identity: node::IdentitySecret, endpoint: 
             tick.tick().await;
             let Some(locator) = keyring_locator(&keyring_daemon) else { continue };
             let tag = locator.tag(&keyring_daemon.node_id);
-            let Ok(bytes) = personal_rns::routing::announce::emit::AnnounceAppDataBytes::from_slice(&tag) else { continue };
-            let cmd = PrnsCommand::AnnounceNow(AnnounceNow { destination: keyring_hash, target: AnnounceTarget::AllInterfaces, app_data: AnnounceAppData::Data(bytes) });
-            if keyring_announcer.issue(cmd).is_none() {
+            if keyring_announcer.announce(keyring_hash, &tag).is_err() {
                 return;
             }
         }
@@ -2701,7 +2658,7 @@ async fn serve(store: Arc<SlabStore>, identity: node::IdentitySecret, endpoint: 
         }
     });
 
-    let announcer = handle.clone();
+    let announcer = net.clone();
     let announce_every = args.announce_s;
     let announce_site = args.site.as_deref().map(vork_core::announce::site_tag);
     let holds = args.hold_limit != Some(0);
@@ -2716,20 +2673,13 @@ async fn serve(store: Arc<SlabStore>, identity: node::IdentitySecret, endpoint: 
             tick.tick().await;
             let room = holds.then(|| offering.room_for_others());
             let data = vork_core::announce::node_app_data_with_room(announce_every, announce_site, holds, room);
-            let app_data = match personal_rns::routing::announce::emit::AnnounceAppDataBytes::from_slice(&data) {
-                Ok(bytes) => AnnounceAppData::Data(bytes),
-                Err(_) => AnnounceAppData::Registered,
-            };
-            let cmd = PrnsCommand::AnnounceNow(AnnounceNow { destination: dest_hash, target: AnnounceTarget::AllInterfaces, app_data });
-            if announcer.issue(cmd).is_none() {
+            if announcer.announce(dest_hash, &data).is_err() {
                 return;
             }
         }
     });
 
-    if let Err(e) = node.run().await {
-        eprintln!("node stopped: {e}");
-    }
+    std::future::pending::<()>().await;
 }
 
 #[cfg(not(windows))]
@@ -2991,20 +2941,20 @@ const REMOTE_MAX_RANGE: u64 = 1 << 20;
 const REMOTE_MAX_WATCH_MS: u64 = 45_000;
 
 /// Answers local API requests from own devices over Links (ADR-0019).
-async fn api_server(d: Arc<Daemon>, handle: PrnsNodeHandle, mut calls: mpsc::UnboundedReceiver<ApiCall>) {
+async fn api_server(d: Arc<Daemon>, handle: Net, mut calls: mpsc::UnboundedReceiver<ApiCall>) {
     while let Some(call) = calls.recv().await {
         let d = d.clone();
         let handle = handle.clone();
         worker("remote request", async move {
             let resp = remote_call(&d, call.requester, &call.body).await.unwrap_or_else(|message| Response::Error { message });
             let bytes = rmp_serde::to_vec_named(&resp).unwrap_or_default();
-            handle.respond_owned_packed(call.token, bytes);
+            handle.respond(call.token.token, vork_api::STATUS_OK, bytes);
         });
     }
 }
 
 /// Answers invitation redemptions (ADR-0020).
-async fn invite_server(d: Arc<Daemon>, handle: PrnsNodeHandle, mut calls: mpsc::UnboundedReceiver<InviteCall>) {
+async fn invite_server(d: Arc<Daemon>, handle: Net, mut calls: mpsc::UnboundedReceiver<InviteCall>) {
     while let Some(call) = calls.recv().await {
         let d = d.clone();
         let handle = handle.clone();
@@ -3016,7 +2966,7 @@ async fn invite_server(d: Arc<Daemon>, handle: PrnsNodeHandle, mut calls: mpsc::
                     [&[1u8][..], e.as_bytes()].concat()
                 }
             };
-            handle.respond_owned_packed(call.token, out);
+            handle.respond(call.token.token, vork_api::STATUS_OK, out);
         });
     }
 }
@@ -5731,8 +5681,8 @@ async fn recovery_restore(d: &Daemon, words: Vec<String>) -> Result<Response, St
         let mut found = None;
         for (dest, tag) in heard {
             let Some(hash) = parse_destination(&hex(&dest)) else { continue };
-            let Some(id) = d.transport.handle.destination_identity(DestinationIdentityQuery::Destination(hash)).await else { continue };
-            let public: [u8; 64] = id.public.as_bytes()[..].try_into().map_err(|_| "an RNS public key is 64 bytes")?;
+            let Some(id) = d.transport.net.destination_identity(hash).await else { continue };
+            let public: [u8; 64] = id;
             let identity_hash: [u8; 16] = <sha2::Sha256 as sha2::Digest>::digest(public)[..16].try_into().expect("16 bytes");
             if keyring_destination_of(&identity_hash) != dest {
                 continue;
@@ -6064,12 +6014,11 @@ async fn fetch_spread(d: &Daemon, root: &Cid, missing: &[(Cid, vork_core::Seed)]
     Ok(progressed)
 }
 
+
 /// Wakes `crash_reports` (a new report).
 static CRASH_WAKE: Notify = Notify::const_new();
 /// Each node's reports kept in the crash library, the newest.
 const CRASH_KEEP: usize = 50;
-/// The shared instance gone this long is reported.
-const NO_NETWORK_REPORT_AFTER: Duration = Duration::from_secs(300);
 
 /// Moves the crash and trouble reports waiting here (see `crashlog`) into
 /// library `lib` once this node has joined it (ADR-0036): never makes the
@@ -8762,7 +8711,7 @@ async fn seek_file(d: &Daemon, file: FileRef, lane_name: &str, doing: &std::sync
                 }
             }
             // The extras are closed however this source's turn ends.
-            struct Extras<'a>(&'a PrnsTransport, Vec<LinkId>);
+            struct Extras<'a>(&'a VorkTransport, Vec<LinkId>);
             impl Drop for Extras<'_> {
                 fn drop(&mut self) {
                     for l in self.1.drain(..) {
@@ -8992,160 +8941,6 @@ fn local_status(store: &SlabStore, file: &FileRef) -> Status {
     status
 }
 
-/// A NomadNet node serving a vØrk storage library (ADR-0016): any node holding a
-/// site (its author, or a follower of its channel) can serve it to unmodified
-/// NomadNet clients, so the site stays reachable while its author is offline.
-mod nomadnet {
-    use super::*;
-
-    /// `nomadnetwork.node`, announced with the node's name as app data, as NomadNet does.
-    pub fn destination(identity: node::IdentitySecret, name: &'static [u8]) -> PreConfiguredDestination<'static> {
-        PreConfiguredDestination::Single {
-            request_endpoints: ServeMyRequestEndpoints::No,
-            resource_strategy: ResourceStrategy::AcceptNone,
-            maximum_request_bytes: Default::default(),
-            app_name: "nomadnetwork",
-            aspects: &["node"],
-            identity,
-            announce_app_data: name,
-            proof: ProofStrategy::ProveAll,
-            link_requests: LinkRequestPolicy::AcceptAll,
-            ratchet: RatchetPolicy::NoRatchets,
-        }
-    }
-
-    /// The NomadNet request path for a record's `path` attribute: `/x.mu` and `/page/x.mu` both serve as `/page/x.mu`.
-    pub fn page_path(path: &str) -> Option<String> {
-        let rel = path.strip_prefix("/page/").or_else(|| path.strip_prefix('/'))?;
-        (rel.ends_with(".mu") && !rel.is_empty()).then(|| format!("/page/{rel}"))
-    }
-
-    fn str_attr<'a>(r: &'a Record, key: &str) -> Option<&'a str> {
-        match r.attrs.get(key) {
-            Some(Value::Str(s)) => Some(s),
-            _ => None,
-        }
-    }
-
-    /// Pages of the library: request path → record.
-    fn pages(store: &SlabStore, ns: &str) -> HashMap<String, Record> {
-        store
-            .records(ns)
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|r| str_attr(&r, "path").and_then(page_path).map(|p| (p, r)))
-            .collect()
-    }
-
-    /// A generated index when the site has none: one micron link per page.
-    fn index(name: &str, pages: &HashMap<String, Record>) -> Vec<u8> {
-        let mut out = format!(">{name}\n\nServed from vork: every reader of this site can serve it.\n\n");
-        if pages.is_empty() {
-            out.push_str("This node is still fetching the site, or it has no pages yet. Try again shortly.\n");
-        }
-        let mut paths: Vec<&String> = pages.keys().collect();
-        paths.sort();
-        for p in paths {
-            let title = str_attr(&pages[p], "title").or_else(|| str_attr(&pages[p], "name")).unwrap_or(p);
-            out.push_str(&format!("`[{title}`:{p}]\n"));
-        }
-        out.into_bytes()
-    }
-
-    pub async fn serve(
-        d: Arc<Daemon>,
-        handle: PrnsNodeHandle,
-        dest: DestinationHash,
-        ns: String,
-        site_name: String,
-        mut requests: mpsc::UnboundedReceiver<(RequestPathHash, RespondToken)>,
-    ) {
-        let mut registered: std::collections::HashSet<String> = Default::default();
-        let mut by_hash: HashMap<[u8; 16], String> = HashMap::new();
-        let mut sync = tokio::time::interval(Duration::from_secs(15));
-        let mut announce = tokio::time::interval(Duration::from_secs(600));
-        loop {
-            tokio::select! {
-                _ = sync.tick() => {
-                    // Register every page's path (and the index); drop paths that went away.
-                    let mut want: std::collections::HashSet<String> = pages(&d.store, &ns).into_keys().collect();
-                    want.insert("/page/index.mu".into());
-                    for p in want.difference(&registered).cloned().collect::<Vec<_>>() {
-                        match handle.register_request_path(dest, &p, RequestPolicy::AllowAll).await {
-                            Ok(()) => {
-                                by_hash.insert(*RequestPathHash::of(&p).as_bytes(), p.clone());
-                                registered.insert(p);
-                            }
-                            Err(e) => eprintln!("nomadnet: register {p}: {e:?}"),
-                        }
-                    }
-                    for p in registered.difference(&want).cloned().collect::<Vec<_>>() {
-                        let _ = handle.unregister_request_path(dest, &p).await;
-                        by_hash.remove(RequestPathHash::of(&p).as_bytes());
-                        registered.remove(&p);
-                    }
-                }
-                _ = announce.tick() => {
-                    let _ = handle.issue(PrnsCommand::AnnounceNow(AnnounceNow {
-                        destination: dest,
-                        target: AnnounceTarget::AllInterfaces,
-                        app_data: AnnounceAppData::Registered,
-                    }));
-                }
-                Some((hash, token)) = requests.recv() => {
-                    let Some(path) = by_hash.get(hash.as_bytes()).cloned() else { continue };
-                    let store = d.store.clone();
-                    let ns = ns.clone();
-                    let name = site_name.clone();
-                    let body = tokio::task::spawn_blocking(move || page_body(&store, &ns, &path, &name)).await.unwrap_or_default();
-                    println!("nomadnet: served {} bytes", body.len());
-                    handle.respond_owned_bytes(token, body);
-                }
-            }
-        }
-    }
-
-    fn page_body(store: &SlabStore, ns: &str, path: &str, name: &str) -> Vec<u8> {
-        let pages = pages(store, ns);
-        match pages.get(path) {
-            Some(r) => match r.blocks.first() {
-                Some(b) => manifest::read_all(store, b).unwrap_or_else(|_| b"`!This page isn't available on this node yet.`!".to_vec()),
-                None => b"(empty page)".to_vec(),
-            },
-            None if path == "/page/index.mu" => index(name, &pages),
-            None => b"`!No such page.`!".to_vec(),
-        }
-    }
-
-    #[cfg(test)]
-    mod tests {
-        #[test]
-        fn one_index_builder() {
-            let (a, b, c) = ([1u8; 16], [2u8; 16], [3u8; 16]);
-            let all = [a, b, c];
-            let alive = |_: &[u8; 16]| Some((1_000_000, 600));
-            // The lowest address that's around builds.
-            assert!(super::super::index_builder(&all, a, 1_000_000, alive));
-            assert!(!super::super::index_builder(&all, b, 1_000_000, alive));
-            // a went quiet: b builds; c still doesn't.
-            let quiet_a = |p: &[u8; 16]| if *p == a { Some((0, 600)) } else { Some((5_000_000, 600)) };
-            assert!(super::super::index_builder(&all, b, 5_000_000, quiet_a));
-            assert!(!super::super::index_builder(&all, c, 5_000_000, quiet_a));
-            // Never heard (a phone holding nothing): passed over. Not a writer: builds only alone.
-            assert!(super::super::index_builder(&all, c, 0, |_| None));
-            let _ = alive(&a);
-        }
-
-        #[test]
-        fn record_paths_map_to_nomadnet_pages() {
-            assert_eq!(super::page_path("/index.mu").as_deref(), Some("/page/index.mu"));
-            assert_eq!(super::page_path("/page/about.mu").as_deref(), Some("/page/about.mu"));
-            assert_eq!(super::page_path("/blog/2026/one.mu").as_deref(), Some("/page/blog/2026/one.mu"));
-            assert_eq!(super::page_path("/boat.jpg"), None);
-            assert_eq!(super::page_path("relative.mu"), None);
-        }
-    }
-}
 
 
 #[cfg(test)]

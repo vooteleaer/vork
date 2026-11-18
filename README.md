@@ -134,19 +134,20 @@ ESPHome's WireGuard component has **one peer and IPv4 only**, and it can't accep
 
 ## Storage
 
-vØrk storage (formerly [retifs](https://github.com/vooteleaer/retifs)) is the encrypted, replicated data layer: libraries of records and files, kept on your own devices and blind storage nodes. Its code was copied here and renamed (ADR-0015); it still runs on Reticulum through Prns until it moves onto vØrk (roadmap M9). Building `vork-storage-net` and `vork-storage-node` needs the Prns source at `../Prns-0.3.8`.
+vØrk storage (formerly [retifs](https://github.com/vooteleaer/retifs)) is the encrypted, replicated data layer: libraries of records and files, kept on your own devices and blind storage nodes. Its code was copied here and renamed (ADR-0015), and it runs on vØrk: `vorkd` attaches to the machine's vØrk node through its [local API](docs/06-local-api.md) (ADR-0022). The storage format is retifs's, byte for byte, so existing libraries move over.
 
 | Crate | What |
 |---|---|
+| `vork-api` | the vØrk node's local API: protocol and client |
 | `vork-core` | chunks, CIDs, manifests, records, leases, channels, recovery |
 | `vork-store` | the local slab store |
-| `vork-storage-net` | the network side (fetching, serving; Reticulum for now) |
+| `vork-storage-net` | the network side: fetching, serving, the connection to the vØrk node |
 | `vork-storage-node` | `vorkd`, the storage daemon, and `vork-storage`, its commands |
 | `libvork` | client of the daemon's local API |
 | `vork-tree`, `vork-fuse`, `vork-cloudfiles`, `vork-haikufs` | a library as a folder: FUSE (`vork-mount`), Windows Explorer, Haiku |
 | `vork-gateway`, `vork-extract`, `vork-card` | libraries as local websites, attribute extraction, identities on a YubiKey |
 
-`vork put FILE`, `vork query LIB …` and the other storage commands are passed to `vork-storage`; `vork help-storage` lists them. `vork status` on its own is the network node's; `vork status READ-CAP` is storage's. Storage documents: [docs/storage](docs/storage/README.md).
+To run it: a vØrk node first (`vork run`, or the service), then `vorkd` (it finds the node's API socket, or `VORK_API=<socket or pipe>`); `vorkd --store DIR` keeps a separate store. `vork put FILE`, `vork query LIB …` and the other storage commands are passed to `vork-storage`; `vork help-storage` lists them. `vork status` on its own is the network node's; `vork status READ-CAP` is storage's. Storage documents: [docs/storage](docs/storage/README.md).
 
 ## Documentation
 

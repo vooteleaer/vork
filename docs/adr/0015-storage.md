@@ -21,4 +21,4 @@ retifs (encrypted, content-addressed, replicated storage) was built on Reticulum
 - One identity system: recovery kits, cards and leases in storage describe vØrk identities; YubiKey-held identities (ADR-0013) cover storage too.
 - Existing libraries and identities carry over: a storage identity file is a vØrk key file, and every stored node or library address is a vØrk destination.
 - No LoRa reach through storage any more; vØrk is IP-only (ADR-0010).
-- Until ADR-0022 is built, `vork-storage-net` and `vork-storage-node` build against Prns from `../Prns-0.3.8`.
+- Since ADR-0022 was built, storage runs on the machine's vØrk node; no Reticulum code is in the build.

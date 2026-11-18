@@ -38,4 +38,4 @@ New decisions copy [adr/0000-template.md](adr/0000-template.md). *Accepted* mean
 | [0019](adr/0019-open-relaying-owner-first.md) | Open relaying, the owner's traffic first | accepted |
 | [0020](adr/0020-shared-node.md) | One shared node per machine | proposed |
 | [0021](adr/0021-compatibility-addresses.md) | Compatibility addresses: IPv6 per identity, local IPv4 aliases | proposed |
-| [0022](adr/0022-storage-leaves-reticulum.md) | Storage leaves Reticulum: destinations, sessions, requests | proposed |
+| [0022](adr/0022-storage-leaves-reticulum.md) | Storage leaves Reticulum: destinations, sessions, requests | accepted |

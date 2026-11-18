@@ -1,6 +1,6 @@
 # ADR-0022: Storage leaves Reticulum: destinations, sessions, requests
 
-- **Status:** proposed
+- **Status:** accepted (built 2026-11-18)
 - **Date:** 2026-11-18
 - **Irreversible:** no (the storage format is untouched; this changes how storage reaches other nodes)
 

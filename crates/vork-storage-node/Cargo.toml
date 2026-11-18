@@ -17,11 +17,11 @@ path = "src/bin/vork-storage.rs"
 [dependencies]
 getrandom = "0.3"
 libvork = { path = "../libvork" }
+vork-api = { path = "../vork-api" }
 qrcode = { version = "0.14", default-features = false }
 toml = "0.8"
 redb = "2"
 rmp-serde = "1"
-personal-rns = { path = "../../../Prns-0.3.8/personal-rns", features = ["tokio-host", "tcp", "shared-instance"] }
 vork-core = { path = "../vork-core" }
 vork-storage-net = { path = "../vork-storage-net" }
 vork-store = { path = "../vork-store" }

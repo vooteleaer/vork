@@ -1,7 +1,7 @@
 [package]
 name = "vork-storage-net"
 version = "0.6.0"
-description = "vork networking over Reticulum via Prns (prototype, unstable)"
+description = "vØrk storage networking over the machine's vØrk node (prototype, unstable)"
 edition.workspace = true
 license.workspace = true
 publish = false
@@ -9,7 +9,8 @@ publish = false
 [dependencies]
 getrandom = "0.3"
 hex = "0.4"
-personal-rns = { path = "../../../Prns-0.3.8/personal-rns", features = ["tokio-host", "tcp", "shared-instance"] }
+sha2 = "0.10"
+vork-api = { path = "../vork-api" }
 vork-core = { path = "../vork-core" }
 tokio = { version = "1", features = ["full"] }
 
