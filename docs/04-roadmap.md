@@ -83,9 +83,9 @@ Links with fresh-handshake liveness, signed announces, path labels swapped per h
 
 ## M9 Native message API and retifs transport
 
-- **Goal:** native applications use identities and named services without IP; retifs runs over vØrk (ADR-0015).
-- **Scope:** `connect(identity, service)`, request/response and datagrams over the IPC API and as a Rust crate; an implementation of retifs's `Transport` trait (`connect`, `link_nonce`, `request`) and its server side; placement in retifs uses measured round trip and direct-vs-relayed instead of hop count.
-- **Done when:** retifs's network examples pass over vØrk between two machines.
+- **Goal:** native applications use identities and named services without IP; retifs runs as a vØrk application with its own identity and no Reticulum ties (ADR-0015).
+- **Scope:** `connect(identity, service)`, request/response, datagrams and a reliable stream over the IPC API and as a Rust crate; retifs moved to vØrk identities and key wrapping, Prns and the Reticulum transport removed; retifs's `Transport` implemented over vØrk with its server side; placement uses measured round trip and direct-vs-relayed instead of hop count.
+- **Done when:** retifs stores and fetches between two machines over vØrk, with no Reticulum code in the build.
 - **Depends on:** M3.
 
 ## M10 Embedded stack (no admin rights)

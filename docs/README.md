@@ -29,7 +29,7 @@ New decisions copy [adr/0000-template.md](adr/0000-template.md). *Accepted* mean
 | [0012](adr/0012-port-mapping-opt-in.md) | Router port mapping is opt-in | accepted |
 | [0013](adr/0013-identities-on-hardware-keys.md) | Identities on hardware keys; devices are delegated | proposed |
 | [0014](adr/0014-islands.md) | Islands: closed groups inside an open network | proposed |
-| [0015](adr/0015-retifs-storage-layer.md) | retifs as the storage layer | proposed |
+| [0015](adr/0015-retifs-storage-layer.md) | retifs is a vØrk application: the storage layer | accepted |
 | [0016](adr/0016-privacy-classes.md) | Privacy classes; nested WireGuard for the strong class | proposed |
 | [0017](adr/0017-applications.md) | Applications: IPv6 inside sessions, several ways in | proposed |
 | [0018](adr/0018-dns-vork.md) | Names: the .vork DNS domain | accepted |
