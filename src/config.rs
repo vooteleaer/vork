@@ -28,6 +28,8 @@ pub struct FileConfig {
     pub lan: Option<bool>,
     /// The TUN interface to create (M2): programs reach other nodes at `fd…` addresses.
     pub tun: Option<String>,
+    /// This node's name, announced (default: the machine's name).
+    pub name: Option<String>,
     pub gateway: Option<std::net::Ipv4Addr>,
     pub paths: Option<usize>,
     pub spread: Option<String>,
@@ -151,6 +153,9 @@ devices = []
 # Ask the router to open a port to this node (UPnP, then PCP/NAT-PMP). Any
 # free outside port will do: others learn where they reached it.
 map_port = true
+
+# This node's name as others see it (default: the machine's name).
+# name = "laptop"
 
 # Find other vØrk nodes on the local network by themselves (mDNS,
 # _vork._udp.local, which tells them this node's key and port).

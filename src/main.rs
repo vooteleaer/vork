@@ -233,6 +233,7 @@ pub fn settings(a: RunArgs) -> Result<Settings> {
         map_port: !a.no_map_port && (a.map_port || file.map_port.unwrap_or(true)),
         lan: !(a.no_lan || file.lan == Some(false)),
         tun: file.tun.clone().filter(|t| !t.is_empty()),
+        name: file.name.clone().filter(|n| !n.trim().is_empty()).unwrap_or_else(node::machine_name),
         gateway: a.gateway.or(file.gateway),
         paths: a.paths.or(file.paths).unwrap_or(2).max(1),
         spread,

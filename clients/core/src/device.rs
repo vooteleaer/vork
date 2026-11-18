@@ -49,6 +49,11 @@ pub struct Network {
     pub ip: Option<String>,
     /// Others dialed it and got an answer (ADR-0023): reachable directly.
     pub reached_by: u64,
+    /// This node's name and overlay address (whether or not it has an interface).
+    pub name: Option<String>,
+    pub node_ip: Option<String>,
+    /// Every node known by its announce (the node's `nodes`, as it gave them).
+    pub nodes: Vec<serde_json::Value>,
     pub error: Option<String>,
 }
 
@@ -82,6 +87,9 @@ pub fn parse_status(json: &str) -> Result<Network, String> {
         seen_at: v["outside"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default(),
         ip: v["interface"]["address"].as_str().map(str::to_string),
         reached_by: v["reach"]["reached_by"].as_array().map(|a| a.len() as u64).unwrap_or(0),
+        name: v["name"].as_str().map(str::to_string),
+        node_ip: v["ip"].as_str().map(str::to_string),
+        nodes: v["nodes"].as_array().cloned().unwrap_or_default(),
         error: None,
     })
 }

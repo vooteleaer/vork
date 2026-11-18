@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
@@ -53,7 +54,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -148,12 +152,13 @@ fun App() {
     }
     val refresh = { tick++ }
     Scaffold(
-        topBar = { TopAppBar(title = { Text(listOf("vork", "Announces", "Settings")[tab]) }) },
+        topBar = { TopAppBar(title = { Text(listOf("vØrk", "Libraries", "Announces", "Settings")[tab]) }) },
         bottomBar = {
             NavigationBar {
-                NavigationBarItem(selected = tab == 0, onClick = { tab = 0 }, icon = { Icon(Icons.Filled.Home, null) }, label = { Text("This device") })
-                NavigationBarItem(selected = tab == 1, onClick = { tab = 1 }, icon = { Icon(Icons.Filled.Share, null) }, label = { Text("Announces") })
-                NavigationBarItem(selected = tab == 2, onClick = { tab = 2 }, icon = { Icon(Icons.Filled.Settings, null) }, label = { Text("Settings") })
+                NavigationBarItem(selected = tab == 0, onClick = { tab = 0 }, icon = { Icon(Icons.Filled.Home, null) }, label = { Text("Network") })
+                NavigationBarItem(selected = tab == 1, onClick = { tab = 1 }, icon = { Icon(Icons.Filled.List, null) }, label = { Text("Libraries") })
+                NavigationBarItem(selected = tab == 2, onClick = { tab = 2 }, icon = { Icon(Icons.Filled.Share, null) }, label = { Text("Announces") })
+                NavigationBarItem(selected = tab == 3, onClick = { tab = 3 }, icon = { Icon(Icons.Filled.Settings, null) }, label = { Text("Settings") })
             }
         },
     ) { inner ->
@@ -162,8 +167,9 @@ fun App() {
                 Text(note, Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.bodySmall)
             }
             when (tab) {
-                0 -> Overview(status, network) { note = it; refresh() }
-                1 -> Announces(status) { note = it; refresh() }
+                0 -> NetworkTab(network) { note = it; refresh() }
+                1 -> Overview(status, network) { note = it; refresh() }
+                2 -> Announces(status) { note = it; refresh() }
                 else -> SettingsView { note = it; refresh() }
             }
         }
@@ -199,7 +205,6 @@ fun Overview(s: JSONObject, network: JSONObject, said: (String) -> Unit) {
                 }
             }
         }
-        item { Network(network, said) }
         val libraries = s.optJSONArray("libraries") ?: JSONArray()
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -255,6 +260,83 @@ fun Announces(s: JSONObject, said: (String) -> Unit) {
             }
         }
     }
+}
+
+/**
+ * The network, as Tailscale shows a tailnet: this device and every node it
+ * knows, each with its name, its `fd…` address and its vØrk address to
+ * copy (a tap on a row copies the address), and how it's reached; then the
+ * connections and the interface for apps.
+ */
+@Composable
+fun NetworkTab(n: JSONObject, said: (String) -> Unit) {
+    val clipboard = LocalClipboardManager.current
+    val copy = { label: String, text: String ->
+        clipboard.setText(AnnotatedString(text))
+        said("$label copied: $text")
+    }
+    val nodes = n.optJSONArray("nodes") ?: JSONArray()
+    val mine = (0 until nodes.length()).map { nodes.getJSONObject(it) }
+    LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    val name = n.optString("name").ifEmpty { "This device" }
+                    Text("$name (this device)", style = MaterialTheme.typography.titleMedium)
+                    if (!n.optBoolean("running")) {
+                        Text(n.optString("error").ifEmpty { "The vØrk node isn't running" }, style = MaterialTheme.typography.bodySmall)
+                    } else {
+                        NodeLines(n.optString("node_ip"), n.optString("address"), name, copy)
+                    }
+                }
+            }
+        }
+        item {
+            Text("Nodes (${mine.size})", style = MaterialTheme.typography.titleSmall)
+        }
+        if (mine.isEmpty()) {
+            item { Text("None known yet: nodes on the same Wi-Fi appear by themselves; others once connected (below).", style = MaterialTheme.typography.bodySmall) }
+        }
+        items(mine) { node ->
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    val address = node.optString("address")
+                    val name = node.optString("name").takeIf { !node.isNull("name") && it.isNotEmpty() } ?: address.take(8)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(name, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                        val how = when {
+                            node.optBoolean("direct") -> "direct"
+                            else -> "${node.optInt("hops")} hop(s), relayed"
+                        }
+                        Text(how + if (node.optBoolean("device")) " · your device" else "", style = MaterialTheme.typography.labelSmall)
+                    }
+                    NodeLines(node.optString("ip"), address, name, copy)
+                }
+            }
+        }
+        item { Network(n, said) }
+    }
+}
+
+/** A node's addresses, each with Copy: its `fd…` address, its DNS name, its vØrk address. */
+@Composable
+fun NodeLines(ip: String, address: String, name: String, copy: (String, String) -> Unit) {
+    val mono = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
+    val dns = dnsName(name, address)
+    for ((label, value) in listOf("IP" to ip, "DNS" to dns, "Address" to address)) {
+        if (value.isEmpty()) continue
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(label, style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(56.dp))
+            Text(value, style = mono, modifier = Modifier.weight(1f))
+            TextButton(onClick = { copy(label, value) }) { Text("Copy") }
+        }
+    }
+}
+
+/** The DNS name a node will have (vØrk ADR-0018): its name, made a label, under `.vork`. */
+fun dnsName(name: String, address: String): String {
+    val label = name.lowercase().replace(Regex("[^a-z0-9-]+"), "-").trim('-').take(40)
+    return (label.ifEmpty { address.take(8) }) + ".vork"
 }
 
 /**
@@ -329,7 +411,7 @@ fun Network(n: JSONObject, said: (String) -> Unit) {
     }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
-            Text("Network", style = MaterialTheme.typography.titleMedium)
+            Text("Connections", style = MaterialTheme.typography.titleMedium)
             if (n.optBoolean("running")) {
                 Text("The vØrk node is running: ${n.optString("address")}", style = small)
             } else {

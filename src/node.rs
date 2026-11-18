@@ -89,6 +89,32 @@ const SHARE_EVERY: Duration = Duration::from_secs(600);
 const KEY_ASK: &[u8] = b"VORK?";
 const KEY_TELL: &[u8] = b"VORK!";
 
+/// The machine's name: the default name of its node.
+pub fn machine_name() -> String {
+    #[cfg(unix)]
+    {
+        let mut b = [0u8; 256];
+        if unsafe { libc::gethostname(b.as_mut_ptr().cast(), b.len()) } == 0 {
+            let end = b.iter().position(|c| *c == 0).unwrap_or(b.len());
+            let n = String::from_utf8_lossy(&b[..end]).trim().to_string();
+            if !n.is_empty() && n != "localhost" {
+                return n;
+            }
+        }
+    }
+    #[cfg(windows)]
+    if let Ok(n) = std::env::var("COMPUTERNAME") {
+        return n.to_lowercase();
+    }
+    "vork".to_string()
+}
+
+/// A node's name from its announce's app data (`{"name": …}`), at most 64 characters.
+fn announced_name(app_data: &[u8]) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_slice(app_data).ok()?;
+    Some(v["name"].as_str()?.chars().take(64).collect())
+}
+
 /// `HOST:PORT` or `HOST:PORT@KEY`.
 pub fn parse_peer_text(s: &str) -> Result<(SocketAddr, Option<[u8; 32]>), String> {
     use std::net::ToSocketAddrs;
@@ -260,6 +286,8 @@ pub struct Config {
     pub lan: bool,
     /// The TUN interface to create (M2).
     pub tun: Option<String>,
+    /// This node's name, in its announce.
+    pub name: String,
     /// The router for PCP/NAT-PMP; guessed as x.y.z.1 if not given.
     pub gateway: Option<std::net::Ipv4Addr>,
     /// How many paths (through different first hops) a session opens.
@@ -1110,7 +1138,8 @@ impl Node {
 
     fn own_announce(&mut self) -> Announce {
         let me = self.me_arc.clone();
-        self.sign_announce(&me, wire::NO_NAME, Vec::new())
+        let data = json!({ "name": self.cfg.name }).to_string().into_bytes();
+        self.sign_announce(&me, wire::NO_NAME, data)
     }
 
     /// The announce of a destination answered here.
@@ -1431,6 +1460,33 @@ impl Node {
         let Some(who) = who else { return false };
         named(&who)
             || self.clients.values().flat_map(|c| c.devices.iter()).any(|d| self.dest_identity(d) == Some(who))
+    }
+
+    /// Nodes known by their own announce (unnamed destination): name, overlay
+    /// address, how far, and whether a neighbor or a direct session reaches it.
+    fn known_nodes(&self) -> Vec<serde_json::Value> {
+        let mut list: Vec<serde_json::Value> = self
+            .routes
+            .iter()
+            .filter_map(|(dest, by)| {
+                let best = by.values().filter(|r| r.ann.name_hash == wire::NO_NAME).min_by_key(|r| r.hops)?;
+                let neighbor = self.neighbor_by_key.get(&best.ann.x_pub).is_some_and(|id| self.is_up(*id));
+                let session = self.session_by_dest.get(dest).or_else(|| self.ip_peer.get(dest));
+                let direct = session.and_then(|sid| self.sessions.get(sid).map(|s| (sid, s))).is_some_and(|(sid, s)| s.paths.iter().any(|k| self.is_direct(*sid, *k)));
+                Some(json!({
+                    "address": hex::encode(dest),
+                    "name": announced_name(&best.ann.app_data),
+                    "ip": crate::tun::overlay(dest).to_string(),
+                    "hops": best.hops,
+                    "neighbor": neighbor,
+                    "direct": direct || neighbor,
+                    "lite": best.ann.flags & FLAG_RELAY == 0,
+                    "device": self.cfg.devices.contains(dest),
+                }))
+            })
+            .collect();
+        list.sort_by(|a, b| a["name"].as_str().unwrap_or("~").cmp(b["name"].as_str().unwrap_or("~")));
+        list
     }
 
     fn dest_identity(&self, dest: &Hash) -> Option<Hash> {
@@ -2523,6 +2579,10 @@ impl Node {
             "destinations": self.routes.len(),
             "sessions": sessions,
             "relay": { "paths": self.switch.len() / 2, "packets": self.relayed },
+            "name": self.cfg.name,
+            "ip": crate::tun::overlay(&self.my_hash).to_string(),
+            // Every node known by its announce, as Tailscale lists a tailnet's machines.
+            "nodes": self.known_nodes(),
             // The interface for ordinary programs (M2), if there is one: this node's address on it.
             "interface": self.tun.as_ref().map(|t| json!({ "name": t.name, "address": crate::tun::overlay(&self.my_hash).to_string() })),
             "reach": {

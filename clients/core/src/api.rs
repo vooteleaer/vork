@@ -245,6 +245,10 @@ pub fn network() -> Value {
         "seen_at": r.seen_at,
         "ip": r.ip,
         "reached_by": r.reached_by,
+        "name": r.name,
+        "node_ip": r.node_ip,
+        // Every node this one knows, with its name and address (the Network tab).
+        "nodes": r.nodes,
         "error": r.error,
         "connections": connections,
         "others": others,

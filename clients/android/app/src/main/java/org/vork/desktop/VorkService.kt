@@ -142,6 +142,11 @@ class VorkService : Service() {
                     // The interface comes from VorkVpn, handed over as a descriptor.
                     val conf = p.nodeConfig.readText()
                     if (!Regex("(?m)^tun\\s*=").containsMatchIn(conf)) p.nodeConfig.appendText("\ntun = \"fd\"\n")
+                    // Its name as other nodes see it: the phone's model.
+                    if (!Regex("(?m)^name\\s*=").containsMatchIn(conf)) {
+                        val model = Build.MODEL.replace("\"", "").trim().ifEmpty { "android" }
+                        p.nodeConfig.appendText("name = \"$model\"\n")
+                    }
                     node = start(p.vork, "node", "run", "--config", p.nodeConfig.absolutePath)
                     VorkVpn.startIfAllowed(this)
                 }
