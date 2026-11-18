@@ -35,15 +35,15 @@ Links with fresh-handshake liveness, signed announces, path labels swapped per h
 ## M2 IPv6 sessions and TUN
 
 - **Goal:** ordinary applications reach peers by identity.
-- **Scope:** sessions carry IPv6 packets between overlay addresses (ADR-0017); the ping/bench/candidate functions move to a control service on the overlay; a TUN interface (Linux `/dev/net/tun`; Windows wintun); the node drops packets whose overlay source doesn't match the session's identity; **flow pinning** (a TCP/UDP flow stays on one path, chosen by hash of its 5-tuple; spray stays for bulk native traffic); MTU set so both layers fit in 1500 (inner MTU about 1360, to be measured).
+- **Scope:** sessions carry IPv6 packets between overlay addresses (ADR-0017, ADR-0021), one per identity, all of a machine's identities on its TUN interface, source checked against the session's identity; the ping/bench/candidate functions move to a control service on the overlay; a TUN interface (Linux `/dev/net/tun`; Windows wintun); the node drops packets whose overlay source doesn't match the session's identity; **flow pinning** (a TCP/UDP flow stays on one path, chosen by hash of its 5-tuple; spray stays for bulk native traffic); MTU set so both layers fit in 1500 (inner MTU about 1360, to be measured).
 - **Done when:** `ssh` to `fd…` (a home machine) from a laptop behind another NAT works through relays and then over a direct link; an `iperf3` TCP test runs without reordering trouble over two paths.
 - **Depends on:** M1.
 
 ## M3 Daemon API, whois, DNS, identity firewall
 
 - **Goal:** applications know who is on the other end, and names replace addresses.
-- **Scope:** the **shared node** (ADR-0020): one node per machine, the first program starts it, applications attach over a specified, versioned IPC protocol (Unix socket / named pipe) and register their own identities and services; status, peers, `whois(overlay address) → identity`; **DNS** (ADR-0018): `<address>.vork` and petnames from a local file, AAAA and PTR, wired into the OS only for its own domain (systemd-resolved routing domain, Windows NRPT, macOS `/etc/resolver`); an **identity firewall**: which identities may reach which ports/services.
-- **Done when:** `ssh nas.vork` works; a service sees the caller's identity through whois; a connection from an identity not on the list is refused; two programs on one machine, each with its own identity, are reachable through the same node.
+- **Scope:** the **shared node** (ADR-0020): one node per machine, the first program starts it, applications attach over a specified, versioned IPC protocol (Unix socket / named pipe) and register their own identities and services; status, peers, `whois(overlay address) → identity`; **DNS** (ADR-0018): `<address>.vork` and petnames from a local file, AAAA and PTR, and **IPv4 aliases** handed out by `A` queries with translation at the node (ADR-0021), wired into the OS only for its own domain (systemd-resolved routing domain, Windows NRPT, macOS `/etc/resolver`); an **identity firewall**: which identities may reach which ports/services.
+- **Done when:** `ssh nas.vork` works over IPv6 and an IPv4-only program reaches the same name through its alias; a service sees the caller's identity through whois; a connection from an identity not on the list is refused; two programs on one machine, each with its own identity, are reachable through the same node.
 - **Depends on:** M2.
 
 ## M4 Hardening
