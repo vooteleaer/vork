@@ -33,3 +33,4 @@ New decisions copy [adr/0000-template.md](adr/0000-template.md). *Accepted* mean
 | [0016](adr/0016-privacy-classes.md) | Privacy classes; nested WireGuard for the strong class | proposed |
 | [0017](adr/0017-applications.md) | Applications: IPv6 inside sessions, several ways in | proposed |
 | [0018](adr/0018-dns-vork.md) | Names: the .vork DNS domain | accepted |
+| [0019](adr/0019-open-relaying-owner-first.md) | Open relaying, the owner's traffic first | accepted |

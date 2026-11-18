@@ -49,8 +49,8 @@ Links with fresh-handshake liveness, signed announces, path labels swapped per h
 ## M4 Hardening
 
 - **Goal:** the open network survives hostile nodes (threat model, "planned" rows).
-- **Scope:** per-neighbor limits for `PATH_OPEN`, announces and path requests, and caps on relay and route tables; proof-of-work stamps on announces; outside address taken only when several neighbors agree; bootstrap from several sources, neighbor diversity, long-lived anchors; relay priorities (own and island traffic first, strangers under a quota); path choice by measured delivery instead of hop count; fuzzing of the message decoder (`cargo-fuzz`); a review of `unsafe` (currently only the socket options).
-- **Done when:** a node flooded with `PATH_OPEN` from one neighbor keeps serving its other neighbors; the fuzzer runs clean for 24 h; each "planned" row in the threat model is implemented or moved to a later milestone with a reason.
+- **Scope:** per-neighbor limits for `PATH_OPEN`, announces and path requests, and caps on relay and route tables; proof-of-work stamps on announces; outside address taken only when several neighbors agree; bootstrap from several sources, neighbor diversity, long-lived anchors; **owner-first relaying** (ADR-0019): two classes (own, relayed), relayed traffic limited to the measured uplink minus the owner's use and backing off when the owner's round trip rises, shared fairly per path and neighbor; path choice by measured delivery instead of hop count; fuzzing of the message decoder (`cargo-fuzz`); a review of `unsafe` (currently only the socket options).
+- **Done when:** a node flooded with `PATH_OPEN` from one neighbor keeps serving its other neighbors; a node relaying a saturating bench keeps its own ping within a few ms of idle and its own bench near full speed; the fuzzer runs clean for 24 h; each "planned" row in the threat model is implemented or moved to a later milestone with a reason.
 - **Depends on:** M1.
 
 ## M5 ESPHome component

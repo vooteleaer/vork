@@ -59,7 +59,7 @@ C ──DATA(7, …)──▶ A ──DATA(91, …)──▶ B
 - **Observed addresses** (implemented): every neighbor tells a node the address it sees it at, so every node is a STUN server for its neighbors.
 - **Router port mapping** (implemented, opt-in): UPnP, then PCP/NAT-PMP, like torrent clients. Gives up when the router is itself behind CGNAT.
 - **Direct links** (implemented, opt-in): once a session works through relays, the two ends exchange their candidate addresses inside the session and both send WireGuard handshakes to each other at the same time (hole punching). On success, the session moves to the direct link.
-- **Relays** for everything else: any node with a usable path relays. Symmetric NAT on both ends never gets a direct link; the session stays relayed.
+- **Relays** for everything else: every full node relays for everyone, with its owner's traffic first (ADR-0019). Symmetric NAT on both ends never gets a direct link; the session stays relayed.
 
 ## Node profiles
 

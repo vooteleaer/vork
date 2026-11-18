@@ -35,6 +35,7 @@ Any node may be hostile: neighbors, relays, the far end of a path that isn't the
 | Lie in `OBSERVED` (wrong outside address) | only a candidate; take it only when several neighbors agree | **planned (M4)** |
 | Eclipse: surround a new node | several bootstrap sources, diverse neighbors (AS, /16), long-lived anchors (own and island nodes) | **planned (M4)** |
 | Sybil attracting paths | diversity rules in path choice, PoW cost on identities, island trust for strong paths | planned |
+| Strangers' traffic crowds out the owner's | relaying gets only leftover capacity and backs off on the owner's delay (ADR-0019) | **planned (M4)** |
 | Handshake flood | WireGuard's cookie mechanism (boringtun rate limiter) | implemented by boringtun |
 | Traffic analysis by timing | multipath, optional cover traffic for the strong class | partly |
 | Two colluding relays on one path | nested WireGuard for the strong class (no single relay knows both ends) | planned (ADR-0016) |

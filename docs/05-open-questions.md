@@ -24,7 +24,7 @@ Decisions still to make. Each names who it blocks.
 
 ## Network policy
 
-12. **Open by default?** A new node relays for strangers (within quotas) unless told not to. Or relay only for own/island identities by default? Blocks: M4.
+12. ~~**Open by default?**~~ Decided: open to everyone, the owner's traffic first; relaying uses only the capacity the owner leaves (ADR-0019).
 13. **Direct links inside islands by default?** Outside islands they stay opt-in. Blocks: M8.
 14. **The public backbone.** cafa-cloud as the first always-on public node: under whose name, and with which limits? Blocks: M1.
 
