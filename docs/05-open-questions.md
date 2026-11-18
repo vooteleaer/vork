@@ -22,7 +22,7 @@ Decisions still to make. Each names who it blocks.
 10. **Services: names or ports.** Native API uses names; IP uses ports. How does a name map to a port: per-node config, a convention (hash of the name), or SRV records? Blocks: M3, M9.
 11. **TUN on Windows.** wintun ships a signed driver in a DLL; the Windows service needs admin rights once. Acceptable? Blocks: M2.
 
-19. ~~**The IPv4 alias range.**~~ Decided: configurable. Without a setting, the node picks a range that overlaps none of the machine's own routes and interfaces, from a list of candidates (ADR-0021).
+19. ~~**The IPv4 alias range.**~~ Decided: configurable. Without a setting, the node picks a range that overlaps none of the machine's own routes and interfaces, from a list of candidates, once; the choice and the aliases are stored and kept across restarts (ADR-0021).
 
 ## Network policy
 

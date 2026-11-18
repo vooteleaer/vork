@@ -21,7 +21,7 @@ Links with fresh-handshake liveness, signed announces, path labels swapped per h
 ## M1 Config, service, persistence
 
 - **Goal:** a node that runs 24/7 (cafa-cloud as a public backbone) and survives restarts.
-- **Scope:** a config file (TOML: key path, listen address, bootstrap peers, flags); the announce sequence number as a stored counter instead of the clock (open question 3); remembered neighbors (reconnect after restart without bootstrap); a systemd unit and a Windows service; log levels; `vork status` over a local control socket.
+- **Scope:** a config file (TOML: key path, listen address, bootstrap peers, flags); the announce sequence number as a stored counter instead of the clock (open question 3); remembered neighbors (reconnect after restart without bootstrap); a state directory for what the node chooses once and keeps (sequence counter, neighbors, later the IPv4 alias range and aliases); a systemd unit and a Windows service; log levels; `vork status` over a local control socket.
 - **Done when:** cafa-cloud runs vØrk as a service through a restart and a reboot; a PC reconnects without `--peer` after its first contact.
 - **Depends on:** nothing.
 
