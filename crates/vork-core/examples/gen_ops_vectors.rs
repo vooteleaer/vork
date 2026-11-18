@@ -144,7 +144,7 @@ fn main() {
     let snapshot = Snapshot::new(merged.records.clone()).unwrap();
 
     let doc = json!({
-        "construction": "vork operations v1 (ADR-0017, proposed): ops file canonical msgpack; merge in stamp order (time, writer, seq, index); limited grants (keys, until) narrowed by the granter's",
+        "construction": "retifs operations v1 (ADR-0017, proposed): ops file canonical msgpack; merge in stamp order (time, writer, seq, index); limited grants (keys, until) narrowed by the granter's",
         "creator": hex::encode(alice),
         "now_ms": 10_000,
         "chains": chains.iter().map(|(w, cs)| json!({

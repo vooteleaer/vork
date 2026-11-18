@@ -12,7 +12,7 @@ fn main() {
     for i in 0..4u32 {
         seeds.push(Sha256::digest([b"recovery".as_slice(), &i.to_be_bytes()].concat()).into());
     }
-    let node: [u8; 16] = Sha256::digest(b"a vork.node")[..16].try_into().unwrap();
+    let node: [u8; 16] = Sha256::digest(b"a retifs.node")[..16].try_into().unwrap();
     let cases: Vec<_> = seeds
         .iter()
         .map(|s| {
@@ -32,7 +32,7 @@ fn main() {
         })
         .collect();
     let out = json!({
-        "about": "ADR-0033: words = BIP-39 English over seed || SHA-256(seed)[0], 24 words; k(info) = HKDF-SHA256(ikm = seed, salt = \"vork/v1/storage/recovery\", info)[0..32]; identity secret = k(\"x25519\") || k(\"ed25519\") (RNS layout); keyring ns_id = SHA-256(\"vork/v1/storage/ns\" || Ed25519 public)[0..16]; keyring read key = k(\"keyring-read\"); locator = k(\"keyring-locator\"); node_tag = HMAC-SHA256(locator, node)[0..16]",
+        "about": "ADR-0033: words = BIP-39 English over seed || SHA-256(seed)[0], 24 words; k(info) = HKDF-SHA256(ikm = seed, salt = \"retifs/v1/recovery\", info)[0..32]; identity secret = k(\"x25519\") || k(\"ed25519\") (RNS layout); keyring ns_id = SHA-256(\"retifs/v1/ns\" || Ed25519 public)[0..16]; keyring read key = k(\"keyring-read\"); locator = k(\"keyring-locator\"); node_tag = HMAC-SHA256(locator, node)[0..16]",
         "cases": cases,
     });
     println!("{}", serde_json::to_string_pretty(&out).unwrap());

@@ -28,9 +28,9 @@ LEAF, INTERNAL, INLINE = 0, 1, 2
 
 def secret_of(scheme):
     if scheme["type"] == "public":
-        return hashlib.sha256(b"vork/v1/storage/public").digest()
+        return hashlib.sha256(b"retifs/v1/public").digest()
     if scheme["type"] == "record":
-        return hkdf(32, bytes.fromhex(scheme["namespace_key"]), b"vork/v1/storage/record", bytes.fromhex(scheme["record_id"]))
+        return hkdf(32, bytes.fromhex(scheme["namespace_key"]), b"retifs/v1/record", bytes.fromhex(scheme["record_id"]))
     raise ValueError(scheme["type"])
 
 
@@ -40,7 +40,7 @@ def seal(secret, data):
     frame = bytes([0]) + struct.pack(">I", len(data)) + data
     frame += b"\x00" * (cls - OVERHEAD - len(frame))
     seed = HMAC.new(secret, frame).digest()
-    okm = hkdf(80, seed, b"vork/v1/storage/chunk", b"")
+    okm = hkdf(80, seed, b"retifs/v1/chunk", b"")
     sign, enc, iv = okm[:32], okm[32:64], okm[64:80]
     signed = iv + AES_256_CBC.encrypt(PKCS7.pad(frame), enc, iv)
     chunk = signed + HMAC.new(sign, signed).digest()
@@ -49,7 +49,7 @@ def seal(secret, data):
 
 def open_node(cid, seed, chunk):
     assert cid == b"\x01" + hashlib.sha256(chunk).digest(), "CID is 0x01 || SHA-256(ciphertext)"
-    frame = Token(hkdf(80, seed, b"vork/v1/storage/chunk", b"")[:64]).decrypt(chunk)
+    frame = Token(hkdf(80, seed, b"retifs/v1/chunk", b"")[:64]).decrypt(chunk)
     assert frame[0] == 0, "manifest nodes are never compressed"
     (n,) = struct.unpack(">I", frame[1:5])
     assert frame[5 + n:] == b"\x00" * (len(frame) - 5 - n), "zero fill"
@@ -91,7 +91,7 @@ def padme(n):
 
 
 def padding_piece(secret, digest, index, length):
-    key = HMAC.new(secret, b"vork/v1/storage/pad" + digest + struct.pack(">Q", index)).digest()
+    key = HMAC.new(secret, b"retifs/v1/pad" + digest + struct.pack(">Q", index)).digest()
     out, block = b"", 0
     while len(out) < length:
         out += HMAC.new(key, struct.pack(">Q", block)).digest()

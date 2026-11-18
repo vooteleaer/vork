@@ -23,17 +23,17 @@ Supports 2 (the signed chain of roots is a primitive), 1 (commits are ordinary e
 
 ### Formats (draft v1, `vork_core::channel`)
 ```text
-address  = "vork-ch:1:" ‖ hex(writer Ed25519 public key) ‖ ":" ‖ hex(read key)
-ns_id    = SHA-256("vork/v1/storage/ns" ‖ writer)[0..16]
+address  = "retifs-ch:1:" ‖ hex(writer Ed25519 public key) ‖ ":" ‖ hex(read key)
+ns_id    = SHA-256("retifs/v1/ns" ‖ writer)[0..16]
 
 commit   = 0x01 ‖ ns_id ‖ writer ‖ seq (u64) ‖ time (u64, unix ms)
            ‖ has_prev (u8) [‖ prev commit cid ‖ prev commit seed] ‖ root cid ‖ root seed ‖ root size (u64)
-           ‖ Ed25519(writer, "vork/v1/storage/commit" ‖ all before)
-           sealed as an ordinary chunk; convergence secret = for_record(read key, "vork/v1/storage/commits")
+           ‖ Ed25519(writer, "retifs/v1/commit" ‖ all before)
+           sealed as an ordinary chunk; convergence secret = for_record(read key, "retifs/v1/commits")
 
 head     = 0x01 ‖ ns_id ‖ writer ‖ seq (u64) ‖ time (u64, unix s) ‖ commit cid
-           ‖ RNS Token(HKDF(read key, "vork/v1/storage/head-seed", 64), commit seed)   (96)
-           ‖ Ed25519(writer, "vork/v1/storage/head" ‖ all before)                     258 B in total
+           ‖ RNS Token(HKDF(read key, "retifs/v1/head-seed", 64), commit seed)   (96)
+           ‖ Ed25519(writer, "retifs/v1/head" ‖ all before)                     258 B in total
 ```
 - **Holders and relays stay blind:** a commit is a chunk like any other. A head shows the library, the writer key, the sequence number, a time and a commit CID; the commit's seed is encrypted to readers.
 - **Rollback protection (decision 5):** anyone can verify a head and keep the highest `seq` per writer, without the read key; a follower never goes back.

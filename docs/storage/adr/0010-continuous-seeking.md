@@ -36,10 +36,10 @@ Option 3.
 - **Triggers:** an announce from a candidate peer, a new want, or a slow periodic tick as a fallback.
 - **Links:** one or a few links per reachable peer, kept open while useful.
 - **Before fetching, ask what the peer has:** `/vork/have` sends 8-byte CID prefixes (about 50 per packet, below the MDU, so they pipeline; see [first-transfer](../recon/first-transfer.md)) and returns a bitmap. Then `/vork/get` fetches what's held. Multi-source fills different gaps from different peers.
-- **Change detection:** ~~nodes include a small **store generation** counter in their `vork.node` announce~~ (decided against, 2026-11-11): a peer is asked again after a back-off, or when it announces.
+- **Change detection:** ~~nodes include a small **store generation** counter in their `retifs.node` announce~~ (decided against, 2026-11-11): a peer is asked again after a back-off, or when it announces.
 - **Candidates:**
   - by default, read-cap holder hints, configured peers and our own nodes;
-  - every `vork.node` heard, as an opt-in, because asking reveals interest in CIDs.
+  - every `retifs.node` heard, as an opt-in, because asking reveals interest in CIDs.
 
 ### Holder map
 There may be hundreds of copies of a chunk online. The daemon keeps a living **holder map** of who has what, not just a list of what's missing.
@@ -81,7 +81,7 @@ What a holder holds reveals little: chunks are equal-sized blobs with no visible
 - **Residual:** requests on one link are visibly one session, and bursts are visible in timing. Private requests are spaced by a random pause of up to 300 ms (2026-11-11); spreading them over several links would reduce it further; a global passive observer is out of scope, as for RNS.
 
 ### Holder hints
-A read-cap may carry hints: `vork:1:<root>:<seed>:<size>@<node>,<node>` (at most 8). Hints say where to ask; integrity always comes from the CID. Built (2026-11-11): every place a read-cap is read accepts hints (a plain parse drops them), `get` and `want` ask the hinted nodes like `--from`, and `vork put FILE --hint` prints the read-cap with this node as a hint. ~~The read-cap also carries the file's serve token~~: no serve token since per-chunk proofs (above); proofs come from the seeds the manifest holds.
+A read-cap may carry hints: `retifs:1:<root>:<seed>:<size>@<node>,<node>` (at most 8). Hints say where to ask; integrity always comes from the CID. Built (2026-11-11): every place a read-cap is read accepts hints (a plain parse drops them), `get` and `want` ask the hinted nodes like `--from`, and `vork put FILE --hint` prints the read-cap with this node as a hint. ~~The read-cap also carries the file's serve token~~: no serve token since per-chunk proofs (above); proofs come from the seeds the manifest holds.
 
 ### Replication: push the want, pull the data
 - **Lease:** a signed "keep these CIDs until T" from an owner (or a key the owner delegated). It lists chunks, never manifests ([irreversible decision 6](../02-irreversible-decisions.md)). A node that accepts a lease adds blind wants, and its seeker pulls the chunks from the owner or from anyone who has them.
@@ -115,7 +115,7 @@ See the [threat model](../04-threat-model.md).
 
 ## Implementation status (2026-10-14)
 - **"Who may ask", first slice:**
-  - Serve token derived from the read-cap (`vork_core::access`): `token = HKDF(root seed, "vork/v1/storage/serve")`, `proof = HMAC(token, "vork/v1/storage/get" ‖ link_id ‖ CIDs)[0..16]`.
+  - Serve token derived from the read-cap (`vork_core::access`): `token = HKDF(root seed, "retifs/v1/serve")`, `proof = HMAC(token, "retifs/v1/get" ‖ link_id ‖ CIDs)[0..16]`.
   - `/vork/get` v1 request: `token_id ‖ proof ‖ CIDs`.
   - `vorkd` keeps a serving index (token, CID) for its own writes, plus published CIDs under an all-zero id. Fetched and cached chunks are never in it.
   - Covered by unit tests, in-memory fetch tests (wrong token: nothing served), and a three-daemon run on one machine (owner serves, forged read-cap and cache-only holder get nothing).
@@ -136,15 +136,15 @@ See the [threat model](../04-threat-model.md).
 Format (decision 6, draft v1, `vork_core::lease`, vectors in `test-vectors/lease-v1.json` verified against Python RNS by `verify_lease_rns.py`):
 ```text
 lease    = 0x01 ‖ lease_id (16) ‖ signer (32) ‖ expires (u64 BE) ‖ generations (u8) ‖ count (u16 BE)
-           ‖ (cid (33) ‖ chunk_token (32)) × count ‖ Ed25519 sig over "vork/v1/storage/lease" ‖ body
-renewal  = 0x01 ‖ lease_id ‖ expires ‖ sig over "vork/v1/storage/renew" ‖ 0x01 ‖ lease_id ‖ expires      (89 B)
+           ‖ (cid (33) ‖ chunk_token (32)) × count ‖ Ed25519 sig over "retifs/v1/lease" ‖ body
+renewal  = 0x01 ‖ lease_id ‖ expires ‖ sig over "retifs/v1/renew" ‖ 0x01 ‖ lease_id ‖ expires      (89 B)
 receipt  = 0x01 ‖ lease_id ‖ SHA-256(lease body) ‖ holds_until ‖ holder RNS public key (64) ‖ sig
-proof    = HMAC-SHA256(nonce, "vork/v1/storage/prove" ‖ ciphertext)[0..16]
+proof    = HMAC-SHA256(nonce, "retifs/v1/prove" ‖ ciphertext)[0..16]
 ```
 - **Chunk list, never a manifest.** Each entry carries the chunk's access token (one-way from its seed), so the holder verifies requesters' proofs and proves access itself when pulling, without being able to decrypt. Blind wants are (CID, token).
-- **Per-lease signing key:** `Ed25519 seed = HKDF(library key, "vork/v1/storage/lease-key", lease_id)`. Leases are unlinkable to the owner and to each other; only the owner can renew.
+- **Per-lease signing key:** `Ed25519 seed = HKDF(library key, "retifs/v1/lease-key", lease_id)`. Leases are unlinkable to the owner and to each other; only the owner can renew.
 - **Renewal moves only the expiry** and fits one packet, so keeping data alive over LoRa costs one packet per lease.
-- **Receipts** are signed with the holder's RNS identity and bound to the exact lease body. The owner checks that the key hashes to the `vork.node` destination it leased to. At startup `vorkd` checks that the Prns identity layout matches RNS (X25519 ‖ Ed25519).
+- **Receipts** are signed with the holder's RNS identity and bound to the exact lease body. The owner checks that the key hashes to the `retifs.node` destination it leased to. At startup `vorkd` checks that the Prns identity layout matches RNS (X25519 ‖ Ed25519).
 - **Holder:** `vorkd --hold-for-others SIZE` accepts leases up to SIZE (estimated at 16 KiB per chunk; default 0, refuse; since [ADR-0014](0014-placement-follows-need.md) the default is the store limit, and `0` opts out). Leased chunks are in the hard SERVING tier and the serving index, so the holder serves them exactly as the owner would. The lease puller pulls missing chunks from the lease's sources with the same per-chunk proofs (`vork_storage_net::seek::pull_round`). When the last lease keeping a chunk expires, its flag and token go, and a chunk with no other tier is removed.
 - **Owner:** `vork replicate CAP --to NODE…` leases every chunk of the file (nodes, data, padding; ≤ 1024 per lease) to each node. Upkeep collects receipts, renews at half-term (`--lease-term`, default 30 days), re-offers a lease the holder lost, and checks storage proofs on 4 random chunks every 10 minutes. `status` shows "leased to N node(s), M confirmed by receipt" (a failed proof un-confirms).
 - **Tests:** unit and store tests (signatures, tampering, quota, conflict, refcounts across leases, own data kept, expiry, confirmed holders). Live, three daemons on one machine: two nodes without room refused a 2 MB file (`NoRoom`); a holder accepted it, pulled 144 chunks, returned a receipt, passed the storage proof, and was renewed at half-term; with the owner offline, a reader with the read-cap got the file from the holder (hash matched).

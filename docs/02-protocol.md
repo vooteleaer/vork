@@ -7,7 +7,9 @@ Byte order: our own fields are **big-endian**. WireGuard's fields keep WireGuard
 ## 1. Identity
 
 - A node has an **Ed25519** signing key and an **X25519** key. The X25519 key is its WireGuard static key for both layers.
-- **Address** = `SHA-256(ed_pub ‖ x_pub)[0..16]` (16 bytes; shown as 32 hex digits).
+- **Address** = `SHA-256(x_pub ‖ ed_pub)[0..16]` (16 bytes; shown as 32 hex digits). X25519 first, as in the storage format, so a storage identity is a vØrk identity.
+- **Destination** (a named service of an identity) = `SHA-256(SHA-256(name)[0..10] ‖ address)[0..16]`.
+- **Key file:** the 64 secret bytes, X25519 secret ‖ Ed25519 seed (a storage identity file).
 - Every signature covers `label ‖ message`, with a domain-separation label:
 
 | Label | Signs |
@@ -69,7 +71,7 @@ A node that receives a `HELLO` without having sent its own to that neighbor with
 
 ### ANNOUNCE
 
-- The address is computed from `ed_pub ‖ x_pub`; the signature is checked over `vork/v0/announce ‖ address ‖ x_pub ‖ seq ‖ flags`.
+- The address is computed from `x_pub ‖ ed_pub`; the signature is checked over `vork/v0/announce ‖ address ‖ x_pub ‖ seq ‖ flags`.
 - `seq` must strictly increase for each identity. A node stores the last value it used and sends `max(last + 1, Unix time in ms)`: devices without a clock still work, and a clock set back doesn't make announces look old.
 - `hops` is not signed. A forwarder sends it on as `hops + 1`. Announces with `hops ≥ 16` are dropped.
 - A node sends its own announce every **30 s** and when a link comes up.

@@ -4,7 +4,7 @@
 //! frame    = encoding (u8) ‖ u32_be(len) ‖ payload ‖ zero fill to (class − 64)
 //!            encoding 0 = raw, 1 = zstd (payload is the compressed data)
 //! seed     = HMAC-SHA256(convergence_secret, frame)
-//! okm      = HKDF-SHA256(ikm = seed, salt = "vork/v1/storage/chunk", info = "", L = 80)
+//! okm      = HKDF-SHA256(ikm = seed, salt = "retifs/v1/chunk", info = "", L = 80)
 //! chunk    = iv ‖ AES-256-CBC(enc_key, iv, PKCS7(frame)) ‖ HMAC-SHA256(sign_key, iv ‖ ct)
 //! ```
 //! The result is an RNS Token with key `okm[0..64]` and a derived IV, and its
@@ -28,7 +28,7 @@ type HmacSha256 = Hmac<Sha256>;
 type Enc = cbc::Encryptor<Aes256>;
 type Dec = cbc::Decryptor<Aes256>;
 
-const CHUNK_SALT: &[u8] = b"vork/v1/storage/chunk";
+const CHUNK_SALT: &[u8] = b"retifs/v1/chunk";
 
 /// Ciphertext sizes: 512 B … 256 KiB. 512 B carries a commit or a small
 /// operations file in one chunk, halving small writes on slow links (decided 2026-10-20).

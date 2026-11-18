@@ -2,7 +2,7 @@
 
 - **Status:** accepted (prototype), 2026-11-09
 - **Date:** 2026-11-09
-- **Irreversible:** partly. A record type every daemon reads (`vork.deleted`) and the rule that only a writer holding `grant` makes it count. No new crypto, no format change in commits or operations.
+- **Irreversible:** partly. A record type every daemon reads (`retifs.deleted`) and the rule that only a writer holding `grant` makes it count. No new crypto, no format change in commits or operations.
 
 ## Context
 Leaving a library (`ns leave`) drops it from one device; other members keep it, and so do the holders this device leased content to until their leases run out. The user asked (2026-11-09) for a way to delete a library from all their machines at once. A library made on a device could also not be left from the apps at all (the menu hid it); that's fixed alongside: leaving one's own is allowed with a warning (`NsLeave { mine }`).
@@ -19,8 +19,8 @@ Leaving a library (`ns leave`) drops it from one device; other members keep it, 
 
 ## Decision
 - **Who:** a member holding `grant` (in the apps: one who may invite). Others are refused and may leave.
-- **What is written**, in one commit: a delete of every record, and a new record `type = "vork.deleted"`, `by = <this node's vork.node address>`.
-- **What counts:** a member's daemon takes a library as deleted when a live record's `type` is `vork.deleted` **and** that field was set by a writer holding `grant` at its stamp (`State::set_by_granter`). A writer with only `write` can't delete a library by writing that record (tested live: two daemons, the write-only member's own record ignored by both).
+- **What is written**, in one commit: a delete of every record, and a new record `type = "retifs.deleted"`, `by = <this node's retifs.node address>`.
+- **What counts:** a member's daemon takes a library as deleted when a live record's `type` is `retifs.deleted` **and** that field was set by a writer holding `grant` at its stamp (`State::set_by_granter`). A writer with only `write` can't delete a library by writing that record (tested live: two daemons, the write-only member's own record ignored by both).
 - **What a member's daemon does** (`library_deleted`):
   - hides the library at once (the apps, the mounts and the Explorer provider no longer list it) and stops announcing it;
   - lets its content go: the files only it used become evictable, and leases on them aren't renewed, so holders release them when the leases run out (ADR-0011, ADR-0014);
@@ -41,4 +41,4 @@ Leaving a library (`ns leave`) drops it from one device; other members keep it, 
 ## Implementation status (2026-11-09)
 - `vork_core::ops::State::set_by_granter`, with a unit test (a write-only member's record doesn't count, a revoked granter's doesn't, a granter's does).
 - vorkd: `NsDelete`, `library_deleted`, `leave_deleted` (every 30 s), the `deleted` file; `forget_files_of` split out of `leave_now`.
-- Live on one machine with two daemons on the local Prns: the write-only member's `ns delete` refused; the granter's deletion leaves one record (`vork.deleted`); the other member hid the library within seconds and logged its 30-day grace; a write-only member's own `vork.deleted` record didn't count on its own node.
+- Live on one machine with two daemons on the local Prns: the write-only member's `ns delete` refused; the granter's deletion leaves one record (`retifs.deleted`); the other member hid the library within seconds and logged its 30-day grace; a write-only member's own `retifs.deleted` record didn't count on its own node.

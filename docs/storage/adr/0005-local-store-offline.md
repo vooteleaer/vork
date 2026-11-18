@@ -35,7 +35,7 @@ Option 3.
 - **Ciphertext at rest.** Chunks are stored exactly as they travel, keyed by CID, and decrypted in memory on read. A stolen disk is noise even without LUKS, the store can serve other nodes directly, and dedup is natural.
 - **Misses are explicit:**
   - Native API ([ADR-0004](0004-native-record-api.md)): an `Unavailable { fetch: queued }` result, and `status()` lets apps check beforehand.
-  - FUSE: with a route, block up to a configurable timeout; with no route, fail immediately. Presence is visible as the xattr `user.vork.local`.
+  - FUSE: with a route, block up to a configurable timeout; with no route, fail immediately. Presence is visible as the xattr `user.retifs.local`.
 - **Writes never miss.** They land in the pinned tier immediately and show "only here" until pinning nodes confirm with signed receipts.
 
 ## Impact on the threat model
@@ -60,7 +60,7 @@ Ciphertext at rest means a stolen device without its key reveals only chunk coun
   - Content that is here, for example read on demand into the cache tier, is pinned.
   - Files pulled because they were kept, and kept no longer (the tag removed, the rule deleted, or replaced by a new version), are released: their leases end, and their chunks become evictable unless another needed file shares them.
   - Content this node wrote is never released by keep.
-- **FUSE:** the computed xattr `user.vork.local` is `yes`, `no` or `partial (n/m chunks)`.
+- **FUSE:** the computed xattr `user.retifs.local` is `yes`, `no` or `partial (n/m chunks)`.
 - **Misses:** reads of content that isn't kept are fetched on demand (ADR-0002, offline semantics).
 - **Live test**, two daemons; B is device `laptop` in `rules` mode. A wrote four photos (two in album Prangli), a rule for `laptop` (album Prangli) and a rule for `phone`.
   - B pulled exactly the two Prangli photos, and ignored the `phone` rule.

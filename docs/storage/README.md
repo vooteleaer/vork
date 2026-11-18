@@ -52,7 +52,7 @@ The details are in the [architecture](01-architecture.md).
 - **Already running vØrk storage?** The installers are also a vØrk storage library, `vork-installers` (every install joins it by itself). To join it by hand, paste this link in **Join a library → Join with link**, or run `vork open <link>`:
 
   ```
-  vork:ns/1:02fe66c2ccd78d25a90c1b53bbde71232bb2315d3f1b8f8fb55951b5efa1467f:4f775b9411ee2d2431d621df27af64c2b682bf9ed09be17c6e1aa5193608435a?name=vork%20installers&from=e0b84d8d7903ce16e85906101af4f6e0
+  retifs:ns/1:02fe66c2ccd78d25a90c1b53bbde71232bb2315d3f1b8f8fb55951b5efa1467f:4f775b9411ee2d2431d621df27af64c2b682bf9ed09be17c6e1aa5193608435a?name=vork%20installers&from=e0b84d8d7903ce16e85906101af4f6e0
   ```
 - **From source**, and everything the `vork` command can do: [using vØrk storage from the command line](10-command-line.md).
 

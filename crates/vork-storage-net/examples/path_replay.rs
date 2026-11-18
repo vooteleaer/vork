@@ -36,7 +36,7 @@ fn destination(aspect: &'static str) -> PreConfiguredDestination<'static> {
         request_endpoints: ServeMyRequestEndpoints::No,
         resource_strategy: ResourceStrategy::AcceptNone,
         maximum_request_bytes: Default::default(),
-        app_name: "vork",
+        app_name: "retifs",
         aspects: if aspect == "server" { &["replay", "server"] } else { &["replay", "client"] },
         identity: try_generate_identity_secret().expect("identity generation"),
         announce_app_data: b"",

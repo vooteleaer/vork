@@ -90,14 +90,14 @@ pub struct FileRef {
 }
 
 /// Text form of a read capability (draft, not yet an accepted format):
-/// `vork:1:<root cid hex>:<root seed hex>:<size>`, optionally followed by
-/// holder hints, `@<node>,<node>` (`vork.node` addresses, 32 hex digits
+/// `retifs:1:<root cid hex>:<root seed hex>:<size>`, optionally followed by
+/// holder hints, `@<node>,<node>` (`retifs.node` addresses, 32 hex digits
 /// each; ADR-0010): where to ask, never what to trust (every chunk is checked
 /// against its CID). Parsing a read-cap accepts hints and drops them;
 /// [`FileRef::parse_with_hints`] keeps them.
 impl fmt::Display for FileRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "vork:1:{}:{}:{}", self.root, hex::encode(self.seed.0), self.size)
+        write!(f, "retifs:1:{}:{}:{}", self.root, hex::encode(self.seed.0), self.size)
     }
 }
 
@@ -125,7 +125,7 @@ impl FileRef {
 
     /// Parses a read-cap and its holder hints, if any.
     pub fn parse_with_hints(s: &str) -> Result<(Self, Vec<[u8; 16]>), ManifestError> {
-        let bad = ManifestError::Malformed("read-cap must be vork:1:<cid>:<seed>:<size>[@<node>,...]");
+        let bad = ManifestError::Malformed("read-cap must be retifs:1:<cid>:<seed>:<size>[@<node>,...]");
         let (cap, hints) = match s.trim().split_once('@') {
             Some((cap, hints)) => (cap, Some(hints)),
             None => (s.trim(), None),
@@ -144,7 +144,7 @@ impl FileRef {
 
     fn parse_bare(s: &str, bad: ManifestError) -> Result<Self, ManifestError> {
         let parts: Vec<&str> = s.trim().split(':').collect();
-        let ["vork", "1", root, seed, size] = parts.as_slice() else { return Err(bad) };
+        let ["retifs", "1", root, seed, size] = parts.as_slice() else { return Err(bad) };
         let root: [u8; CID_LEN] = hex::decode(root).ok().and_then(|b| b.try_into().ok()).ok_or(bad.clone())?;
         let seed: [u8; 32] = hex::decode(seed).ok().and_then(|b| b.try_into().ok()).ok_or(bad.clone())?;
         Ok(FileRef {
@@ -281,7 +281,7 @@ pub fn padme(n: u64) -> u64 {
 /// secret (so equal public files still converge).
 fn padding_piece(secret: &ConvergenceSecret, digest: &[u8; 32], index: u64, len: usize) -> Vec<u8> {
     let mut k = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC takes any key length");
-    k.update(b"vork/v1/storage/pad");
+    k.update(b"retifs/v1/pad");
     k.update(digest);
     k.update(&index.to_be_bytes());
     let key = k.finalize().into_bytes();

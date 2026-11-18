@@ -28,7 +28,7 @@ What happens then can't be left to each app. The rules have to be the same every
 - **Additively by default:** a type grows by adding attributes. Old records stay valid and old apps keep working.
 - **Must-ignore:** an app reading a record ignores attributes it doesn't know.
 - **Must-keep:** an app writing a record changes only the keys it means to change, and never rewrites a whole record from its own model. That way a newer app's attributes survive an older app's edit. The local API already works this way: `RecordSet` sets and unsets the keys given. A copy or a share carries every attribute, except what a share is told to leave out (ADR-0021).
-- **A breaking change gets a new name:** a different meaning goes under a new attribute name, or under a new type or a MIME parameter (`application/x-vnd.vork.tileset; schema=…`). An old reader then sees something unknown instead of misreading it. The old form keeps being read, as old type names are now (`libvork::types::LEGACY`).
+- **A breaking change gets a new name:** a different meaning goes under a new attribute name, or under a new type or a MIME parameter (`application/x-vnd.retifs.tileset; schema=…`). An old reader then sees something unknown instead of misreading it. The old form keeps being read, as old type names are now (`libvork::types::LEGACY`).
 
 **How apps meet data:**
 - **Apps say what they handle:** the types they read and the ones they write, known to the system as Haiku's file types and freedesktop's MIME associations are. Then the system knows when nothing on a device opens something, and can later suggest an app (an app store is a public library too, ADR-0029).
@@ -48,6 +48,6 @@ Must-keep means a record can carry attributes the editing app never shows. The u
 - Test: an older app editing a record with unknown attributes keeps them (a test per app core).
 
 ## Review (2026-10-29)
-Built: `v` in every announce and `fmt` for a library's format, kept and shown as "needs a newer vork" when unknown ([ADR-0029](0029-announced-public-libraries.md)); the file tree shows any record's attributes as `user.vork.*` extended attributes.
+Built: `v` in every announce and `fmt` for a library's format, kept and shown as "needs a newer vork" when unknown ([ADR-0029](0029-announced-public-libraries.md)); the file tree shows any record's attributes as `user.retifs.*` extended attributes.
 
 Not built yet: apps saying which types they read and write (so the system knows when nothing on a device can open a record), and the desktop utility as the generic view of everything.

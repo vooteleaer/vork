@@ -49,7 +49,7 @@ fn destination(serve: bool) -> PreConfiguredDestination<'static> {
         request_endpoints: if serve { ServeMyRequestEndpoints::Yes } else { ServeMyRequestEndpoints::No },
         resource_strategy: ResourceStrategy::Accept { max_uncompressed_bytes: 1 << 22, accept_compressed: true },
         maximum_request_bytes: Default::default(),
-        app_name: "vork",
+        app_name: "retifs",
         aspects: if serve { &["smoke", "server"] } else { &["smoke", "client"] },
         identity: try_generate_identity_secret().expect("identity generation"),
         announce_app_data: b"",

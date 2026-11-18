@@ -47,9 +47,9 @@ def main():
     for r in v["records"]:
         checks[f"record {r['id'][:4]}"] = umsgpack.packb(record(r)).hex() == r["encoded"]
     recs = sorted((record(r) for r in v["records"]), key=lambda r: r["id"])
-    snap = sorted_map({"records": recs, "vork": "ns-snapshot/1"})
+    snap = sorted_map({"records": recs, "retifs": "ns-snapshot/1"})
     checks["snapshot"] = umsgpack.packb(snap).hex() == v["snapshot"]
-    checks["snapshot unpacks"] = umsgpack.unpackb(bytes.fromhex(v["snapshot"]))["vork"] == "ns-snapshot/1"
+    checks["snapshot unpacks"] = umsgpack.unpackb(bytes.fromhex(v["snapshot"]))["retifs"] == "ns-snapshot/1"
 
     failures = 0
     for name, ok in checks.items():

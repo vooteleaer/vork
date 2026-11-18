@@ -39,7 +39,7 @@ Prototypes are throwaway. They're for learning, not for locking in the format. T
 - [x] Request privacy: per-chunk access proofs (no file token on the wire), one-item requests (`--private-requests`, `batch: 1`), PADMÉ padding with padding fetched like data, per-record personal secrets (versions dedup) ([ADR-0008](adr/0008-chunk-encryption-and-cid.md), [ADR-0010](adr/0010-continuous-seeking.md)).
 - [x] Request privacy, continued: private rounds ask each peer about a random slice (≤ 16) with decoy prefixes, requests spaced by random pauses ([ADR-0010](adr/0010-continuous-seeking.md)).
 - [ ] Request privacy: private requests spread over several links per peer.
-- [x] Where a library's copies are, said in the library: a `vork.holders` record per writing node, so every member reads files placed by a node that's away; readers keeping content are peers too (`/vork/reader`) ([ADR-0035](adr/0035-holders-in-the-library.md)).
+- [x] Where a library's copies are, said in the library: a `retifs.holders` record per writing node, so every member reads files placed by a node that's away; readers keeping content are peers too (`/vork/reader`) ([ADR-0035](adr/0035-holders-in-the-library.md)).
 - [x] Holder map, first slice: per-file holders from receipts and `have` answers, in memory and bounded; sources ranked (holds, holds some, unknown, holds none, just failed; then by link), reads spread over up to three holders, instant failover, copies seen in `vork status` ([ADR-0010](adr/0010-continuous-seeking.md)).
 - [ ] Holder map, continued: per-chunk holders, holders learned from own nodes (gossip, opt-in).
 - [x] Holder hints in read-caps (`…@<node>,<node>`): `get` and `want` ask them, `put --hint` adds this node ([ADR-0010](adr/0010-continuous-seeking.md)).
@@ -55,10 +55,10 @@ Prototypes are throwaway. They're for learning, not for locking in the format. T
 - [x] Mixed leases: per-holder packing sorted by CID, stale leases repacked at renewal ([ADR-0014](adr/0014-placement-follows-need.md)).
 - [x] Signed channels: commits, heads, `/vork/head`, follow with automatic updates, followers mirror ([ADR-0015](adr/0015-signed-channels.md)).
 - [x] Copies by policy: at least three of every needed file, a library's own number (`vork library copies NS N`), one copy at another site, trimming never takes the last copy at another site; `vork nodes` lists the storage nodes placement knows ([ADR-0011](adr/0011-redundancy-by-default.md), [ADR-0014](adr/0014-placement-follows-need.md)).
-- [x] Announce app data (Prns 0.3.8): a `vork.node` announce states its interval (a node missing 5 gets no new leases) and whether it holds for others ([ADR-0014](adr/0014-placement-follows-need.md)).
+- [x] Announce app data (Prns 0.3.8): a `retifs.node` announce states its interval (a node missing 5 gets no new leases) and whether it holds for others ([ADR-0014](adr/0014-placement-follows-need.md)).
 - [x] Placement, continued: the offer in announces (`room`, a power of two; placement skips nodes without room for a lease), small leases per holder merged at renewal ([ADR-0014](adr/0014-placement-follows-need.md)).
 - [x] ~~Own-node pool on a LAN~~: decided against (owner, 2026-11-11). Placement doesn't prefer the user's own devices: the nearest, most reliable node holds, whoever's it is (copies are ciphertext); targets, repair and proofs are built for all holders ([ADR-0014](adr/0014-placement-follows-need.md)).
-- [x] ~~Volunteer storage offers (`vork.store`)~~: replaced (owner, 2026-11-11) by every node holding for others by default, its offer (`room`) in its `vork.node` announce, capped by `--hold-for-others`.
+- [x] ~~Volunteer storage offers (`retifs.store`)~~: replaced (owner, 2026-11-11) by every node holding for others by default, its offer (`room`) in its `retifs.node` announce, capped by `--hold-for-others`.
 - [x] ~~Diffuse mode~~: decided against (owner, 2026-11-11); the spare tier gives unrequested holdings, and leases keep personal data.
 - [x] Format additions: compression flag in the chunk frame (opt-in zstd) and inline tiny files in manifests (node kind 2); vectors regenerated and verified against RNS.
 - [x] Decide before accepting ADR-0008/0009: full replicas now, erasure coding later below chunks; a 512 B smallest class ([format decisions](08-open-format-decisions.md)).
@@ -76,7 +76,7 @@ Prototypes are throwaway. They're for learning, not for locking in the format. T
 - [x] Multi-writer, continued: hybrid logical clock for commit times, grants limited by attribute key and expiry and narrowed on delegation, `watch` (long poll per library), transactions, `query --at` ([ADR-0017](adr/0017-multi-writer-namespaces.md)).
 - [x] Pruning tombstones in checkpoints: dead records no writer can still precede, by each writer's frontier and write intervals ([ADR-0018](adr/0018-state-trees.md)).
 - [x] Grants filtered by record content: decided against (order-dependent); separate libraries per contributor, and queries across libraries (`query NS1,NS2 …`) ([ADR-0017](adr/0017-multi-writer-namespaces.md)).
-- [x] `keep:<device>` tag and query-based keep rules (proactive pull), keep mode per library, `user.vork.local` ([ADR-0005](adr/0005-local-store-offline.md)).
+- [x] `keep:<device>` tag and query-based keep rules (proactive pull), keep mode per library, `user.retifs.local` ([ADR-0005](adr/0005-local-store-offline.md)).
 - [x] Remote queries to own nodes over a Link, full query language: `--via NODE`, devices admitted with app-style scopes ([ADR-0019](adr/0019-remote-query-and-blind-index.md)).
 - [x] Blind index for search nodes without the read key: declared keys, exact match, index channel derived from the read key, `/vork/query` with proof, `query --search NODE`; vectors verified against RNS ([ADR-0019](adr/0019-remote-query-and-blind-index.md)).
 - [x] Lazy members: `library join --lazy` holds the checkpoint, the chains since and only the state paths it needs (changed records on sync, others on demand) ([ADR-0018](adr/0018-state-trees.md)).
@@ -84,12 +84,12 @@ Prototypes are throwaway. They're for learning, not for locking in the format. T
 - [x] Live queries: `LiveQuery` answers only when a query's answer changes, locally or `--via` an own node ([ADR-0019](adr/0019-remote-query-and-blind-index.md)).
 - [x] Maps, places and addresses as public libraries: vector tiles, places by cell, a gazetteer searched through the blind index, no internet service ([ADR-0027](adr/0027-places.md), [ADR-0028](adr/0028-maps-over-vork.md)).
 - [x] Per-writer commit chains (one commit per modification), merge, history queries, per-record `versions` ([ADR-0017](adr/0017-multi-writer-namespaces.md)).
-- [x] Leaving a library: hidden at once, its data goes in the background; one made here only with `--mine`. Deleting a library on every member's node: `ns delete NS --yes`, a `vork.deleted` record counted only from a writer holding `grant`, 30 days' grace ([ADR-0034](adr/0034-deleting-a-library.md)).
+- [x] Leaving a library: hidden at once, its data goes in the background; one made here only with `--mine`. Deleting a library on every member's node: `ns delete NS --yes`, a `retifs.deleted` record counted only from a writer holding `grant`, 30 days' grace ([ADR-0034](adr/0034-deleting-a-library.md)).
 
 ## Phase 3: identity and permissions
 - [x] Group libraries, validate-on-read (every reader checks grants on merge), key rotation on removal, limited grants narrowed on delegation ([ADR-0017](adr/0017-multi-writer-namespaces.md)).
 - [x] ~~Capability chains between people beyond grants~~: decided against (owner, 2026-11-11). Grants in a library's history are visible, revocable, limited and checked by every reader; that's enough.
-- [x] Public libraries announced (`vork.library`, app data with name, about, address, what it holds by type, area, format), heard into a local list and joined from it; members' node addresses in the library so every member syncs with every member ([ADR-0022](adr/0022-public-namespaces-discovery.md), [ADR-0029](adr/0029-announced-public-libraries.md)).
+- [x] Public libraries announced (`retifs.library`, app data with name, about, address, what it holds by type, area, format), heard into a local list and joined from it; members' node addresses in the library so every member syncs with every member ([ADR-0022](adr/0022-public-namespaces-discovery.md), [ADR-0029](adr/0029-announced-public-libraries.md)).
 - [x] Compatibility rules for every app: versioned network and library formats, must-ignore and must-keep, unknown shown ([ADR-0030](adr/0030-data-outlives-apps.md)).
 - [x] Every node size-limited; storage-less nodes with only a keyring on disk, their own libraries fetched back from their holders after a restart ([ADR-0031](adr/0031-storage-less-nodes.md)).
 - [x] Shares: a selection (records, a folder, a query) as its own library kept up to date by the owner's nodes, content by reference, attributes optionally left out; started from Explorer's context menu ([ADR-0021](adr/0021-shares.md)).
@@ -106,7 +106,7 @@ Prototypes are throwaway. They're for learning, not for locking in the format. T
 - [x] ~~Session capabilities; app scopes as capability chains~~: decided against (owner, 2026-11-11): the app tokens (libraries, read/write, key limits) are enough.
 
 ## Phase 4: Linux client
-- [x] Linux: FUSE frontend on `libvork`: `vork-mount` (POSIX view of a library, `user.vork.*` xattrs, `.query/` dirs, saves keep the record) ([ADR-0002](adr/0002-os-integration.md)).
+- [x] Linux: FUSE frontend on `libvork`: `vork-mount` (POSIX view of a library, `user.retifs.*` xattrs, `.query/` dirs, saves keep the record) ([ADR-0002](adr/0002-os-integration.md)).
 - [x] Reads on demand: only the byte ranges read, fetched from peers within a wait, never hanging (offline semantics, [ADR-0002](adr/0002-os-integration.md)).
 - [x] Writes without whole-file buffering: write sessions spooled in the daemon, streamed into the store ([ADR-0002](adr/0002-os-integration.md)).
 - [x] `vork mount NS [DIR]`, `vork mount`, `vork unmount NS`: one command for the file tree on Linux (FUSE) and Windows (Cloud Files) ([ADR-0002](adr/0002-os-integration.md)).

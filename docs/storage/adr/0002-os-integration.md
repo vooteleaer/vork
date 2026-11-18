@@ -20,7 +20,7 @@ Option 2.
 
 - **Daemon core** is reached only through the native record API ([ADR-0004](0004-native-record-api.md)). Frontends only translate `lookup / getattr / read / readdir / getxattr / setxattr` into it. Other frontends (NFS for LAN clients, a kernel driver for boot) can be added later without touching the core.
 - **Linux:** libfuse.
-  - Attributes appear as `user.vork.*` xattrs.
+  - Attributes appear as `user.retifs.*` xattrs.
   - Queries appear as virtual directories, e.g. `.query/album=Prangli 2026/`.
   - Cached reads use FUSE passthrough (kernel 6.9+).
 - **Haiku:** userlandfs with the native Haiku FS interface (built 2026-11: `vork-haikufs`; vorkd mounts every library as a volume in `~/vork`). Attributes, indexes and live queries are native, so they work in Tracker and `query` like on BFS.
@@ -51,9 +51,9 @@ The mount exposes plaintext to processes in the user's session, and root on the 
 - Albums (2026-11-05): an album is only what its photos say: an `album` attribute holding a name, or a list of names. An album exists while some photo is in it. One name, in any case and in any library, is one album, and there are no album records. (Photos had made album records, which showed in `/Unfiled` as empty files. It now moves them onto their photos when it sees them, and drops them.) A file in albums is also under `/Albums/<album>/`. That entry is the same record, not a copy. Deleting it there takes the file out of the album and leaves the record. Nothing moves out of `/Albums`. In Explorer, a file put into an album's folder is a new record in that album, without a path. A folder made there stays on the device. The Linux mount refuses both. Queries (`album=Prangli 2026`), keep rules, shares and the blind index see albums as they see any attribute.
 
 **Attributes as xattrs:**
-- Every attribute is `user.vork.<key>`, readable and writable.
+- Every attribute is `user.retifs.<key>`, readable and writable.
 - Text maps to typed values: numbers, `true`/`false` and `null` are typed, `0x…` is bytes, JSON strings and lists are themselves, anything else is a string. A string that would read back as another type is shown quoted.
-- Writing `user.vork.path` moves the file.
+- Writing `user.retifs.path` moves the file.
 
 **Queries:**
 - `/.query/<terms>/` is any name of comma-separated terms (as `vork query` takes them), percent-decoded: `%2F` is `/`, `%2C` a comma inside a term.

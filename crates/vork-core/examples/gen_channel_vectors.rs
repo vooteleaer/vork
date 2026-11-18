@@ -32,7 +32,7 @@ fn main() {
         })
     };
     let doc = json!({
-        "construction": "vork channels v1 (ADR-0015, decisions 5 and 8, proposed)",
+        "construction": "retifs channels v1 (ADR-0015, decisions 5 and 8, proposed)",
         "writer_seed": hex::encode(key.signing_seed()),
         "read_key": hex::encode(addr.read_key),
         "writer": hex::encode(addr.writer),

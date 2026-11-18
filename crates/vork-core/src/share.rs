@@ -7,7 +7,7 @@
 //! source ID from it:
 //!
 //! ```text
-//! share_id = HKDF-SHA256(ikm = source record ID, salt = "vork/v1/storage/share-record",
+//! share_id = HKDF-SHA256(ikm = source record ID, salt = "retifs/v1/share-record",
 //!                        info = the share library's ns_id)[0..16]
 //! ```
 //!
@@ -20,11 +20,11 @@ use sha2::Sha256;
 
 use crate::{channel::NsId, record::RecordId, record::Value};
 
-const SHARE_RECORD_SALT: &[u8] = b"vork/v1/storage/share-record";
-const WRITEBACK_SALT: &[u8] = b"vork/v1/storage/share-writeback";
+const SHARE_RECORD_SALT: &[u8] = b"retifs/v1/share-record";
+const WRITEBACK_SALT: &[u8] = b"retifs/v1/share-writeback";
 
 /// The `type` of a share's definition record, kept in the source library.
-pub const DEFINITION_TYPE: &str = "vork.share";
+pub const DEFINITION_TYPE: &str = "retifs.share";
 
 /// The ID of `source`'s copy in the share library `share`.
 pub fn record_id(source: &RecordId, share: &NsId) -> RecordId {
@@ -38,7 +38,7 @@ pub fn record_id(source: &RecordId, share: &NsId) -> RecordId {
 /// the share writes the addition as the same record (equal writes merge).
 ///
 /// ```text
-/// source_id = HKDF-SHA256(ikm = the member's record ID, salt = "vork/v1/storage/share-writeback",
+/// source_id = HKDF-SHA256(ikm = the member's record ID, salt = "retifs/v1/share-writeback",
 ///                         info = the share library's ns_id)[0..16]
 /// ```
 pub fn writeback_id(member_record: &RecordId, share: &NsId) -> RecordId {

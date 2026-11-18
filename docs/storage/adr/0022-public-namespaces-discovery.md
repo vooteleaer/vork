@@ -1,6 +1,6 @@
 # ADR-0022: Public libraries and discovery over standard announces
 
-- **Status:** accepted in part (prototype), 2026-10-29: members' node addresses in the library. Discovery by announces is superseded by [ADR-0029](0029-announced-public-libraries.md) (`vork.library`, not `vork.public`)
+- **Status:** accepted in part (prototype), 2026-10-29: members' node addresses in the library. Discovery by announces is superseded by [ADR-0029](0029-announced-public-libraries.md) (`retifs.library`, not `retifs.public`)
 - **Date:** 2026-10-21
 - **Irreversible:** partly. The announce's aspect and app_data format are read by other nodes and tools; once public libraries announce with them, changing them needs a version field (included below).
 
@@ -17,21 +17,21 @@ Reticulum already has a discovery mechanism: the announce. NomadNet nodes, LXMF 
 ## Decision
 
 ### Public libraries announce themselves
-- Each public library has its own RNS destination, aspect `vork.public`, and announces with the standard mechanism. Its app_data is canonical msgpack:
+- Each public library has its own RNS destination, aspect `retifs.public`, and announces with the standard mechanism. Its app_data is canonical msgpack:
   ```text
   { "v": 1, "name": str, "about": str (short), "tags": [str], "addr": bin 64 (writer ‖ read key) }
   ```
-  It must fit an announce: about 300 bytes in total, so `about` and `tags` are short. A longer description lives in the library itself (a record `type=vork.about`).
+  It must fit an announce: about 300 bytes in total, so `about` and `tags` are short. A longer description lives in the library itself (a record `type=retifs.about`).
 - Announced at start, on change, and a few times a day, like NomadNet nodes; never more often, so it costs the network what a NomadNet node costs.
 - Making a library public is an explicit act (`vork ns publish NS`); stopping it stops the announces. Copies already announced and mirrored stay readable, as for any address given out.
 
 ### Finding them
-- **Near:** every node keeps the `vork.public` announces it hears (name, about, tags, hops, when). That list is Find's "public" scope, the way NomadNet's network list is built.
+- **Near:** every node keeps the `retifs.public` announces it hears (name, about, tags, hops, when). That list is Find's "public" scope, the way NomadNet's network list is built.
 - **Further:** directory channels (signed lists of public libraries someone curates, followed like any channel, [ADR-0015](0015-signed-channels.md)) and public search nodes that follow public libraries and index them (openly: their read keys are public), answering the whole query language.
 - **Following** a public library mirrors it like a channel; a saved query may span public libraries.
 
 ### Members find each other's nodes in the library, not in announces
-- Announcing "this node belongs to library X" would tell the whole network who shares what. Instead, each member writes its node address into the library next to the identity it already publishes there ([ADR-0017](0017-multi-writer-namespaces.md)). Other members read it (it's encrypted like everything in the library) and sync with every member's node, not just the one they joined through. Nodes themselves are found by their ordinary `vork.node` announces.
+- Announcing "this node belongs to library X" would tell the whole network who shares what. Instead, each member writes its node address into the library next to the identity it already publishes there ([ADR-0017](0017-multi-writer-namespaces.md)). Other members read it (it's encrypted like everything in the library) and sync with every member's node, not just the one they joined through. Nodes themselves are found by their ordinary `retifs.node` announces.
 - This makes sync independent of one hub: in the soak test of 2026-10-21, a member whose only peer lost its path stopped syncing although two other members had everything.
 
 ### Prns
@@ -41,7 +41,7 @@ Prns 0.3.8 passes app_data with each heard announce (`Diagnostic::AnnounceHeard`
 - **Members' nodes:** done, as the operation `[node, bin 16]` (ADR-0017). Each sync round, a node whose library doesn't name its own node (and that may write) writes it, so libraries made before this get it too; every member's node is then a peer of the library, so each member syncs with all of them.
   - Live (three nodes on one machine, 5 checks): two members that joined through the creator learned each other's nodes; with the creator stopped, one's write reached the other directly, and the creator caught up when it was back.
   - The four-node soak of 2026-10-22 had shown why: 49 of 84 rounds behind, almost all of it rtr-4's writes reaching the others late over its one path to cafa-cloud (368 link timeouts from cafa-cloud to rtr-4), although RTR-2 has a link of its own to rtr-4.
-- **Public libraries (`vork.public` announces):** not yet.
+- **Public libraries (`retifs.public` announces):** not yet.
 
 ## Impact on the threat model
 - **Who reads a public library** isn't visible to its owner (fetching is anonymous by default); its existence and its announce are visible to everyone, by design.
@@ -50,7 +50,7 @@ Prns 0.3.8 passes app_data with each heard announce (`Diagnostic::AnnounceHeard`
 - **Member node addresses** are visible to members only.
 
 ## Open
-Discovery went the way of [ADR-0029](0029-announced-public-libraries.md): one `vork.library` destination per node announcing its public libraries in turn, without a stamp so far, and what a library holds by type instead of free tags. What stays open here:
-- A stamp on `vork.public` announces, and how much.
+Discovery went the way of [ADR-0029](0029-announced-public-libraries.md): one `retifs.library` destination per node announcing its public libraries in turn, without a stamp so far, and what a library holds by type instead of free tags. What stays open here:
+- A stamp on `retifs.public` announces, and how much.
 - Tags: free words, or a small convention (type, language, region).
 - Whether a node with many public libraries announces each, or one summary destination with the list fetched over a link.

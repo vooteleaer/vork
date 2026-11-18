@@ -116,9 +116,9 @@ pub fn join(dir: &str, name: &str) -> String {
     if dir == "/" { format!("/{name}") } else { format!("{dir}/{name}") }
 }
 
-/// The size a read-cap (`vork:1:<root>:<key>:<size>`) gives its file.
+/// The size a read-cap (`retifs:1:<root>:<key>:<size>`) gives its file.
 fn cap_size(cap: &str) -> Option<u64> {
-    cap.strip_prefix("vork:")?.rsplit(':').next()?.parse().ok()
+    cap.strip_prefix("retifs:")?.rsplit(':').next()?.parse().ok()
 }
 
 fn attr<'a>(r: &'a RecordView, key: &str) -> Option<&'a AttrValue> {
@@ -164,7 +164,7 @@ impl Tree {
                 _ => None,
             };
             let dir = matches!(attr(r, "type"), Some(AttrValue::Str(t)) if libvork::types::is(t, libvork::types::DIRECTORY));
-            let internal = matches!(attr(r, "type"), Some(AttrValue::Str(t)) if t.starts_with("vork.") || t == "keep-rule");
+            let internal = matches!(attr(r, "type"), Some(AttrValue::Str(t)) if t.starts_with("retifs.") || t == "keep-rule");
             if path.is_none() && internal {
                 continue;
             }
@@ -414,7 +414,7 @@ mod tests {
             rec("aa05", &[("path", s("/docs/a.txt"))], &[]),
             rec("aa06", &[("path", s("/docs"))], &[]),
             rec("aa07", &[("path", s("/.query/x"))], &[]),
-            rec("aa08", &[("type", s("vork.share")), ("name", s("prangli"))], &[]),
+            rec("aa08", &[("type", s("retifs.share")), ("name", s("prangli"))], &[]),
             rec("aa09", &[("type", s("keep-rule")), ("query", s("album=x"))], &[]),
         ]);
         let names = |d: &str| t.children(d).into_iter().map(|(n, _)| n).collect::<Vec<_>>();
@@ -452,7 +452,7 @@ mod tests {
     #[test]
     fn a_file_is_as_big_as_its_content() {
         let t = Tree::build(&[
-            rec("aa01", &[("path", s("/a.jpg")), ("size", AttrValue::Int(9))], &["vork:1:01ab:cd:5", "vork:1:01ef:12:4"]),
+            rec("aa01", &[("path", s("/a.jpg")), ("size", AttrValue::Int(9))], &["retifs:1:01ab:cd:5", "retifs:1:01ef:12:4"]),
             rec("aa02", &[("path", s("/b.txt")), ("size", AttrValue::Int(3))], &["cap-b"]),
         ]);
         let size = |p: &str| match t.get(p) {

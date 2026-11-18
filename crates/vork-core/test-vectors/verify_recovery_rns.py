@@ -2,7 +2,7 @@
 Python RNS (HKDF, Identity) and hashlib/hmac only. The words are read the
 BIP-39 way here, from the word list, apart from the Rust code.
 
-    python crates/vork-core/test-vectors/verify_recovery_rns.py
+    python crates/retifs-core/test-vectors/verify_recovery_rns.py
 """
 
 import hashlib
@@ -24,7 +24,7 @@ def bip39_words(seed):
 
 
 def k(seed, info):
-    return hkdf(32, seed, b"vork/v1/storage/recovery", info.encode())
+    return hkdf(32, seed, b"retifs/v1/recovery", info.encode())
 
 
 def main():
@@ -42,7 +42,7 @@ def main():
             "secret": secret.hex() == c["identity_secret"],
             "public": ident.get_public_key().hex() == c["identity_public"],
             "hash": ident.hash.hex() == c["identity_hash"],
-            "ns_id": hashlib.sha256(b"vork/v1/storage/ns" + writer).digest()[:16].hex() == c["keyring_ns_id"],
+            "ns_id": hashlib.sha256(b"retifs/v1/ns" + writer).digest()[:16].hex() == c["keyring_ns_id"],
             "read key": k(seed, "keyring-read").hex() == c["keyring_read_key"],
             "locator": locator.hex() == c["locator"],
             "tag": hmac.new(locator, node, hashlib.sha256).digest()[:16].hex() == c["node_tag"],

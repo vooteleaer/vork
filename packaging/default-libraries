@@ -5,4 +5,4 @@
 
 # The vork installers (Windows setup, .deb, Android APKs, a Haiku pkgman
 # repository), kept up to date: updates come through vork itself.
-vork-installers vork-ch:1:02fe66c2ccd78d25a90c1b53bbde71232bb2315d3f1b8f8fb55951b5efa1467f:4f775b9411ee2d2431d621df27af64c2b682bf9ed09be17c6e1aa5193608435a e0b84d8d7903ce16e85906101af4f6e0
+vork-installers retifs-ch:1:02fe66c2ccd78d25a90c1b53bbde71232bb2315d3f1b8f8fb55951b5efa1467f:4f775b9411ee2d2431d621df27af64c2b682bf9ed09be17c6e1aa5193608435a e0b84d8d7903ce16e85906101af4f6e0

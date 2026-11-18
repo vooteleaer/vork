@@ -1,7 +1,7 @@
 """Verifies test-vectors/invite-v1.json (ADR-0020, invitations) with Python
 RNS's umsgpack and HMAC, hashlib and base64 only.
 
-    python crates/vork-core/test-vectors/verify_invite_rns.py
+    python crates/retifs-core/test-vectors/verify_invite_rns.py
 """
 
 import base64
@@ -37,7 +37,7 @@ def main():
         f = c["fields"]
         enc = encode(f)
         secret = bytes.fromhex(f["secret"])
-        ident = hashlib.sha256(b"vork/v1/storage/invite" + secret).digest()
+        ident = hashlib.sha256(b"retifs/v1/invite" + secret).digest()
         text = base64.b32encode(enc).decode().lower().rstrip("=")
         r = c["redeem"]
         msg = bytes.fromhex(r["link_id"]) + bytes.fromhex(r["writer"]) + bytes.fromhex(r["node"])

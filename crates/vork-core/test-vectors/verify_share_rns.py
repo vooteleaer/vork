@@ -1,7 +1,7 @@
 """Verifies test-vectors/share-v1.json (ADR-0021, share copies' record IDs)
 with Python RNS's HKDF and hashlib only.
 
-    python crates/vork-core/test-vectors/verify_share_rns.py
+    python crates/retifs-core/test-vectors/verify_share_rns.py
 """
 
 import hashlib
@@ -13,15 +13,15 @@ from RNS.Cryptography.HKDF import hkdf
 
 
 def ns_id(writer):
-    return hashlib.sha256(b"vork/v1/storage/ns" + writer).digest()[:16]
+    return hashlib.sha256(b"retifs/v1/ns" + writer).digest()[:16]
 
 
 def share_record(source, share_ns_id):
-    return hkdf(16, source, b"vork/v1/storage/share-record", share_ns_id)
+    return hkdf(16, source, b"retifs/v1/share-record", share_ns_id)
 
 
 def writeback_record(member_record, share_ns_id):
-    return hkdf(16, member_record, b"vork/v1/storage/share-writeback", share_ns_id)
+    return hkdf(16, member_record, b"retifs/v1/share-writeback", share_ns_id)
 
 
 def main():

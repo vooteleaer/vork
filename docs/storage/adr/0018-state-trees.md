@@ -43,10 +43,10 @@ A sorted map from record ID (16 bytes) to canonical msgpack bytes:
 leaf     = { "entries": [ [ id (bin 16), value (embedded msgpack) ], … ], "level": 0 }
 internal = { "children": [ [ first id (bin 16), cid (bin 33), seed (bin 32) ], … ], "level": n }
 ```
-- **Boundaries:** a node at level L ends after the entry (or child) with key k if `u32_be(SHA-256("vork/v1/storage/prolly" ‖ L ‖ k)[0..4]) < 2^32 / 32`, giving 32 entries per node on average.
+- **Boundaries:** a node at level L ends after the entry (or child) with key k if `u32_be(SHA-256("retifs/v1/prolly" ‖ L ‖ k)[0..4]) < 2^32 / 32`, giving 32 entries per node on average.
   - A node also ends once its entries reach 64 KiB, counting each entry as its value's length plus 16 and each child as 81. This keeps a node within one chunk however large the values are.
 - **Levels:** leaves are split into nodes, then the list of (first key, node) is split again with the next level's boundary, until one node remains. That node is the root. An empty map has no root.
-- **Sealing:** every node is one chunk, sealed with ADR-0008 under one convergence secret per tree. For a library that secret is `ConvergenceSecret::for_record(read key, "vork/v1/storage/state")`, i.e. `HKDF(salt "vork/v1/storage/record", ikm read key, info "vork/v1/storage/state")`.
+- **Sealing:** every node is one chunk, sealed with ADR-0008 under one convergence secret per tree. For a library that secret is `ConvergenceSecret::for_record(read key, "retifs/v1/state")`, i.e. `HKDF(salt "retifs/v1/record", ikm read key, info "retifs/v1/state")`.
   - Unchanged nodes keep their CIDs across versions and are stored once.
   - Every member holding the read key builds the same tree from the same state, so two members can compare states by root CID.
   - A different library or a rotated key gives different CIDs, so holders can't correlate.

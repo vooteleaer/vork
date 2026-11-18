@@ -1,12 +1,12 @@
 //! Saved queries (ADR-0020): records in the user's own library `me`, so
-//! every device of theirs has them. `type = vork.query`, `name`, `query`
+//! every device of theirs has them. `type = retifs.query`, `name`, `query`
 //! (terms as `vork query` takes them, comma-separated) and `scope`: the
 //! libraries it looks in, by their creators' keys (stable, and the same on
 //! every device whatever each calls them); empty: every library.
 //!
-//! Favorite libraries are kept the same way: `type = vork.favorite`,
+//! Favorite libraries are kept the same way: `type = retifs.favorite`,
 //! `library` (its creator's key). So are members' nicknames:
-//! `type = vork.nickname`, `name`, `vork:node` (the device), `vork:writer`.
+//! `type = retifs.nickname`, `name`, `retifs:node` (the device), `retifs:writer`.
 //!
 //! One convention for the CLI, the desktop utility's Find and any app.
 
@@ -16,7 +16,7 @@ use crate::{AttrValue, Client, Request, Response};
 
 /// The user's own library: contacts, saved queries, settings.
 pub const ME: &str = "me";
-pub const TYPE: &str = "vork.query";
+pub const TYPE: &str = "retifs.query";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SavedQuery {
@@ -77,7 +77,7 @@ pub async fn namespaces(c: &mut Client) -> Result<Vec<String>, String> {
     }
 }
 
-/// A library's creator key (hex), from its address (`vork-ch:1:<creator>:<read key>`).
+/// A library's creator key (hex), from its address (`retifs-ch:1:<creator>:<read key>`).
 pub async fn creator(c: &mut Client, ns: &str) -> Result<String, String> {
     match err(c.call(Request::NsInfo { ns: ns.into() }).await)? {
         Response::Namespace(v) => v.address.split(':').nth(2).map(String::from).ok_or_else(|| "a malformed address".into()),
@@ -144,7 +144,7 @@ pub async fn remove(c: &mut Client, name: &str) -> Result<(), String> {
 
 /// A favorite library's record type (in `me`, so every device of the
 /// user's has it): `library`, its creator key; apps list favorites first.
-pub const FAVORITE_TYPE: &str = "vork.favorite";
+pub const FAVORITE_TYPE: &str = "retifs.favorite";
 
 /// The favorite libraries: their creator keys, with their records' IDs.
 pub async fn favorites(c: &mut Client) -> Vec<(String, String)> {
@@ -176,12 +176,12 @@ pub async fn set_favorite(c: &mut Client, ns: &str, on: bool) -> Result<(), Stri
 
 /// A member's nickname (in `me`, so only the user and their devices see
 /// it): `name`, what the user calls it ("Neighbour's iPad"), and
-/// `vork:node`, the member's device, so the name is the same in every
+/// `retifs:node`, the member's device, so the name is the same in every
 /// library that device is in (a device has a writer key per library);
-/// `vork:writer`, the writer key (hex), names a member whose node isn't
+/// `retifs:writer`, the writer key (hex), names a member whose node isn't
 /// known. Apps show it with the key's fingerprint words, never instead of
 /// them, and decide nothing by it.
-pub const NICKNAME_TYPE: &str = "vork.nickname";
+pub const NICKNAME_TYPE: &str = "retifs.nickname";
 
 /// One nickname record.
 #[derive(Debug, Clone, PartialEq)]
@@ -204,7 +204,7 @@ pub async fn nicknames(c: &mut Client) -> Vec<Nickname> {
                 Some(AttrValue::Str(s)) if !s.is_empty() => Some(s.clone()),
                 _ => None,
             };
-            Some(Nickname { name: text("name")?, node: text("vork:node").map(|n| n.to_lowercase()), writer: text("vork:writer").map(|w| w.to_lowercase()), id: r.id.clone() })
+            Some(Nickname { name: text("name")?, node: text("retifs:node").map(|n| n.to_lowercase()), writer: text("retifs:writer").map(|w| w.to_lowercase()), id: r.id.clone() })
         })
         .collect()
 }
@@ -236,11 +236,11 @@ pub async fn set_nickname(c: &mut Client, writer: &str, node: Option<&str>, name
     }
     let mut attrs = vec![
         ("type".to_string(), AttrValue::Str(NICKNAME_TYPE.into())),
-        ("vork:writer".to_string(), AttrValue::Str(writer)),
+        ("retifs:writer".to_string(), AttrValue::Str(writer)),
         ("name".to_string(), AttrValue::Str(name.into())),
     ];
     if let Some(n) = node {
-        attrs.push(("vork:node".to_string(), AttrValue::Str(n)));
+        attrs.push(("retifs:node".to_string(), AttrValue::Str(n)));
     }
     err(c.call(Request::RecordCreate { ns: ME.into(), attrs, data: None }).await).map(|_| ())
 }

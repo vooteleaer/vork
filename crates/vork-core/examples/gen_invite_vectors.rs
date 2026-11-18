@@ -80,7 +80,7 @@ fn main() {
         })
         .collect();
     let doc = json!({
-        "about": "ADR-0020: an invitation is canonical msgpack {expires, limits {keys?, until?}, node, ns (writer || read key), q?, rights ([] read, [write], [grant, write]), secret}, base32 (RFC 4648, lowercase, no padding) in vork:invite/ links; id = SHA-256(\"vork/v1/storage/invite\" || secret); a redemption is id || writer || node || HMAC-SHA256(secret, link id || writer || node)",
+        "about": "ADR-0020: an invitation is canonical msgpack {expires, limits {keys?, until?}, node, ns (writer || read key), q?, rights ([] read, [write], [grant, write]), secret}, base32 (RFC 4648, lowercase, no padding) in retifs:invite/ links; id = SHA-256(\"retifs/v1/invite\" || secret); a redemption is id || writer || node || HMAC-SHA256(secret, link id || writer || node)",
         "cases": out,
     });
     println!("{}", serde_json::to_string_pretty(&doc).unwrap());

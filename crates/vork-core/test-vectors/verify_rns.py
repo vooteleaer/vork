@@ -24,11 +24,11 @@ from RNS.Cryptography.Token import Token
 def convergence_secret(scheme, given):
     t = scheme["type"]
     if t == "public":
-        return hashlib.sha256(b"vork/v1/storage/public").digest()
+        return hashlib.sha256(b"retifs/v1/public").digest()
     if t == "restricted":
         name, channel = bytes.fromhex(scheme["name"]), bytes.fromhex(scheme["channel"])
         info = struct.pack(">H", len(name)) + name + struct.pack(">H", len(channel)) + channel
-        return hkdf(32, bytes.fromhex(scheme["publisher_secret"]), b"vork/v1/storage/restricted", info)
+        return hkdf(32, bytes.fromhex(scheme["publisher_secret"]), b"retifs/v1/restricted", info)
     if t == "personal":
         return given  # random by definition
     raise ValueError(t)
@@ -48,7 +48,7 @@ def seal(secret, data, cls, encoding=0):
     frame = bytes([encoding]) + struct.pack(">I", len(data)) + data
     frame += b"\x00" * (cls - 64 - len(frame))
     seed = HMAC.new(secret, frame).digest()
-    okm = hkdf(80, seed, b"vork/v1/storage/chunk", b"")
+    okm = hkdf(80, seed, b"retifs/v1/chunk", b"")
     sign, enc, iv = okm[:32], okm[32:64], okm[64:80]
     signed = iv + AES_256_CBC.encrypt(PKCS7.pad(frame), enc, iv)
     chunk = signed + HMAC.new(sign, signed).digest()
@@ -68,7 +68,7 @@ def main():
         vector_payload = b""
         if compression != "off":
             # Recover the payload from the vector by decrypting with RNS Token.
-            okm_v = hkdf(80, bytes.fromhex(c["seed"]), b"vork/v1/storage/chunk", b"")
+            okm_v = hkdf(80, bytes.fromhex(c["seed"]), b"retifs/v1/chunk", b"")
             vframe = Token(okm_v[:64]).decrypt(vec_ct)
             (plen,) = struct.unpack(">I", vframe[1:5])
             vector_payload = vframe[5:5 + plen]

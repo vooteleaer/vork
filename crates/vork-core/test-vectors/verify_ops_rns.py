@@ -167,7 +167,7 @@ def main():
         w = bytes.fromhex(ch["writer"])
         chains[w] = ch["commits"]
         for c in ch["commits"]:
-            f = sorted_map({"ops": [op(o) for o in c["ops"]], "vork": "ns-ops/1"})
+            f = sorted_map({"ops": [op(o) for o in c["ops"]], "retifs": "ns-ops/1"})
             checks[f"ops file {ch['writer'][:4]}@{c['time_ms']}"] = umsgpack.packb(f).hex() == c["encoded"]
     records, rights, ignored, identities, rekeys, nodes = merge(bytes.fromhex(v["creator"]), chains, v["now_ms"])
     snap = sorted_map({
@@ -175,7 +175,7 @@ def main():
             sorted_map({"id": rid, "attrs": sorted_map(r["attrs"]), "blocks": r["blocks"]})
             for rid, r in sorted(records.items())
         ],
-        "vork": "ns-snapshot/1",
+        "retifs": "ns-snapshot/1",
     })
     checks["merged snapshot"] = umsgpack.packb(snap).hex() == v["merged_snapshot"]
     checks["ignored operations"] = ignored == v["ignored_ops"]

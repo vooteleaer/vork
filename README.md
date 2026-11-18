@@ -21,7 +21,7 @@
       DATA: [ label ][ inner WireGuard: end <-> end ]   relays hold no keys for it
 ```
 
-- **Identity:** Ed25519 (signing) + X25519 (the WireGuard key). `address = SHA-256(ed_pub ‖ x_pub)[:16]`.
+- **Identity:** Ed25519 (signing) + X25519 (the WireGuard key). `address = SHA-256(x_pub ‖ ed_pub)[:16]`, the same as a storage identity.
 - **Links:** a neighbor is *up* only while its WireGuard handshake is fresh (< 180 s), so every link used is proven to work in both directions. This avoids RNS's asymmetric-link problem.
 - **Announces** are signed (`vork/v0/announce`, sequence number), flooded only over up links, and carry no IP address. The hop count is a hint, not trusted.
 - **Paths:** a session runs over one or more paths. `PATH_OPEN` is routed by destination address; every hop swaps the label for a fresh random one on the next link and remembers the pair. After that, `DATA` carries only a label: **no packet carries a source, only the opening message carries a destination, and a label means something on one link only**, so colluding relays can't match packets by it.

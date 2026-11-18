@@ -90,7 +90,7 @@ impl PublicIdentity {
         Sha256::digest(self.bytes())[..16].try_into().expect("16 bytes")
     }
 
-    /// An RNS destination of this identity: `full_name` like `vork.node`.
+    /// An RNS destination of this identity: `full_name` like `retifs.node`.
     pub fn destination(&self, full_name: &str) -> [u8; 16] {
         let name_hash = &Sha256::digest(full_name.as_bytes())[..10];
         let mut h = Sha256::new();
@@ -219,13 +219,12 @@ mod tests {
     #[test]
     fn identity_hash_and_destination_as_rns() {
         // The card made in the recon (docs/storage/recon/yubikey.md): Python RNS gave
-        // identity 12e9125e… for these public keys; vork.node is 123f6a32… (the
-        // recon checked the same computation under the old name).
+        // identity 12e9125e… and retifs.node 258d3c39… for these public keys.
         let id = PublicIdentity {
             x25519: hex::decode("4f30f06604f14fd9059eebce00f645063a72ca45bf94ab18d54aa10be8f9d852").unwrap().try_into().unwrap(),
             ed25519: hex::decode("bb3e8a8c6af96b39a9a94894604fd0a5cc6bbe7a2a404cad8a92e37190970f63").unwrap().try_into().unwrap(),
         };
         assert_eq!(hex::encode(id.hash()), "12e9125e209f8c0f67acc1fe70b9e4f1");
-        assert_eq!(hex::encode(id.destination("vork.node")), "123f6a32d38d960defa70e5531a95317");
+        assert_eq!(hex::encode(id.destination("retifs.node")), "258d3c394d3376c4662048ca83bd2f2d");
     }
 }

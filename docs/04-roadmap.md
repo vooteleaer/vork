@@ -4,15 +4,17 @@ Each milestone ends in something that runs and is measured (proto first). "Done 
 
 ```
 M0 prototype (done)
- ├─ M1 config & service ─┬─ M2 IPv6 sessions & TUN ── M3 daemon API, whois, DNS, identity firewall
- │                       └─ M4 hardening
+ ├─ M1 config & service ── M9 storage on vØrk (next) ─┬─ M2 IPv6 sessions & TUN ── M3 DNS, whois, identity firewall
+ │                                                    └─ M10 embedded stack (no admin rights)
+ ├─ M4 hardening
  ├─ S1 ESP32 spike (parallel, early) ── M5 ESPHome component
  ├─ M6 performance
  ├─ M7 identities (YubiKey, delegation) ── M8 islands
- ├─ M9 native message API & storage over vØrk ── M10 embedded stack (no admin rights)
  ├─ M11 strong privacy (nested WireGuard)
  └─ M12 protocol v1: spec freeze, test vectors, review
 ```
+
+Milestone numbers are names, not order: M9 comes right after M1, because storage is the first real application and it brings the shared node and the native API with it.
 
 ## M0 Prototype — done
 
@@ -38,12 +40,12 @@ Links with fresh-handshake liveness, signed announces, path labels swapped per h
 - **Goal:** ordinary applications reach peers by identity.
 - **Scope:** sessions carry IPv6 packets between overlay addresses (ADR-0017, ADR-0021), one per identity, all of a machine's identities on its TUN interface, source checked against the session's identity; the ping/bench/candidate functions move to a control service on the overlay; a TUN interface (Linux `/dev/net/tun`; Windows wintun); the node drops packets whose overlay source doesn't match the session's identity; **flow pinning** (a TCP/UDP flow stays on one path, chosen by hash of its 5-tuple; spray stays for bulk native traffic); MTU set so both layers fit in 1500 (inner MTU about 1360, to be measured).
 - **Done when:** `ssh` to `fd…` (a home machine) from a laptop behind another NAT works through relays and then over a direct link; an `iperf3` TCP test runs without reordering trouble over two paths.
-- **Depends on:** M1.
+- **Depends on:** M1, M9 (sessions).
 
 ## M3 Daemon API, whois, DNS, identity firewall
 
 - **Goal:** applications know who is on the other end, and names replace addresses.
-- **Scope:** the **shared node** (ADR-0020): one node per machine, the first program starts it, applications attach over a specified, versioned IPC protocol (Unix socket / named pipe) and register their own identities and services; status, peers, `whois(overlay address) → identity`; **DNS** (ADR-0018): `<address>.vork` and petnames from a local file, AAAA and PTR, and **IPv4 aliases** handed out by `A` queries with translation at the node (ADR-0021), wired into the OS only for its own domain (systemd-resolved routing domain, Windows NRPT, macOS `/etc/resolver`); an **identity firewall**: which identities may reach which ports/services.
+- **Scope:** the rest of the **shared node** (ADR-0020; M9 brings the first part): status, peers, `whois(overlay address) → identity`; **DNS** (ADR-0018): `<address>.vork` and petnames from a local file, AAAA and PTR, and **IPv4 aliases** handed out by `A` queries with translation at the node (ADR-0021), wired into the OS only for its own domain (systemd-resolved routing domain, Windows NRPT, macOS `/etc/resolver`); an **identity firewall**: which identities may reach which ports/services.
 - **Done when:** `ssh nas.vork` works over IPv6 and an IPv4-only program reaches the same name through its alias; a service sees the caller's identity through whois; a connection from an identity not on the list is refused; two programs on one machine, each with its own identity, are reachable through the same node.
 - **Depends on:** M2.
 
@@ -81,12 +83,17 @@ Links with fresh-handshake liveness, signed announces, path labels swapped per h
 - **Scope:** membership by signed invitations and revocations; island announces encrypted to the members; island policy (direct links allowed, relays preferred among members); later backed by a storage library.
 - **Depends on:** M7.
 
-## M9 Native message API and storage over vØrk
+## M9 Storage on vØrk — next
 
-- **Goal:** native applications use identities and named services without IP; storage runs as a vØrk application with its own identity and no Reticulum ties (ADR-0015).
-- **Scope:** `connect(identity, service)`, request/response, datagrams and a reliable stream over the IPC API and as a Rust crate; storage moved to vØrk identities and key wrapping, Prns and the Reticulum transport removed (`vork-storage-net`, `vork-storage-node`); storage's `Transport` implemented over vØrk with its server side; placement uses measured round trip and direct-vs-relayed instead of hop count.
-- **Done when:** vØrk storage stores and fetches between two machines over vØrk, with no Reticulum code in the build.
-- **Depends on:** M3.
+- **Goal:** vØrk storage runs on vØrk with no Reticulum code, its format unchanged so existing libraries move over (ADR-0015, ADR-0022).
+- **Scope, in steps that each run:**
+  1. *Identities and destinations:* vØrk addresses and key files are storage identities (done); named destinations `SHA-256(SHA-256(name)[0..10] ‖ address)[0..16]`; announces of several destinations per node with app data; path requests for destinations.
+  2. *Sessions and requests:* sessions to a destination, anonymous opener with optional identify, a session nonce; `request(path, body) → response` up to 32 MiB, fragmented, reliable, flow-controlled over the session's paths.
+  3. *Shared node and native API* (the part of ADR-0020 storage needs): applications attach over the local socket/pipe, register destinations, announce, serve and send requests; a Rust client crate.
+  4. *Storage transport:* storage's `Transport` and server side over the native API; storage announces, path lookups, identify and route information from vØrk; placement by measured round trip and direct-vs-relayed.
+  5. *Prns removed:* shared-instance, remote-control and NomadNet code dropped; no Reticulum crate in the build.
+- **Done when:** `vork put` on one machine and `vork get` on another across a router work over vØrk; a library written under retifs opens unchanged; `cargo tree` has no Prns.
+- **Depends on:** M1.
 
 ## M10 Embedded stack (no admin rights)
 

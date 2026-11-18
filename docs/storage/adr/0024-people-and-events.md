@@ -7,7 +7,7 @@
 ## Context
 The first user apps are a contacts app and a calendar (separate repositories, like the desktop utility). Others will read the same records: the desktop utility's Find, a CardDAV/CalDAV bridge for existing apps (Thunderbird, DAVx5, phones), Haiku's Tracker. So the records need one convention, written down here rather than in either app.
 
-Contacts already exist: [ADR-0020](0020-sharing-names-invitations.md) keeps the people a user knows as `type=contact` records in their own library `me` (`name`, `vork:node`, `vork:writer`, `lxmf`), so "share with Mom" finds Mom. The address book is those records, with more about each person.
+Contacts already exist: [ADR-0020](0020-sharing-names-invitations.md) keeps the people a user knows as `type=contact` records in their own library `me` (`name`, `retifs:node`, `retifs:writer`, `lxmf`), so "share with Mom" finds Mom. The address book is those records, with more about each person.
 
 ## Principles
 - Records, not files: a person or an event is a record with attributes, findable by any of them, synced and versioned like any other.
@@ -31,7 +31,7 @@ In `me` (the user's own address book) or in any library (a club's shared one).
 | `url` | Str | `URL` |
 | `photo` | Str: a photo record's ID (references below) | `PHOTO` (by value, for a bridge) |
 | `note` | Str | `NOTE` |
-| `vork:node`, `vork:writer`, `lxmf` | as in ADR-0020 | (`X-`) |
+| `retifs:node`, `retifs:writer`, `lxmf` | as in ADR-0020 | (`X-`) |
 
 A profile picture is a reference to a photo record (`photo`, below). Labels are lowercase words. The qualifier form (`key:label`, as `tags:<tag>`, §6.3) keeps every value its own attribute, so `has:phone:mobile` and `email:work=…` work in queries and in Find.
 
@@ -77,10 +77,10 @@ The library is the boundary of who sees what, so a calendar or an address book i
 | an address book | membership of its library (a family's) | read and write, like a calendar |
 | one contact (a business card) | a share of that record | it |
 
-Links carry `view=calendar` or `view=contacts` (ADR-0020): whatever opens one joins the library and shows it in that app; any app sees the library once it's on the device. A library has no kind: each app shows the libraries holding records it understands (a calendar those with events or a `vork.calendar` record, the contacts app `me` and those with contacts), so a link of any kind opened anywhere just joins its library, and it turns up where it belongs; references reach across all of them. A share is a library of its own on the owner's nodes too; apps don't list it as another calendar (its definition, `type=vork.share`, is in the source). Still open: an answer from an attendee who isn't a member (RSVP). A share is read-only to them; their answer could be a record in their own library referring to the event's ID.
+Links carry `view=calendar` or `view=contacts` (ADR-0020): whatever opens one joins the library and shows it in that app; any app sees the library once it's on the device. A library has no kind: each app shows the libraries holding records it understands (a calendar those with events or a `retifs.calendar` record, the contacts app `me` and those with contacts), so a link of any kind opened anywhere just joins its library, and it turns up where it belongs; references reach across all of them. A share is a library of its own on the owner's nodes too; apps don't list it as another calendar (its definition, `type=retifs.share`, is in the source). Still open: an answer from an attendee who isn't a member (RSVP). A share is read-only to them; their answer could be a record in their own library referring to the event's ID.
 
 ### Settings
-A library's display settings for a calendar (`color`) are a record `type=vork.calendar` in it, shared by its members like `vork.placement` (ADR-0014). Being `vork.*`, it isn't a file in the mounts.
+A library's display settings for a calendar (`color`) are a record `type=retifs.calendar` in it, shared by its members like `retifs.placement` (ADR-0014). Being `vork.*`, it isn't a file in the mounts.
 
 ## Impact on the threat model
 Nothing new: an address book or a calendar is as private as the library it's in. A shared calendar shows its events to its members, attendees included, so a private event belongs in a private library.

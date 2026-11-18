@@ -29,7 +29,7 @@ Supports 8 (redundant by default), 7 (holders are blind), 4 (local-first: writes
 - **Own-node pool:** devices authorised by the same root identity recognise each other. On a LAN they find each other via AutoInterface and replicate with zero configuration. Adding a box means it fills up and starts repairing.
 - **Recruitment:** the owner's daemon issues leases to candidates (own nodes first, then configured peers, then volunteers if policy allows) until the target is met.
 - **Volunteer storage:**
-  - Nodes with spare capacity announce a `vork.store` destination with an offer: free capacity, maximum lease length, failure domain, and policy (anyone or friends only).
+  - Nodes with spare capacity announce a `retifs.store` destination with an offer: free capacity, maximum lease length, failure domain, and policy (anyone or friends only).
   - Owners with under-replicated data say so in their announce (e.g. "need replicas: ~2 GB").
   - A volunteer asks for a lease offer; the owner signs one if the volunteer fits its policy, and the volunteer pulls. **Without a signed lease nobody stores your data**, which keeps GC and accounting clean.
 
@@ -37,7 +37,7 @@ Supports 8 (redundant by default), 7 (holders are blind), 4 (local-first: writes
 Wide, fast replication also protects privacy: when many nodes hold a chunk, holding it says nothing about who wrote or read it.
 - **Push seeding hides the origin (an RNS property):**
   - RNS packets carry no source address, and a link's destination doesn't learn who opened it.
-  - Pulling exposes the source: holders ask the origin's `vork.node` destination. So in diffuse mode the origin **opens anonymous links and pushes** chunks to a few randomly chosen first holders (own pool or volunteers), and never serves that content as a destination itself.
+  - Pulling exposes the source: holders ask the origin's `retifs.node` destination. So in diffuse mode the origin **opens anonymous links and pushes** chunks to a few randomly chosen first holders (own pool or volunteers), and never serves that content as a destination itself.
 - **Epidemic diffusion:** holders replicate further under their own volunteer policy, with random delays, so copies quickly outnumber any set an observer could watch.
 - **Holding stops implying interest:** nodes in a diffusion pool hold chunks they never asked for (cover holdings). That makes honeypot probes uninformative: a chunk found on a node may have arrived by diffusion.
 - **Timing defences:** jitter, batching several releases together, and mixing with other replication traffic, against first-appearance analysis.
@@ -88,7 +88,7 @@ A receipt is a promise. Before handing out a lease, the owner precomputes a few 
 - **Decided:** full replicas now; erasure coding later as a separate layer below chunks (share maps: a chunk group = n shares, any k rebuild it, each chunk still checked against its CID), with its own ADR. Chunks and manifests don't change for it, so nothing has to be reserved in ADR-0008/0009. Replicas suit slow links: one holder is enough to read, where shares need k ([options](../08-open-format-decisions.md)).
 
 ### Who holds copies (confirmed 2026-10-23)
-Any vØrk storage node may hold the encrypted chunks; the nearest and fastest are preferred (ADR-0014). What a file holds, its name, path and other attributes, are readable only by the club's members (the library's read key): a holder sees ciphertext and chunk CIDs, not which library, record or file they belong to. A storage node that missed its last 5 `vork.node` announces gets no new leases, and one silent for a day (and ten of its intervals) is forgotten; its next announce brings it back. A node states its interval in its announce's app data, canonical msgpack `{"announce_s": N, "v": 1}` (`vorkd --announce-every`, default 10 minutes; older nodes' `vork/v0/storage` counts as 10 minutes) (gone test nodes had piled up as candidates, each costing a 20 s link attempt). Its existing leases are left to upkeep, whose storage proofs judge it as before.
+Any vØrk storage node may hold the encrypted chunks; the nearest and fastest are preferred (ADR-0014). What a file holds, its name, path and other attributes, are readable only by the club's members (the library's read key): a holder sees ciphertext and chunk CIDs, not which library, record or file they belong to. A storage node that missed its last 5 `retifs.node` announces gets no new leases, and one silent for a day (and ten of its intervals) is forgotten; its next announce brings it back. A node states its interval in its announce's app data, canonical msgpack `{"announce_s": N, "v": 1}` (`vorkd --announce-every`, default 10 minutes; older nodes' `retifs/v0` counts as 10 minutes) (gone test nodes had piled up as candidates, each costing a 20 s link attempt). Its existing leases are left to upkeep, whose storage proofs judge it as before.
 
 ## Impact on the threat model
 See the [threat model](../04-threat-model.md).
@@ -107,20 +107,20 @@ See the [threat model](../04-threat-model.md).
 ## Implementation status (2026-10-15)
 - Leases, renewals, receipts and storage proofs exist as a first slice ([ADR-0010](0010-continuous-seeking.md), "Leases and receipts"): `vork replicate CAP --to NODE…` keeps a file on chosen nodes, and `status` reports confirmed copies.
 - Per-lease derived signing keys are implemented; spread budget (generations) is in the format, set to 0 (don't pass on) for now.
-- Not yet: replication targets as policy, own-node pool discovery, automatic recruitment and repair to a target, failure domains, volunteer offers (`vork.store`), diffuse mode, the spare tier, and the full-replicas-vs-erasure-coding decision.
+- Not yet: replication targets as policy, own-node pool discovery, automatic recruitment and repair to a target, failure domains, volunteer offers (`retifs.store`), diffuse mode, the spare tier, and the full-replicas-vs-erasure-coding decision.
 
 ## Review (2026-10-29)
 Built: a replication target as policy (loss estimate, a floor of copies, a library's own number), recruitment of the nearest storage nodes by leases, repair by placement, storage proofs, sites as failure domains, opting out of holding (`--hold-for-others 0`, `hold: false`), and nodes with little or no storage ([ADR-0031](0031-storage-less-nodes.md)).
 
 Not built yet:
 - the own-node pool found on a LAN with zero configuration;
-- volunteer storage offers (`vork.store`);
+- volunteer storage offers (`retifs.store`);
 - diffuse mode (push seeding, epidemic diffusion, cover holdings, timing defences);
 - the spread budget (the lease's `generations` field is there and always 0) and a network radius;
 - the spare tier ([ADR-0012](0012-disk-budget.md));
 - erasure coding (decided for later, its own ADR).
 
 ## Decided (2026-11-11, owner)
-- **Volunteer offers (`vork.store`): replaced.** Every node holds for others by default (ADR-0014), its offer is `room` in its `vork.node` announce, and `--hold-for-others` caps it. No separate destination.
+- **Volunteer offers (`retifs.store`): replaced.** Every node holds for others by default (ADR-0014), its offer is `room` in its `retifs.node` announce, and `--hold-for-others` caps it. No separate destination.
 - **Own-node pool: not done.** Placement doesn't prefer the user's own devices; the nearest reliable node holds, whoever's it is, since copies are ciphertext ([holders vs readers](../05-prototype-plan.md)).
 - **Diffuse mode: not done.** The spare tier ([ADR-0012](0012-disk-budget.md)) gives unrequested holdings; personal data stays on leases.

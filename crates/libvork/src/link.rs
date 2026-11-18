@@ -6,14 +6,14 @@
 //! ```
 //!
 //! Kinds: `node`, `ns`, `invite`, `ch`, `cap`. For `ns`, `<what>` is the
-//! library address without its `vork-ch:` prefix (`1:<writer>:<read key>`).
+//! library address without its `retifs-ch:` prefix (`1:<writer>:<read key>`).
 //! Parameters: `q` (a query, in the CLI's terms: what to open on), `view`
 //! (which kind of app), `name` (a label), `from` (a node to fetch from, may
 //! repeat). Values are percent-encoded. Unknown kinds and parameters are
 //! kept, not refused, so printed codes keep working as kinds are added.
 
-const SCHEME: &str = "vork:";
-const CHANNEL_PREFIX: &str = "vork-ch:";
+const SCHEME: &str = "retifs:";
+const CHANNEL_PREFIX: &str = "retifs-ch:";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Link {
@@ -133,14 +133,14 @@ fn decode(s: &str) -> String {
 mod tests {
     use super::*;
 
-    const ADDR: &str = "vork-ch:1:0f19bffab935b2aee3fd49313f700896a1be1925d9404f869eb1b5c332def4a4:847e7e2e0bde37d911ea1fd781f9c874041b8ebc1df6332a94f8a436f8f090ed";
+    const ADDR: &str = "retifs-ch:1:0f19bffab935b2aee3fd49313f700896a1be1925d9404f869eb1b5c332def4a4:847e7e2e0bde37d911ea1fd781f9c874041b8ebc1df6332a94f8a436f8f090ed";
 
     #[test]
     fn namespace_links_round_trip() {
         let mut l = Link::namespace(ADDR, &["1bb2eee04ab73ba0067b3431f4c5de79".into()], Some("Prangli 2026"));
         l.params.push(("q".into(), "album=Prangli 2026, type=photo".into()));
         let text = l.to_string();
-        assert!(text.starts_with("vork:ns/1:0f19bf"), "{text}");
+        assert!(text.starts_with("retifs:ns/1:0f19bf"), "{text}");
         assert!(text.contains("name=Prangli%202026") && text.contains("q=album%3DPrangli%202026%2C%20type%3Dphoto"), "{text}");
         let back = Link::parse(&text).unwrap();
         assert_eq!(back, l);
@@ -151,12 +151,12 @@ mod tests {
 
     #[test]
     fn unknown_kinds_and_params_are_kept() {
-        let l = Link::parse("vork:future/thing?x=1&view=photos&flag").unwrap();
+        let l = Link::parse("retifs:future/thing?x=1&view=photos&flag").unwrap();
         assert_eq!((l.kind.as_str(), l.what.as_str()), ("future", "thing"));
         assert_eq!(l.param("x"), Some("1"));
         assert_eq!(l.param("flag"), Some(""));
         assert_eq!(l.ns_address(), None);
-        assert_eq!(Link::parse("vork:ns/1:ab?name=a+b%2").unwrap().param("name"), Some("a b%2"));
+        assert_eq!(Link::parse("retifs:ns/1:ab?name=a+b%2").unwrap().param("name"), Some("a b%2"));
     }
 
     #[test]
@@ -169,7 +169,7 @@ mod tests {
 
     #[test]
     fn not_links() {
-        for bad in ["", "https://x", "vork:", "vork:ns", "vork:/x", "vork:ns/"] {
+        for bad in ["", "https://x", "retifs:", "retifs:ns", "retifs:/x", "retifs:ns/"] {
             assert!(Link::parse(bad).is_err(), "{bad}");
         }
     }

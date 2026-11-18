@@ -56,7 +56,7 @@ const TEMPLATE: &str = r#"# vork node settings. Flags given to vorkd override th
 
 [node]
 # device = "..."             # this device's name for keep tags and rules (default: the hostname)
-# announce_every = "65m"     # how often to announce vork.node (the announces say so); at least 65m, Reticulum's limit
+# announce_every = "65m"     # how often to announce retifs.node (the announces say so); at least 65m, Reticulum's limit
 # private_requests = false   # one item per have/get request when seeking: slower, less to correlate
 # site = "..."               # where this node is (e.g. "prangli-home"): one copy of its files is kept at another site
 # app_socket = "..."         # another socket for apps, besides the store's (e.g. in a folder shared with an app's container)

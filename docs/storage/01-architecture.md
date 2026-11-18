@@ -21,7 +21,7 @@ Files, folders, albums, packages, versions and branches are all combinations of 
 | Content | Key | Dedup |
 |---|---|---|
 | Public (packages, public documents) | convergent: `HKDF(hash(chunk))` | network-wide |
-| Restricted (internal packages, group content) | `HKDF(publisher_secret, "vork.pkg" ‖ name ‖ channel)` | across versions of a line |
+| Restricted (internal packages, group content) | `HKDF(publisher_secret, "retifs.pkg" ‖ name ‖ channel)` | across versions of a line |
 | Personal | random | none |
 
 - `publisher_secret` is a separate 256-bit secret, **not** the RNS identity private key.
@@ -51,7 +51,7 @@ Files, folders, albums, packages, versions and branches are all combinations of 
 - **Every modification is a version** (one API call, one transaction, or one file save). Every version is kept by default. A library can opt into thinning, which drops only old content, never commits. See [ADR-0006](adr/0006-versioning-and-sharing.md).
 - **Multi-writer:** each writer has its own append-only chain. The library state is the merge of all heads, and every reader validates signatures and capabilities on merge.
 - **Sharing:** a share is a library, either a group library (all members write) or a filtered read-only projection with its own key.
-- **Library** (a namespace in the code and formats: `ns`) = destination (`vork.ns.<name>` + identity), addressed like an RNS destination hash. Updates carry a per-writer sequence number (rollback protection) and propagate via announce.
+- **Library** (a namespace in the code and formats: `ns`) = destination (`retifs.ns.<name>` + identity), addressed like an RNS destination hash. Updates carry a per-writer sequence number (rollback protection) and propagate via announce.
 - **Capabilities** (UCAN-like): `{issuer, audience, resource, action, expiry, proof}`, content-addressed. Delegation chain where each link may only narrow. Read permission = key, and write permission = signature.
 - **Revocation:** short expiry times plus signed revocation records. Revoking read access = key rotation.
 

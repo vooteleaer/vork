@@ -52,7 +52,7 @@ vork mount photos --via home # a library your home node holds, nothing of it kep
 
 (For `--via`, the home node admits this one first: `vork app add laptop --ns photos --write --device <this node>`; `home` is a contact or a node address.)
 
-- **Linux:** a FUSE mount. vorkd mounts every library by itself at `~/vork/<library>` (the user's own store: not with `--store` or `--no-mounts`); `vork unmount NAME` takes one down until vorkd starts again. Attributes are `user.vork.*` xattrs; `.query/<terms>/` lists matches (`ls ~/vork/photos/.query/album=Prangli\ 2026/`); `systemctl --user enable --now vork-mount@photos` mounts it at login.
+- **Linux:** a FUSE mount. vorkd mounts every library by itself at `~/vork/<library>` (the user's own store: not with `--store` or `--no-mounts`); `vork unmount NAME` takes one down until vorkd starts again. Attributes are `user.retifs.*` xattrs; `.query/<terms>/` lists matches (`ls ~/vork/photos/.query/album=Prangli\ 2026/`); `systemctl --user enable --now vork-mount@photos` mounts it at login.
 - **Windows:** a folder in Explorer. Files are fetched when opened, "Always keep on this device" keeps them here, **Share with vork…** is in the context menu, and a library you may only read is a read-only folder. `vork unmount photos --forget` also removes it from Explorer.
 - **Haiku:** each library is a volume in `~/vork`, with its attributes as Haiku attributes and live queries in Tracker.
 - Photos in albums also show under `Albums/<album>/`: the same files, and deleting one there only takes it out of the album.
@@ -77,13 +77,13 @@ One of your nodes running it is enough ([ADR-0023](adr/0023-attribute-extraction
 ## Sharing
 
 **A whole library** with another device or person:
-1. `vork library link photos` prints a `vork:ns/…` link (the address and your node). Whoever has it can read.
+1. `vork library link photos` prints a `retifs:ns/…` link (the address and your node). Whoever has it can read.
 2. On their side, `vork open <link>` joins it.
-3. To let them write too, give them an invitation instead: `vork invite create photos` prints a one-use `vork:invite/…` link; `vork open <link>` joins and gets the grant in one step (or as soon as your node is reachable).
+3. To let them write too, give them an invitation instead: `vork invite create photos` prints a one-use `retifs:invite/…` link; `vork open <link>` joins and gets the grant in one step (or as soon as your node is reachable).
 
 **Part of a library** (an album, a folder): `vork share create prangli --from photos 'album=Prangli 2026' --omit geo` makes a library `prangli` holding just those records (without `geo`; shares leave location out by default anyway, `--keep geo` keeps it), kept up to date by your nodes, and prints its link. `vork share list photos` and `share rm` list and end shares.
 
-**One file**, outside any library: `vork put FILE --hint` stores it and prints its read-cap with your node as a hint (`vork:1:…@<node>`); `vork get <read-cap>` on another device fetches it from the hinted node, or any it knows holds it.
+**One file**, outside any library: `vork put FILE --hint` stores it and prints its read-cap with your node as a hint (`retifs:1:…@<node>`); `vork get <read-cap>` on another device fetches it from the hinted node, or any it knows holds it.
 
 **Contacts:** `vork me link --name Alice` gives a link others add you with (`vork open <link>`), and `vork me` shows six words to compare in person. Contacts live in your library `me`, and their names work in place of node addresses (`--from Alice`).
 

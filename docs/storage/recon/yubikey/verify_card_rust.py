@@ -7,6 +7,6 @@ vals = dict(line.split(None, 1) for line in sys.stdin if len(line.split(None, 1)
 ident = RNS.Identity(create_keys=False)
 ident.load_public_key(bytes.fromhex(vals["public"].strip()))
 assert ident.hash.hex() == vals["identity"].strip(), "identity hash"
-assert RNS.Destination.hash_from_name_and_identity("vork.node", ident).hex() == vals["vork.node"].strip(), "vork.node"
+assert RNS.Destination.hash_from_name_and_identity("retifs.node", ident).hex() == vals["retifs.node"].strip(), "retifs.node"
 assert ident.validate(bytes.fromhex(vals["signature"].strip()), bytes.fromhex(vals["message"].strip())), "signature"
 print("RNS: identity, destination and the card's signature check out")

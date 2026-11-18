@@ -21,11 +21,11 @@ from RNS.Cryptography.Token import Token
 
 
 def record_secret(namespace_key, record_id):
-    return hkdf(32, namespace_key, b"vork/v1/storage/record", record_id)
+    return hkdf(32, namespace_key, b"retifs/v1/record", record_id)
 
 
 def open_chunk(seed, chunk):
-    okm = hkdf(80, seed, b"vork/v1/storage/chunk", b"")
+    okm = hkdf(80, seed, b"retifs/v1/chunk", b"")
     frame = Token(okm[:64]).decrypt(chunk)
     (n,) = struct.unpack(">I", frame[1:5])
     assert frame[0] == 0, "commits are stored raw"
@@ -42,11 +42,11 @@ def main():
     writer = key.public_key().public_bytes()
     read_key = h(v["read_key"])
     checks["writer"] = writer.hex() == v["writer"]
-    ns_id = hashlib.sha256(b"vork/v1/storage/ns" + writer).digest()[:16]
+    ns_id = hashlib.sha256(b"retifs/v1/ns" + writer).digest()[:16]
     checks["ns_id"] = ns_id.hex() == v["ns_id"]
-    checks["address"] = v["address"] == f"vork-ch:1:{writer.hex()}:{read_key.hex()}"
+    checks["address"] = v["address"] == f"retifs-ch:1:{writer.hex()}:{read_key.hex()}"
 
-    secret = record_secret(read_key, b"vork/v1/storage/commits")
+    secret = record_secret(read_key, b"retifs/v1/commits")
     pub = Ed25519PublicKey.from_public_bytes(writer)
     prev = None
     for c in v["commits"]:
@@ -60,12 +60,12 @@ def main():
                   + (b"\x00" if prev is None else b"\x01" + prev[0] + prev[1])
                   + h(c["root_cid"]) + h(c["root_seed"]) + struct.pack(">Q", c["root_size"]))
         checks[f"commit {c['seq']} layout"] = body == expect
-        pub.verify(sig, b"vork/v1/storage/commit" + body)
-        checks[f"commit {c['seq']} signature"] = sig == key.sign(b"vork/v1/storage/commit" + body)
+        pub.verify(sig, b"retifs/v1/commit" + body)
+        checks[f"commit {c['seq']} signature"] = sig == key.sign(b"retifs/v1/commit" + body)
         prev = (h(c["chunk_cid"]), seed)
 
     head = h(v["head"])
-    head_key = hkdf(64, read_key, b"vork/v1/storage/head-seed", b"")
+    head_key = hkdf(64, read_key, b"retifs/v1/head-seed", b"")
     last = v["commits"][-1]
     seed = Token(head_key).decrypt(head[1 + 16 + 32 + 16 + 33:1 + 16 + 32 + 16 + 33 + 96])
     checks["head commit seed (RNS Token)"] = seed.hex() == last["chunk_seed"]
@@ -74,9 +74,9 @@ def main():
     sealed = iv + ct + HMAC.new(head_key[:32], iv + ct).digest()
     fields = (b"\x01" + ns_id + writer + struct.pack(">QQ", last["seq"], 1_790_000_060)
               + h(last["chunk_cid"]) + sealed)
-    rebuilt = fields + key.sign(b"vork/v1/storage/head" + fields)
+    rebuilt = fields + key.sign(b"retifs/v1/head" + fields)
     checks["head bytes"] = rebuilt == head
-    pub.verify(head[-64:], b"vork/v1/storage/head" + head[:-64])
+    pub.verify(head[-64:], b"retifs/v1/head" + head[:-64])
     checks["head signature"] = True
     checks["head length"] = len(head) == 258
 

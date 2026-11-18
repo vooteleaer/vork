@@ -2,7 +2,7 @@
 //!
 //! A library commit's tree is an operations file:
 //! ```text
-//! ops file = { "ops": [ op, … ], "vork": "ns-ops/1" }        canonical msgpack (ADR-0016)
+//! ops file = { "ops": [ op, … ], "retifs": "ns-ops/1" }        canonical msgpack (ADR-0016)
 //! op       = [ "set", id, key, value ] | [ "unset", id, key ] | [ "blocks", id, [ ref, … ] ]
 //!          | [ "delete", id ] | [ "grant", writer (bin 32), [ right, … ] ] | [ "revoke", writer ]
 //!          | [ "identity", public (bin 64) ]                     the signer's RNS identity (X25519 ‖ Ed25519)
@@ -140,7 +140,7 @@ pub enum Op {
     /// The signer's public identity (X25519 ‖ Ed25519), so others can wrap keys to it.
     /// Counts only if its Ed25519 half is the signer's own key.
     Identity([u8; 64]),
-    /// The `vork.node` address of the signer's node (ADR-0022), so every
+    /// The `retifs.node` address of the signer's node (ADR-0022), so every
     /// member can sync with every member's node, not just the one it joined
     /// through. Counts for the signer only; its latest one stands.
     Node([u8; 16]),
@@ -167,7 +167,7 @@ impl OpsFile {
         for op in &self.ops {
             write_op(&mut out, op);
         }
-        write_str(&mut out, "vork");
+        write_str(&mut out, "retifs");
         write_str(&mut out, OPS_TAG);
         out
     }
@@ -182,7 +182,7 @@ impl OpsFile {
         for _ in 0..n {
             ops.push(read_op(&mut r)?);
         }
-        if r.str()? != "vork" || r.str()? != OPS_TAG || !r.0.is_empty() {
+        if r.str()? != "retifs" || r.str()? != OPS_TAG || !r.0.is_empty() {
             return Err(RecordError::Malformed("not an ops file"));
         }
         let f = OpsFile { ops };
@@ -416,7 +416,7 @@ pub struct RekeyEvent {
 pub struct Merged {
     /// Writers' public identities, as they announced them.
     pub identities: BTreeMap<WriterKey, [u8; 64]>,
-    /// Writers' nodes (`vork.node` addresses), as they announced them.
+    /// Writers' nodes (`retifs.node` addresses), as they announced them.
     pub nodes: BTreeMap<WriterKey, [u8; 16]>,
     /// Valid rekeys, in stamp order.
     pub rekeys: Vec<RekeyEvent>,
@@ -1172,8 +1172,8 @@ mod tests {
     #[test]
     fn only_a_granter_says_what_a_granter_may() {
         let alice = vec![c(100, vec![Op::Grant(BOB, vec![Right::Write]), Op::Grant(EVE, vec![Right::Write, Right::Grant])])];
-        let bob = vec![c(200, vec![Op::Set(R, "type".into(), s("vork.deleted"))])];
-        let eve = vec![c(300, vec![Op::Set(R2, "type".into(), s("vork.deleted"))])];
+        let bob = vec![c(200, vec![Op::Set(R, "type".into(), s("retifs.deleted"))])];
+        let eve = vec![c(300, vec![Op::Set(R2, "type".into(), s("retifs.deleted"))])];
         let st = State::build(&ALICE, &chains(vec![(ALICE, alice.clone()), (BOB, bob), (EVE, eve)]), 1_000);
         assert!(st.record(&R).is_some(), "a writer's set counts as a write");
         assert!(!st.set_by_granter(&R, "type"), "but not as a granter's");
@@ -1181,7 +1181,7 @@ mod tests {
         assert!(!st.set_by_granter(&R2, "name"), "a field never set");
         // Revoked before it wrote: nothing of it counts.
         let revoked = vec![c(100, vec![Op::Grant(EVE, vec![Right::Write, Right::Grant])]), c(250, vec![Op::Revoke(EVE)])];
-        let st = State::build(&ALICE, &chains(vec![(ALICE, revoked), (EVE, vec![c(300, vec![Op::Set(R2, "type".into(), s("vork.deleted"))])])]), 1_000);
+        let st = State::build(&ALICE, &chains(vec![(ALICE, revoked), (EVE, vec![c(300, vec![Op::Set(R2, "type".into(), s("retifs.deleted"))])])]), 1_000);
         assert!(!st.set_by_granter(&R2, "type"));
     }
 

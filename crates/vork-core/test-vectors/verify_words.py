@@ -1,7 +1,7 @@
 """Verifies test-vectors/words-v1.json (ADR-0020, fingerprint words) with
 hashlib and the BIP-39 English list only.
 
-    python crates/vork-core/test-vectors/verify_words.py
+    python crates/retifs-core/test-vectors/verify_words.py
 """
 
 import hashlib

@@ -28,7 +28,7 @@ Option 3. Version 1 of the construction:
 ### Keys and IV
 ```
 seed     = HMAC-SHA256(convergence_secret, frame)                  32 bytes
-okm      = HKDF-SHA256(ikm = seed, salt = "vork/v1/storage/chunk", info = "", L = 80)
+okm      = HKDF-SHA256(ikm = seed, salt = "retifs/v1/chunk", info = "", L = 80)
 sign_key = okm[0:32]     enc_key = okm[32:64]     iv = okm[64:80]
 chunk    = iv ‖ AES-256-CBC(enc_key, iv, PKCS7(frame)) ‖ HMAC-SHA256(sign_key, iv ‖ ct)
 ```
@@ -37,9 +37,9 @@ This is exactly an RNS Token with key `okm[0:64]` and a derived IV. RNS's `Token
 ### Convergence secret per scheme
 | Scheme | `convergence_secret` | Dedup |
 |---|---|---|
-| Public | `SHA-256("vork/v1/storage/public")`, a fixed constant | network-wide |
-| Restricted | `HKDF(ikm = publisher_secret, salt = "vork/v1/storage/restricted", info = u16_be(len(name)) ‖ name ‖ u16_be(len(channel)) ‖ channel, L = 32)` | within one publisher line |
-| Personal | **per record:** `HKDF(ikm = library key, salt = "vork/v1/storage/record", info = record id, L = 32)`; random for one-off files | across versions of one record only |
+| Public | `SHA-256("retifs/v1/public")`, a fixed constant | network-wide |
+| Restricted | `HKDF(ikm = publisher_secret, salt = "retifs/v1/restricted", info = u16_be(len(name)) ‖ name ‖ u16_be(len(channel)) ‖ channel, L = 32)` | within one publisher line |
+| Personal | **per record:** `HKDF(ikm = library key, salt = "retifs/v1/record", info = record id, L = 32)`; random for one-off files | across versions of one record only |
 
 - `publisher_secret` is a separate 256-bit secret, never the RNS identity key.
 - **The reader needs only `seed`** (32 bytes) per chunk. The manifest stores `(cid, seed)`, and a read-cap for the content is the manifest's own `(cid, seed)`.

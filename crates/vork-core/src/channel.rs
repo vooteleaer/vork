@@ -2,20 +2,20 @@
 //! writer's append-only chain of versions, which followers track.
 //!
 //! ```text
-//! address = "vork-ch:1:" ‖ hex(writer Ed25519 public key) ‖ ":" ‖ hex(read key)
-//! ns_id   = SHA-256("vork/v1/storage/ns" ‖ writer)[0..16]
+//! address = "retifs-ch:1:" ‖ hex(writer Ed25519 public key) ‖ ":" ‖ hex(read key)
+//! ns_id   = SHA-256("retifs/v1/ns" ‖ writer)[0..16]
 //!
 //! commit  = body ‖ sig(64)                      stored as an ordinary sealed chunk,
 //! body    = 0x01 ‖ ns_id (16) ‖ writer (32)      convergence secret
-//!           ‖ seq (u64 BE) ‖ time (u64 BE, unix ms)   for_record(read key, "vork/v1/storage/commits")
+//!           ‖ seq (u64 BE) ‖ time (u64 BE, unix ms)   for_record(read key, "retifs/v1/commits")
 //!           ‖ has_prev (u8) [‖ prev cid (33) ‖ prev seed (32)]
 //!           ‖ root cid (33) ‖ root seed (32) ‖ root size (u64 BE)
-//! sig     = Ed25519(writer, "vork/v1/storage/commit" ‖ body)
+//! sig     = Ed25519(writer, "retifs/v1/commit" ‖ body)
 //!
 //! head    = 0x01 ‖ ns_id (16) ‖ writer (32) ‖ seq (u64 BE) ‖ time (u64 BE, unix s)
 //!           ‖ commit cid (33) ‖ Token(head key, commit seed) (96) ‖ sig (64)        258 B
-//! sig     = Ed25519(writer, "vork/v1/storage/head" ‖ all fields before it)
-//! head key = HKDF-SHA256(ikm = read key, salt = "vork/v1/storage/head-seed", info = "", L = 64)
+//! sig     = Ed25519(writer, "retifs/v1/head" ‖ all fields before it)
+//! head key = HKDF-SHA256(ikm = read key, salt = "retifs/v1/head-seed", info = "", L = 64)
 //! ```
 //! - **Holders stay blind:** commits are chunks like any other; a head shows
 //!   only the library, the writer key, the sequence number and a commit CID.
@@ -44,12 +44,12 @@ pub const VERSION: u8 = 1;
 pub const NS_ID_LEN: usize = 16;
 pub const HEAD_LEN: usize = 1 + 16 + 32 + 8 + 8 + CID_LEN + SEALED_SEED_LEN + 64;
 const SEALED_SEED_LEN: usize = 16 + 48 + 32;
-const NS_LABEL: &[u8] = b"vork/v1/storage/ns";
-const COMMITS_RECORD: &[u8] = b"vork/v1/storage/commits";
-const COMMIT_LABEL: &[u8] = b"vork/v1/storage/commit";
-const HEAD_LABEL: &[u8] = b"vork/v1/storage/head";
-const HEAD_SEED_SALT: &[u8] = b"vork/v1/storage/head-seed";
-const ADDR_PREFIX: &str = "vork-ch:1:";
+const NS_LABEL: &[u8] = b"retifs/v1/ns";
+const COMMITS_RECORD: &[u8] = b"retifs/v1/commits";
+const COMMIT_LABEL: &[u8] = b"retifs/v1/commit";
+const HEAD_LABEL: &[u8] = b"retifs/v1/head";
+const HEAD_SEED_SALT: &[u8] = b"retifs/v1/head-seed";
+const ADDR_PREFIX: &str = "retifs-ch:1:";
 
 pub type NsId = [u8; NS_ID_LEN];
 
@@ -76,10 +76,10 @@ impl std::fmt::Display for ChannelError {
 
 impl std::error::Error for ChannelError {}
 
-/// Names a read key without revealing it: SHA-256("vork/v1/storage/key-id" ‖ key)[0..16].
+/// Names a read key without revealing it: SHA-256("retifs/v1/key-id" ‖ key)[0..16].
 /// Members ask for "your latest head under this key" to cross a key rotation (ADR-0017).
 pub fn key_id(read_key: &[u8; 32]) -> [u8; 16] {
-    Sha256::digest([b"vork/v1/storage/key-id".as_slice(), read_key].concat())[..16].try_into().unwrap()
+    Sha256::digest([b"retifs/v1/key-id".as_slice(), read_key].concat())[..16].try_into().unwrap()
 }
 
 pub fn ns_id(writer: &[u8; 32]) -> NsId {
@@ -126,7 +126,7 @@ impl std::fmt::Display for ChannelAddr {
 impl std::str::FromStr for ChannelAddr {
     type Err = ChannelError;
     fn from_str(s: &str) -> Result<Self, ChannelError> {
-        let rest = s.trim().strip_prefix(ADDR_PREFIX).ok_or(ChannelError::Malformed("not a vork-ch:1 address"))?;
+        let rest = s.trim().strip_prefix(ADDR_PREFIX).ok_or(ChannelError::Malformed("not a retifs-ch:1 address"))?;
         let (w, k) = rest.split_once(':').ok_or(ChannelError::Malformed("address"))?;
         let parse = |h: &str| -> Result<[u8; 32], ChannelError> {
             hex::decode(h).ok().and_then(|b| b.try_into().ok()).ok_or(ChannelError::Malformed("address key"))

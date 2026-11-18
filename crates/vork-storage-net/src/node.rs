@@ -9,7 +9,7 @@ use personal_rns::shared_instance::{
     SharedInstanceClientIntent, SharedInstanceRole, SharedInstanceTransport, connect_existing_shared_instance,
 };
 
-pub const APP_NAME: &str = "vork";
+pub const APP_NAME: &str = "retifs"; // RNS destination names stay until storage leaves Reticulum (node addresses are stored in libraries)
 pub const SHARED_INSTANCE_PORT: u16 = 37428;
 
 pub type IdentitySecret = Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>;
@@ -85,7 +85,7 @@ pub fn new_identity() -> IdentitySecret {
     try_generate_identity_secret().expect("OS entropy for identity generation")
 }
 
-/// The node's destination: `vork.node` (serving) or `vork.client`,
+/// The node's destination: `retifs.node` (serving) or `retifs.client`,
 /// announcing the default interval.
 pub fn destination(identity: IdentitySecret, serve: bool) -> PreConfiguredDestination<'static> {
     destination_announcing(identity, serve, vork_core::announce::DEFAULT_ANNOUNCE_S, None, true)
@@ -111,7 +111,7 @@ pub fn destination_announcing(identity: IdentitySecret, serve: bool, announce_s:
     }
 }
 
-/// The node's `vork.library` destination: it announces the node's public
+/// The node's `retifs.library` destination: it announces the node's public
 /// libraries, one per announce, each with its own app data (ADR-0029). It
 /// serves nothing; joining goes to the library's holders.
 pub fn library_destination(identity: IdentitySecret) -> PreConfiguredDestination<'static> {
@@ -129,7 +129,7 @@ pub fn library_destination(identity: IdentitySecret) -> PreConfiguredDestination
     }
 }
 
-/// The node's `vork.keyring` destination (ADR-0033): a node keeping the
+/// The node's `retifs.keyring` destination (ADR-0033): a node keeping the
 /// user's keyring announces it, its app data a tag only the recovery words
 /// can check. It serves nothing.
 pub fn keyring_destination(identity: IdentitySecret) -> PreConfiguredDestination<'static> {

@@ -2,7 +2,7 @@
 
 - **Status:** accepted (prototype), 2026-11-09
 - **Date:** 2026-11-09
-- **Irreversible:** partly. A record type every daemon reads (`vork.holders`); no new crypto, no format change in commits, operations or leases.
+- **Irreversible:** partly. A record type every daemon reads (`retifs.holders`); no new crypto, no format change in commits, operations or leases.
 
 ## Context
 A node that writes a file leases copies of it to other nodes (ADR-0011, ADR-0014): it alone knows who holds them, from its own leases. When it reads one of its files and the members are away, it asks those holders. Another member doesn't know them: it seeks content only from the library's members (and the nodes a link or an earlier fetch named). So a photo the Windows node backed up to three holders couldn't be read on the phone while the Windows node was off, though all three holders had every chunk. The user asked (2026-11-09) whether a node that only holds encrypted chunks is used at all.
@@ -18,14 +18,14 @@ A node that writes a file leases copies of it to other nodes (ADR-0011, ADR-0014
 3. **One record per writing node per library naming its holders.** Chosen.
 
 ## Decision
-- Each node that may write to a library keeps one record in it: `type = "vork.holders"`, `node` (its `vork.node` address, hex), `holders` (a list of the addresses of the nodes it leased any of the library's files to).
+- Each node that may write to a library keeps one record in it: `type = "retifs.holders"`, `node` (its `retifs.node` address, hex), `holders` (a list of the addresses of the nodes it leased any of the library's files to).
 - It's brought up to date every 10 minutes (and a minute after the daemon starts), written only when the set changed.
 - A member's node seeking or reading the library's content asks the library's members first, then the holders all members' records name (its own node left out). A holder without the chunk answers "don't have" at once; with it, it serves the chunk to whoever proves the chunk's seed (holder privacy rule 1), which only members can.
 - Like every `vork.*` record, it isn't a file in the file views.
 
 ### Readers that keep content (2026-11-09)
 A reader (joined by a link, or invited without rights) can't write to the library, so the members' nodes didn't know it, though it keeps and serves what it holds (`serve_if_kept`). The user asked that every node holding parts of a library be its peer, readers included, and that readers take part in sending files they have chunks of.
-- A reader's node that keeps some of the library's content (not its cache) tells a writer's node so on `/vork/reader`: `ns_id (16) ‖ (cid (33) ‖ get proof (16))*`, up to 8 items: the latest commits of the library's writers it knows, each with the ordinary `get` proof (ADR-0010) bound to this Link. The Link is identified, so the writer's node learns the reader's `vork.node` address from Reticulum, not from the request. No new derivation: only members know commit seeds, so a file shared on its own isn't enough.
+- A reader's node that keeps some of the library's content (not its cache) tells a writer's node so on `/vork/reader`: `ns_id (16) ‖ (cid (33) ‖ get proof (16))*`, up to 8 items: the latest commits of the library's writers it knows, each with the ordinary `get` proof (ADR-0010) bound to this Link. The Link is identified, so the writer's node learns the reader's `retifs.node` address from Reticulum, not from the request. No new derivation: only members know commit seeds, so a file shared on its own isn't enough.
 - The writer's node checks a proof against the current commits it knows, notes the node (`<store>/readers/<ns_id>`, with the time), and lists it under `readers` in its holders record. A reader not heard from for 30 days is dropped; readers say so again daily, and every 10 minutes until they see themselves listed.
 - Every member adds the readers the records name to the nodes it syncs with and seeks content from. Commits and kept files are already passed on by readers to members proving their seeds.
 - The libraries view counts as peers every node holding some of a library: members, readers listed, holders.

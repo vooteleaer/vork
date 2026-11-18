@@ -129,7 +129,7 @@ fn matches_committed_test_vectors() {
 #[test]
 fn compression_shrinks_compressible_data_and_roundtrips() {
     let secret = ConvergenceSecret::public();
-    let text: Vec<u8> = b"vork keeps your data encrypted, redundant and yours. ".iter().cycle().take(16_000).copied().collect();
+    let text: Vec<u8> = b"retifs keeps your data encrypted, redundant and yours. ".iter().cycle().take(16_000).copied().collect();
     let raw = seal(&secret, &text).unwrap();
     let z = seal_with(&secret, &text, Compression::Zstd).unwrap();
     assert_eq!(raw.ciphertext.len(), 16_384);

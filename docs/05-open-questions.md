@@ -38,4 +38,4 @@ Decisions still to make. Each names who it blocks.
 ## Dependencies
 
 17. **boringtun.** 0.7.1 works but sees little maintenance; forks exist. Stay, fork, or move to another implementation before v1? Blocks: M6, M12.
-18. **Storage coupling.** Decided: storage is a vØrk application without Reticulum ties, in this repository (ADR-0015). Still open: whether the move off Reticulum comes right after M1 or after M3; whether islands (M8) wait for storage or start with standalone signed invitation chains. Blocks: M8, M9.
+18. **Storage coupling.** Decided: storage is a vØrk application without Reticulum ties, in this repository (ADR-0015). Decided: the move off Reticulum comes right after M1 (roadmap M9, ADR-0022), with the storage format unchanged. Still open: whether islands (M8) wait for storage or start with standalone signed invitation chains. Blocks: M8.

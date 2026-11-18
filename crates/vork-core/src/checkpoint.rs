@@ -5,7 +5,7 @@
 //! checkpoint = { "control":  [ [ stamp, op ], … ],                     every control operation, by stamp
 //!                "frontier": [ [ writer (bin 32), seq, time_ms, commit cid (bin 33) ], … ],   by writer
 //!                "high":     nil | stamp,                              the highest data stamp seen
-//!                "vork":   "ns-checkpoint/1",
+//!                "retifs":   "ns-checkpoint/1",
 //!                "state":    nil | [ root cid (bin 33), root seed (bin 32) ] }   Prolly tree of stamped records
 //! ```
 //! A checkpoint is a cache of a deterministic function: the state after each
@@ -26,7 +26,7 @@ use crate::{
 };
 
 pub const CHECKPOINT_TAG: &str = "ns-checkpoint/1";
-const STATE_LABEL: &[u8] = b"vork/v1/storage/state";
+const STATE_LABEL: &[u8] = b"retifs/v1/state";
 
 /// How far a checkpoint covers one writer's chain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,7 +156,7 @@ impl Checkpoint {
             None => out.push(0xc0),
             Some(s) => write_stamp(&mut out, s),
         }
-        write_str(&mut out, "vork");
+        write_str(&mut out, "retifs");
         write_str(&mut out, CHECKPOINT_TAG);
         write_str(&mut out, "state");
         match &self.state {
@@ -207,7 +207,7 @@ impl Checkpoint {
             return Err(bad("checkpoint fields"));
         }
         let high = read_opt_stamp(&mut r)?;
-        if r.str()? != "vork" || r.str()? != CHECKPOINT_TAG {
+        if r.str()? != "retifs" || r.str()? != CHECKPOINT_TAG {
             return Err(bad("not a checkpoint"));
         }
         if r.str()? != "state" {

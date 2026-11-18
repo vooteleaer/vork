@@ -5,16 +5,16 @@
 //! lease    = body ‖ sig(64)
 //! body     = 0x01 ‖ lease_id (16) ‖ signer (32) ‖ expires (u64 BE, unix s) ‖ generations (u8)
 //!            ‖ count (u16 BE) ‖ (cid (33) ‖ chunk_token (32)) × count
-//! sig      = Ed25519(signer, "vork/v1/storage/lease" ‖ body)
+//! sig      = Ed25519(signer, "retifs/v1/lease" ‖ body)
 //!
 //! renewal  = 0x01 ‖ lease_id (16) ‖ expires (u64 BE) ‖ sig(64)            89 B, one packet
-//! sig      = Ed25519(signer, "vork/v1/storage/renew" ‖ 0x01 ‖ lease_id ‖ expires)
+//! sig      = Ed25519(signer, "retifs/v1/renew" ‖ 0x01 ‖ lease_id ‖ expires)
 //!
 //! receipt  = 0x01 ‖ lease_id (16) ‖ SHA-256(lease body) ‖ holds_until (u64 BE)
 //!            ‖ holder RNS public key (64: X25519 ‖ Ed25519) ‖ sig(64)
-//! sig      = Ed25519(holder identity, "vork/v1/storage/receipt" ‖ all fields before sig)
+//! sig      = Ed25519(holder identity, "retifs/v1/receipt" ‖ all fields before sig)
 //!
-//! storage proof answer = HMAC-SHA256(nonce, "vork/v1/storage/prove" ‖ ciphertext)[0..16]
+//! storage proof answer = HMAC-SHA256(nonce, "retifs/v1/prove" ‖ ciphertext)[0..16]
 //! ```
 //! - A lease lists chunks, never manifests: the holder learns which chunks
 //!   belong together, not the structure or content.
@@ -47,11 +47,11 @@ pub const RECEIPT_LEN: usize = 1 + ID_LEN + 32 + 8 + 64 + 64;
 pub const PROVE_LEN: usize = 16;
 
 const HEADER_LEN: usize = 1 + ID_LEN + 32 + 8 + 1 + 2;
-const KEY_SALT: &[u8] = b"vork/v1/storage/lease-key";
-const LEASE_LABEL: &[u8] = b"vork/v1/storage/lease";
-const RENEW_LABEL: &[u8] = b"vork/v1/storage/renew";
-const RECEIPT_LABEL: &[u8] = b"vork/v1/storage/receipt";
-const PROVE_LABEL: &[u8] = b"vork/v1/storage/prove";
+const KEY_SALT: &[u8] = b"retifs/v1/lease-key";
+const LEASE_LABEL: &[u8] = b"retifs/v1/lease";
+const RENEW_LABEL: &[u8] = b"retifs/v1/renew";
+const RECEIPT_LABEL: &[u8] = b"retifs/v1/receipt";
+const PROVE_LABEL: &[u8] = b"retifs/v1/prove";
 
 pub type LeaseId = [u8; ID_LEN];
 
@@ -76,7 +76,7 @@ impl std::error::Error for LeaseError {}
 pub struct LeaseKey(SigningKey);
 
 impl LeaseKey {
-    /// `Ed25519 seed = HKDF-SHA256(ikm = library key, salt = "vork/v1/storage/lease-key", info = lease_id, L = 32)`.
+    /// `Ed25519 seed = HKDF-SHA256(ikm = library key, salt = "retifs/v1/lease-key", info = lease_id, L = 32)`.
     /// The owner can always re-derive it to renew; nobody else can link it to
     /// the owner or to other leases.
     pub fn derive(namespace_key: &[u8; 32], id: &LeaseId) -> Self {
@@ -287,16 +287,16 @@ pub fn identity_public(secret: &[u8; 64]) -> [u8; 64] {
     public
 }
 
-/// The RNS destination hash of `vork.node` for an identity public key
-/// (X25519 ‖ Ed25519): `SHA-256(SHA-256("vork.node")[0..10] ‖ SHA-256(key)[0..16])[0..16]`.
+/// The RNS destination hash of `retifs.node` for an identity public key
+/// (X25519 ‖ Ed25519): `SHA-256(SHA-256("retifs.node")[0..10] ‖ SHA-256(key)[0..16])[0..16]`.
 pub fn node_destination(public_key: &[u8; 64]) -> [u8; 16] {
     node_destination_of(Sha256::digest(public_key)[..16].try_into().unwrap())
 }
 
-/// The `vork.node` address of the identity with this (truncated) hash: who
+/// The `retifs.node` address of the identity with this (truncated) hash: who
 /// an identified link's requester is, in the form `vork ping` shows.
 pub fn node_destination_of(identity_hash: &[u8; 16]) -> [u8; 16] {
-    let name_hash = &Sha256::digest(b"vork.node")[..10];
+    let name_hash = &Sha256::digest(b"retifs.node")[..10];
     Sha256::digest([name_hash, identity_hash.as_slice()].concat())[..16].try_into().unwrap()
 }
 

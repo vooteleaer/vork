@@ -73,7 +73,7 @@ All calls below are shown as Rust signatures. The C ABI mirrors them one to one.
 | `Cid` | version byte + hash of the ciphertext | **⚠ irreversible** (decision 1). Content-addressed and verifiable without the key. |
 | `RootId` | `Cid` of a database root | A snapshot of a library (§10). |
 | `CommitId` | `Cid` of a commit object | **⚠ irreversible** format (decision 8). |
-| `NsAddr` | 16-byte RNS destination hash | `vork.ns.<name>` + owner identity. |
+| `NsAddr` | 16-byte RNS destination hash | `retifs.ns.<name>` + owner identity. |
 | `Identity` | RNS identity hash (16 bytes) | A person, device or app identity. |
 | `Device` | short name, e.g. `laptop` | Bound to a device identity. Used in `keep:<device>`. |
 | `Key` | UTF-8 string, max 255 bytes | Attribute key (§6.3). |
@@ -363,7 +363,7 @@ struct Availability {
 ```
 
 - `keep(id, Some("laptop"), true)` sets `keep:laptop = true` and pulls the chunks proactively ([ADR-0005](adr/0005-local-store-offline.md)). `None` means all the user's devices.
-- Keep rules are records (`type = "vork.keep-rule"`) holding a query, so they sync like everything else.
+- Keep rules are records (`type = "retifs.keep-rule"`) holding a query, so they sync like everything else.
 - `store_usage()` reports the pinned/cache/serving tiers, and pinned sets that don't fit.
 - **Misses:** `read`/`open` return `Unavailable { fetch_queued: bool }` instead of hanging.
 
@@ -424,7 +424,7 @@ Every error is returned. Nothing panics across the API boundary.
 Applications use `libvork` and never speak the protocol directly. It's documented here so frontends in other languages and remote use are possible.
 
 - **Framing (local):** length-prefixed messages over a `SOCK_SEQPACKET` Unix socket. Bulk data is passed as file descriptors (`SCM_RIGHTS`: memfd for writes, pipe or memfd for reads).
-- **Framing (remote):** RNS Link requests to `/vork/v0/storage/<op>`. Bulk data travels as RNS Resources.
+- **Framing (remote):** RNS Link requests to `/retifs/v0/<op>`. Bulk data travels as RNS Resources.
 - **Envelope:** `{v: 0, id: u32, op: str, args: map}` → `{id, ok: map}` | `{id, err: {code, detail}}`. Streams (`watch`, cursors, fetch progress) send multiple replies with the same `id` and end with `{id, end: true}`.
 - **Encoding:** msgpack. These messages are transient, so the encoding isn't irreversible. Anything the daemon *signs or stores* (attribute records, commits, capabilities) uses the canonical serialization of decision 2.
 - **Versioning:** `v` is the protocol version. The daemon answers `hello` with the versions it supports.
@@ -470,9 +470,9 @@ The FUSE frontend ([ADR-0002](adr/0002-os-integration.md)) is an ordinary client
 | `rename` | `set(id, "path", new)` |
 | `unlink` | `delete(id)` |
 | `mkdir` | nothing stored; a directory exists while something has that path prefix (an empty dir is a hidden `type = "inode/directory"` record) |
-| `getxattr user.vork.<key>` | `attr(id, key)` |
-| `setxattr user.vork.<key>` | `set(id, key, value)` |
-| `getxattr user.vork.local` | `status(id)` |
+| `getxattr user.retifs.<key>` | `attr(id, key)` |
+| `setxattr user.retifs.<key>` | `set(id, key, value)` |
+| `getxattr user.retifs.local` | `status(id)` |
 | `ls /mnt/vork/.query/<expr>/` | `query(expr)` as a virtual directory |
 | duplicate `path` | shown as `plan (2).txt` |
 | `read` of an unavailable block | blocks up to a timeout if there's a route, else `EIO` |

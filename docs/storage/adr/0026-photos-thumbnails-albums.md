@@ -37,7 +37,7 @@ Turned the way the EXIF orientation says, so every app can show them as they are
 - A photo is in an album by its `album` attribute: a name, or a list of names. An album exists while some photo is in it; one name, in any case and in any library, is one album. There are no album records.
 - A cover: `cover-of` on the photo, the same way (the album's name, or a list).
 - An album's photos: `album=<name>` (a list matches by any of its names), in any library. Sharing an album is a share of that query ([ADR-0021](0021-shares.md)), kept up to date as photos are added.
-- The album records first made (`type = application/x-vnd.vork.album`, with `album:<album id>` keys on their photos) are moved onto their photos by the apps, and dropped.
+- The album records first made (`type = application/x-vnd.retifs.album`, with `album:<album id>` keys on their photos) are moved onto their photos by the apps, and dropped.
 - File views show a file in albums also under `/Albums/<album>/` ([ADR-0002](0002-os-integration.md)); deleting it there takes the file out of the album.
 
 ### Favourites and people

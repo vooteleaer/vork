@@ -20,7 +20,7 @@ Phase 0 asked which way a YubiKey can hold an RNS identity: an RNS identity is a
 The owner gave this key's OpenPGP application to vØrk storage (its keys weren't in use). Firmware can't be updated on any YubiKey, so PIV stays without 25519 here.
 
 - `ykman openpgp reset` (OpenPGP only; PIV, FIDO, OTP and OATH untouched), then on the card: signature slot set to Ed25519 and decryption slot to X25519 (cv25519), each key generated on the card ([card_identity_rns.py](yubikey/card_identity_rns.py), with `--generate`; without it, it only checks).
-- The public keys make an RNS identity as RNS lays it out (X25519 public ‖ Ed25519 public): identity hash `12e9125e209f8c0f67acc1fe70b9e4f1`, `vork.node` destination `258d3c394d3376c4662048ca83bd2f2d`.
+- The public keys make an RNS identity as RNS lays it out (X25519 public ‖ Ed25519 public): identity hash `12e9125e209f8c0f67acc1fe70b9e4f1`, `retifs.node` destination `258d3c394d3376c4662048ca83bd2f2d`.
 - **Signatures:** the card signs the message itself (pure Ed25519, PSO:COMPUTE DIGITAL SIGNATURE); Python RNS's `Identity.validate` accepts them for 32- and 400-byte messages (an RNS packet's worth).
 - **Key agreement:** Python RNS encrypted a token to the identity; the card's ECDH with the token's ephemeral key (PSO:DECIPHER), then RNS's own HKDF and Token, opened it. No byte-order conversion: the card's X25519 keys are as RFC 7748 and RNS have them.
 - The PINs are the defaults after the reset (PIN 123456, admin PIN 12345678): change them (`ykman openpgp access change-pin`, `change-admin-pin`) before the key holds anything that matters. The PIN is asked once per session for signing ("Require PIN for signature: Once"); decryption needs it per session too.
@@ -28,7 +28,7 @@ The owner gave this key's OpenPGP application to vØrk storage (its keys weren't
 So this YubiKey can be a vØrk storage node's identity, with the secret never leaving the card, using only RNS's primitives.
 
 ## In Rust (2026-11-11)
-`crates/vork-card` talks to the card over PC/SC (`pcsc`): selects the OpenPGP application, reads both public keys (GENERATE ASYMMETRIC KEY PAIR in read mode), verifies the PIN, signs (PSO:COMPUTE DIGITAL SIGNATURE, extended length for messages over 255 bytes) and agrees (PSO:DECIPHER with the peer's X25519 key). Its example `card_check` signed a 400-byte message on the card (checked with ed25519-dalek), agreed with an ephemeral key made in software (the same secret both ways), and gave the identity hash and `vork.node` destination Python RNS gave; [verify_card_rust.py](yubikey/verify_card_rust.py) checks its output with Python RNS. On Linux the crate needs pcsc-lite (`libpcsclite-dev` to build, `pcscd` to run).
+`crates/vork-card` talks to the card over PC/SC (`pcsc`): selects the OpenPGP application, reads both public keys (GENERATE ASYMMETRIC KEY PAIR in read mode), verifies the PIN, signs (PSO:COMPUTE DIGITAL SIGNATURE, extended length for messages over 255 bytes) and agrees (PSO:DECIPHER with the peer's X25519 key). Its example `card_check` signed a 400-byte message on the card (checked with ed25519-dalek), agreed with an ephemeral key made in software (the same secret both ways), and gave the identity hash and `retifs.node` destination Python RNS gave; [verify_card_rust.py](yubikey/verify_card_rust.py) checks its output with Python RNS. On Linux the crate needs pcsc-lite (`libpcsclite-dev` to build, `pcscd` to run).
 
 Timing (`card_timing`, release build, Windows, 20 runs, medians): sign 32 B 100 ms, sign 400 B 171 ms, agree 82 ms.
 

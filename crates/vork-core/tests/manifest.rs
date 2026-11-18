@@ -101,9 +101,9 @@ fn read_cap_text_roundtrip() {
     let mut store = MemStore::default();
     let f = write(&mut store, &ConvergenceSecret::public(), &noise(50_000, 1)).unwrap();
     let text = f.to_string();
-    assert!(text.starts_with("vork:1:01"));
+    assert!(text.starts_with("retifs:1:01"));
     assert_eq!(text.parse::<vork_core::FileRef>().unwrap(), f);
-    assert!("vork:2:00:00:1".parse::<vork_core::FileRef>().is_err());
+    assert!("retifs:2:00:00:1".parse::<vork_core::FileRef>().is_err());
 }
 
 #[test]
@@ -226,7 +226,7 @@ fn stable_padding_keeps_versions_cheap() {
 #[test]
 fn read_caps_carry_holder_hints() {
     use vork_core::manifest::FileRef;
-    let bare = "vork:1:01aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0101010101010101010101010101010101010101010101010101010101010101:42";
+    let bare = "retifs:1:01aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0101010101010101010101010101010101010101010101010101010101010101:42";
     let f: FileRef = bare.parse().unwrap();
     assert_eq!(f.to_string(), bare);
     assert!(FileRef::parse_with_hints(bare).unwrap().1.is_empty());

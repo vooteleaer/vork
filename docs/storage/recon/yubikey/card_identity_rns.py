@@ -29,7 +29,7 @@ with dev.open_connection(SmartCardConnection) as conn:
     ident = RNS.Identity(create_keys=False)
     ident.load_public_key(x + ed)          # RNS: X25519 public ‖ Ed25519 public
     print("RNS identity hash", ident.hash.hex())
-    print("vork.node dest ", RNS.Destination.hash_from_name_and_identity("vork.node", ident).hex())
+    print("retifs.node dest ", RNS.Destination.hash_from_name_and_identity("retifs.node", ident).hex())
 
     # Signing: the card signs the message itself (pure Ed25519), as RNS does.
     s.verify_pin(PIN)

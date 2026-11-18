@@ -33,22 +33,22 @@ Both 1 and 2, as separate layers.
 ### 2. The blind index
 **Keys,** derived from the library's read key (rotated with it on revoke, [ADR-0017](0017-multi-writer-namespaces.md)):
 ```text
-token key    = HKDF-SHA256(ikm = read key, salt = "vork/v1/storage/index-token",  info = "", L = 32)   members only
-search secret = HKDF-SHA256(ikm = read key, salt = "vork/v1/storage/index-search", info = "", L = 32)   given to search nodes
+token key    = HKDF-SHA256(ikm = read key, salt = "retifs/v1/index-token",  info = "", L = 32)   members only
+search secret = HKDF-SHA256(ikm = read key, salt = "retifs/v1/index-search", info = "", L = 32)   given to search nodes
 ```
 The two are separate on purpose: a search node holds the search secret, which opens the index's tree nodes, but **not** the token key, so it can't compute the token for a guessed value (`album=Prangli 2026`) and test it. It only sees tokens that members send.
 
 **Tokens and entries:**
 ```text
 token = HMAC-SHA256(token key, canonical msgpack [key, value])[0..16]
-K_t   = HKDF-SHA256(ikm = token key, salt = "vork/v1/storage/index-entry", info = token, L = 32)
+K_t   = HKDF-SHA256(ikm = token key, salt = "retifs/v1/index-entry", info = token, L = 32)
 entry = AES-256(K_t, record id)                                    one block, 16 bytes
 ```
 - Values are matched exactly as stored: `Int 5` and `Str "5"` differ, case matters.
 - An entry is the record ID under a key bound to the token. The same record under two tokens gives unrelated entries, so a search node can't intersect posting lists or follow one record across attributes; the member intersects after decrypting.
 - Entries are deterministic, so every member builds the same index from the same state.
 
-**What is indexed** (decided 2026-10-20): only keys the library declares searchable, in an index-settings record (`type = "vork.index"`, e.g. `keys = ["type", "album", "tags:*"]`) that syncs like any record. Nothing is indexed until a key is declared, so a search node learns frequencies only of what the user chose to make searchable.
+**What is indexed** (decided 2026-10-20): only keys the library declares searchable, in an index-settings record (`type = "retifs.index"`, e.g. `keys = ["type", "album", "tags:*"]`) that syncs like any record. Nothing is indexed until a key is declared, so a search node learns frequencies only of what the user chose to make searchable.
 
 **The index** is a Prolly tree ([ADR-0018](0018-state-trees.md)) keyed by `token ‖ entry` (32 bytes) with empty values, sealed under the search secret as a convergence secret. A lookup is a scan of the keys that start with a token. Unchanged parts keep their CIDs across versions.
 
@@ -78,7 +78,7 @@ A search node, beyond what a holder sees:
 ## Implementation status (2026-10-20)
 **Layer 1, remote queries to own nodes:**
 - `vork app add NAME --ns NS[,NS] [--write] --device NODE` admits another of the user's nodes (by the address `vork ping` shows) with the same scope as an app token, and no token.
-- `/vork/api` on `vork.node` takes msgpack local API requests. The requester must `identify` on the link; its identity hash gives its `vork.node` address, which must be an admitted device. Requests are checked with the app socket's rules, then answered from a separate task (a request may wait on the network). Over a Link, a range read returns at most 1 MiB and a watch waits at most 45 s.
+- `/vork/api` on `retifs.node` takes msgpack local API requests. The requester must `identify` on the link; its identity hash gives its `retifs.node` address, which must be an admitted device. Requests are checked with the app socket's rules, then answered from a separate task (a request may wait on the network). Over a Link, a range read returns at most 1 MiB and a watch waits at most 45 s.
 - The local API gained `Remote { node, req }` (owner only, one hop), and the CLI `--via NODE`: any command runs against the other node, carried by the local daemon, which identifies once per link.
 - Live, two daemons on one machine: B queried A's library in 17–19 ms per request with nothing synced, read a record's history, and wrote with a read-write scope. A node that wasn't admitted, a removed device, another library, writing with a read-only scope and granting were all refused.
 - **Mounting through another node (2026-10-22):** `vork mount NS --via NODE` (a node address or a contact's name; `--via` with a contact's name works for every command) mounts a library another of the user's nodes holds, with nothing of it kept here: both frontends (`vork-mount`, `vork-cloudfiles`) take `--via` and send every request there. The Cloud Files provider reads and writes in 1 MiB pieces through a Link. Pins in Explorer set the holding node's keep tag (`keep:<its device>`). Live (Windows, two daemons, 9 checks): reads (a 3 MiB file identical), a file written in the folder landing in the other node's library, its changes showing up, no local copy. A FUSE mount through another node is the same client code, but wasn't tested live: in the WSL test setup (two daemons on one offline Python `rnsd`) no Link between the daemons came up, `--via` `ping` included.
@@ -86,7 +86,7 @@ A search node, beyond what a holder sees:
 **Layer 2, the blind index (core):** `vork_core::index` derives the keys, computes tokens and entries, builds the index tree and looks tokens up. The Prolly tree takes keys of any fixed length now (state trees keep 16-byte keys; their vectors are byte-identical). A list value is indexed per element. Vectors cover tokens over every value type, a 401-record library (416 tree keys, 17 nodes) and lookups.
 
 **Layer 2 in the daemon:**
-- A library declares searchable keys with a record `type=vork.index keys=album[,…]`. Nothing is indexed until then.
+- A library declares searchable keys with a record `type=retifs.index keys=album[,…]`. Nothing is indexed until then.
 - Whenever a node's checkpoint changes (and on `vork ns search NS`, which also prints the capability), it builds the index of the declared keys and publishes a descriptor on the library's index channel. The index nodes are pinned and served like any own chunk.
 - A search node is given the capability (the index channel's address) and follows it like any channel (`vork follow CAPABILITY --from NODE`). It fetches the index tree the latest descriptor names and serves it on.
 - `/vork/query` takes `index channel ns_id ‖ proof ‖ tokens` and answers the entries per token, the descriptor's time and its sealed checkpoint reference. A node that holds no such index, or gets a bad proof, gives the same empty answer.

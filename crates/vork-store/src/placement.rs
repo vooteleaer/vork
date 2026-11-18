@@ -167,7 +167,7 @@ fn parse_stats(v: &[u8]) -> HolderStats {
 }
 
 impl SlabStore {
-    /// A `vork.node` announce was heard `hops` away, saying it announces
+    /// A `retifs.node` announce was heard `hops` away, saying it announces
     /// every `announce_s` seconds (None: it didn't say).
     pub fn heard_storage_node(&self, peer: &PeerId, hops: u8, announce_s: Option<u32>, site: Option<[u8; 8]>, now_ms: u64) -> Result<(), StoreError> {
         let w = self.write()?;

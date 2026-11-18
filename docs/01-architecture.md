@@ -6,7 +6,7 @@ This describes the design as a whole. What the prototype implements today is mar
 
 One process, one UDP socket, the same code everywhere. Its state:
 
-- **Identity** (implemented): an Ed25519 signing key and an X25519 key (the WireGuard static key). Address = `SHA-256(ed_pub ‖ x_pub)[:16]`.
+- **Identity** (implemented): an Ed25519 signing key and an X25519 key (the WireGuard static key). Address = `SHA-256(x_pub ‖ ed_pub)[:16]`, as in the storage format; a named service of an identity has the address `SHA-256(SHA-256(name)[:10] ‖ address)[:16]` (a destination).
 - **Neighbors** (implemented): an outer WireGuard session (boringtun, userspace) with each directly connected node.
 - **Routes** (implemented): for each destination, one route per neighbor that announced it.
 - **Relay table** (implemented): `(neighbor, label) → (neighbor, label)` for paths passing through.

@@ -7,7 +7,7 @@ Python RNS's primitives and umsgpack only:
 - the index tree: rebuilt here (Prolly rules of ADR-0018 with 32-byte keys)
   and sealed with ADR-0008, giving the same root and node CIDs.
 
-    python crates/vork-core/test-vectors/verify_index_rns.py
+    python crates/retifs-core/test-vectors/verify_index_rns.py
 """
 
 import hashlib
@@ -24,12 +24,12 @@ from RNS.Cryptography.HKDF import hkdf
 
 from verify_prolly_rns import boundary, put, value
 
-SETTINGS_TYPE = "vork.index"
+SETTINGS_TYPE = "retifs.index"
 
 
 def keys_from(read_key):
-    token_key = hkdf(32, read_key, b"vork/v1/storage/index-token", b"")
-    search = hkdf(32, read_key, b"vork/v1/storage/index-search", b"")
+    token_key = hkdf(32, read_key, b"retifs/v1/index-token", b"")
+    search = hkdf(32, read_key, b"retifs/v1/index-search", b"")
     return token_key, search
 
 
@@ -38,7 +38,7 @@ def token(token_key, key, v):
 
 
 def entry(token_key, t, record_id):
-    k = hkdf(32, token_key, b"vork/v1/storage/index-entry", t)
+    k = hkdf(32, token_key, b"retifs/v1/index-entry", t)
     out = AES_256_CBC.encrypt(record_id, k, b"\x00" * 16)
     assert len(out) == 16
     return out
@@ -137,20 +137,20 @@ def main():
         entries = [k[16:] for k in tree_keys if k[:16] == t]
         ids = []
         for e in entries:
-            k = hkdf(32, token_key, b"vork/v1/storage/index-entry", t)
+            k = hkdf(32, token_key, b"retifs/v1/index-entry", t)
             ids.append(AES_256_CBC.decrypt(e, k, b"\x00" * 16).hex())
         checks.append((f"lookup {l['key']}", t.hex() == l["token"] and [e.hex() for e in entries] == l["entries"] and sorted(ids) == l["records"]))
 
     # The index channel: writer from the derived seed, read key = search secret.
     ch = doc["channel"]
-    writer = Ed25519PrivateKey.from_private_bytes(hkdf(32, read_key, b"vork/v1/storage/index-writer", b"")).public_key().public_bytes()
-    ns_id = hashlib.sha256(b"vork/v1/storage/ns" + writer).digest()[:16]
+    writer = Ed25519PrivateKey.from_private_bytes(hkdf(32, read_key, b"retifs/v1/index-writer", b"")).public_key().public_bytes()
+    ns_id = hashlib.sha256(b"retifs/v1/ns" + writer).digest()[:16]
     checks.append(("index channel writer and ns_id", writer.hex() == ch["writer"] and ns_id.hex() == ch["ns_id"]))
-    checks.append(("index channel address (the search capability)", ch["address"] == f"vork-ch:1:{writer.hex()}:{search.hex()}"))
+    checks.append(("index channel address (the search capability)", ch["address"] == f"retifs-ch:1:{writer.hex()}:{search.hex()}"))
 
     # The descriptor: index root, checkpoint sealed to members as an RNS Token, time.
     dd = doc["descriptor"]
-    state_key = hkdf(64, token_key, b"vork/v1/storage/index-state", b"")
+    state_key = hkdf(64, token_key, b"retifs/v1/index-state", b"")
     cid_hex, seed_hex, size = dd["checkpoint"]
     pt = umsgpack.packb([bytes.fromhex(cid_hex), bytes.fromhex(seed_hex), size])
     iv = bytes.fromhex(dd["iv"])
@@ -161,7 +161,7 @@ def main():
     checks.append(("descriptor state opens with RNS Token", Token(state_key).decrypt(sealed) == pt))
 
     qp = doc["query_proof"]
-    proof = HMAC.new(search, b"vork/v1/storage/index-query" + bytes.fromhex(qp["link_id"]), hashlib.sha256).digest()
+    proof = HMAC.new(search, b"retifs/v1/index-query" + bytes.fromhex(qp["link_id"]), hashlib.sha256).digest()
     checks.append(("query proof", proof.hex() == qp["proof"]))
 
     ok = all(c for _, c in checks)
