@@ -4,7 +4,9 @@ import android.Manifest
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -312,8 +314,17 @@ fun DaemonState(s: JSONObject, nodeUp: Boolean) {
 @Composable
 fun Network(n: JSONObject, said: (String) -> Unit) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var address by remember { mutableStateOf("") }
     val small = MaterialTheme.typography.bodySmall
+    // Apps reaching other nodes at fd… addresses: the system asks once (a VPN, fd00::/8 only).
+    val allowVpn = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        if (r.resultCode == android.app.Activity.RESULT_OK) {
+            context.getSharedPreferences("vork", android.content.Context.MODE_PRIVATE).edit().putBoolean("vpn", true).apply()
+            VorkVpn.startIfAllowed(context)
+            said("Apps can reach vØrk nodes now")
+        }
+    }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
             Text("Network", style = MaterialTheme.typography.titleMedium)
@@ -336,6 +347,28 @@ fun Network(n: JSONObject, said: (String) -> Unit) {
                         scope.launch { said(core { Core.removeConnection(c.optString("name")) }.ifEmpty { "Removed ${c.optString("name")}" }) }
                     }) { Text("Remove") }
                 }
+            }
+            val ip = n.optString("ip").takeIf { !n.isNull("ip") && it.isNotEmpty() }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (ip != null) "Apps reach this phone at $ip" else "Apps on this phone don't reach vØrk addresses",
+                    Modifier.weight(1f),
+                    style = small,
+                )
+                if (ip == null) {
+                    TextButton(onClick = {
+                        val ask = android.net.VpnService.prepare(context)
+                        if (ask != null) allowVpn.launch(ask) else {
+                            context.getSharedPreferences("vork", android.content.Context.MODE_PRIVATE).edit().putBoolean("vpn", true).apply()
+                            VorkVpn.startIfAllowed(context)
+                        }
+                    }) { Text("Turn on") }
+                } else {
+                    TextButton(onClick = { VorkVpn.stop(context); said("Apps no longer reach vØrk addresses") }) { Text("Turn off") }
+                }
+            }
+            if (n.optInt("reached_by") > 0) {
+                Text("Reachable directly: ${n.optInt("reached_by")} node(s) reached this phone", style = small)
             }
             for (o in (0 until others.length()).map { others.getJSONObject(it) }) {
                 Text("${o.optString("name")} · ${if (o.optBoolean("up")) "connected" else "not connected"} (found by itself)", style = small)

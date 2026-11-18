@@ -55,6 +55,13 @@
 
         <!-- Other apps (vork-photos, vork-map) using vork: the user lets
              each in, to the libraries chosen; connections are handed over. -->
+        <!-- vØrk M2: apps reach other nodes at fd… addresses (only fd00::/8 goes through it). -->
+        <service
+            android:name=".VorkVpn"
+            android:exported="false"
+            android:permission="android.permission.BIND_VPN_SERVICE">
+            <intent-filter><action android:name="android.net.VpnService" /></intent-filter>
+        </service>
         <service android:name=".AccessService" android:exported="true">
             <intent-filter><action android:name="org.retifs.action.ACCESS" /></intent-filter>
         </service>

@@ -44,3 +44,4 @@ mdns-sd = "0.22.0"
 
 [target."cfg(windows)".dependencies]
 windows-service = "0.8"
+wintun = "0.5"

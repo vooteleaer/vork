@@ -139,7 +139,11 @@ class VorkService : Service() {
                         p.node.mkdirs()
                         start(p.vork, "node-init", "init", "--config", p.nodeConfig.absolutePath).waitFor()
                     }
+                    // The interface comes from VorkVpn, handed over as a descriptor.
+                    val conf = p.nodeConfig.readText()
+                    if (!Regex("(?m)^tun\\s*=").containsMatchIn(conf)) p.nodeConfig.appendText("\ntun = \"fd\"\n")
                     node = start(p.vork, "node", "run", "--config", p.nodeConfig.absolutePath)
+                    VorkVpn.startIfAllowed(this)
                 }
                 // vorkd once the node answers (it reconnects by itself later).
                 val up = Core.nodeUp()

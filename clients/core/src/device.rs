@@ -45,6 +45,10 @@ pub struct Network {
     pub relayed: u64,
     /// Where others see it (its outside address).
     pub seen_at: Vec<String>,
+    /// The node's address on its interface for ordinary programs (`fd…`), if it has one.
+    pub ip: Option<String>,
+    /// Others dialed it and got an answer (ADR-0023): reachable directly.
+    pub reached_by: u64,
     pub error: Option<String>,
 }
 
@@ -76,6 +80,8 @@ pub fn parse_status(json: &str) -> Result<Network, String> {
         destinations: v["destinations"].as_u64().unwrap_or(0),
         relayed: v["relay"]["packets"].as_u64().unwrap_or(0),
         seen_at: v["outside"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default(),
+        ip: v["interface"]["address"].as_str().map(str::to_string),
+        reached_by: v["reach"]["reached_by"].as_array().map(|a| a.len() as u64).unwrap_or(0),
         error: None,
     })
 }

@@ -243,6 +243,8 @@ pub fn network() -> Value {
         "destinations": r.destinations,
         "relayed": r.relayed,
         "seen_at": r.seen_at,
+        "ip": r.ip,
+        "reached_by": r.reached_by,
         "error": r.error,
         "connections": connections,
         "others": others,

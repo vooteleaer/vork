@@ -675,7 +675,33 @@ impl Node {
             drop(lan_tx);
             None
         };
-        if let Some(name) = self.cfg.tun.clone() {
+        // An interface handed over by an app (Android's VpnService): `tun = "fd"`.
+        let (tun_tx, mut tun_rx) = tokio::sync::mpsc::channel::<Arc<crate::tun::Tun>>(1);
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if self.cfg.tun.as_deref() == Some("fd") {
+            if let Some(dir) = self.state.dir() {
+                let path = dir.join("tun.sock");
+                log(format!("waiting for an interface at {}", path.display()));
+                let rt = tokio::runtime::Handle::current();
+                std::thread::spawn(move || loop {
+                    let _in_runtime = rt.enter();
+                    match crate::tun::receive_fd_at(&path).and_then(|fd| crate::tun::Tun::from_fd(fd, "vpn")) {
+                        Ok(t) => {
+                            if tun_tx.blocking_send(Arc::new(t)).is_err() {
+                                return;
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("interface handover: {e:#}");
+                            std::thread::sleep(Duration::from_secs(5));
+                        }
+                    }
+                });
+            }
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        drop(tun_tx);
+        if let Some(name) = self.cfg.tun.clone().filter(|t| t != "fd") {
             let addr = crate::tun::overlay(&self.my_hash);
             match crate::tun::Tun::open(&name, addr, crate::tun::MTU) {
                 Ok(t) => {
@@ -685,7 +711,7 @@ impl Node {
                 Err(e) => warn(format!("no interface: {e:#}")),
             }
         }
-        let tun = self.tun.clone();
+        let mut tun = self.tun.clone();
         let mut tun_buf = vec![0u8; 65536];
         let mut last_remember = Instant::now();
         let mut last_seek = Instant::now();
@@ -754,6 +780,11 @@ impl Node {
                         }
                         Err(e) => debug(format!("interface: {e}")),
                     }
+                }
+                Some(t) = tun_rx.recv() => {
+                    log(format!("interface handed over: this node is {}", crate::tun::overlay(&self.my_hash)));
+                    tun = Some(t.clone());
+                    self.tun = Some(t);
                 }
                 Some(found) = lan_rx.recv(), if mdns.is_some() => {
                     self.on_lan_found(found);
@@ -2492,6 +2523,8 @@ impl Node {
             "destinations": self.routes.len(),
             "sessions": sessions,
             "relay": { "paths": self.switch.len() / 2, "packets": self.relayed },
+            // The interface for ordinary programs (M2), if there is one: this node's address on it.
+            "interface": self.tun.as_ref().map(|t| json!({ "name": t.name, "address": crate::tun::overlay(&self.my_hash).to_string() })),
             "reach": {
                 "known": self.reach.len().0,
                 "proven_here": self.reach.len().1,
