@@ -32,6 +32,10 @@ pub struct FileConfig {
     /// Named services of this node's identity to announce (storage uses "retifs.node").
     #[serde(default)]
     pub destinations: Vec<String>,
+    /// The owner's other devices (identity addresses, hex): direct links with
+    /// them even when `direct` is off (ADR-0011).
+    #[serde(default)]
+    pub devices: Vec<String>,
     pub log: Option<String>,
     pub log_file: Option<PathBuf>,
     pub control: Option<String>,
@@ -133,8 +137,10 @@ announce = true
 # Lite: never relay, receive no floods, ask for paths (small devices).
 lite = false
 
-# Offer and accept direct links (reveals this node's address to the peer).
+# Offer and accept direct links with anyone (reveals this node's address to the peer).
 direct = false
+# Your other devices (their addresses): direct links with them always.
+devices = []
 
 # Ask the router to open a port to this node (UPnP, then PCP/NAT-PMP). Any
 # free outside port will do: others learn where they reached it.

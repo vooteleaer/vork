@@ -235,6 +235,11 @@ pub fn settings(a: RunArgs) -> Result<Settings> {
         paths: a.paths.or(file.paths).unwrap_or(2).max(1),
         spread,
         destinations: file.destinations.iter().chain(&a.destinations).cloned().collect(),
+        devices: file
+            .devices
+            .iter()
+            .map(|d| hex::decode(d.trim()).ok().and_then(|b| <[u8; 16]>::try_from(b).ok()).with_context(|| format!("devices: {d} isn't an address (32 hex digits)")))
+            .collect::<Result<_>>()?,
         fetch: match a.fetch {
             Some(f) => {
                 let (d, n) = f.split_once(':').context("--fetch ADDRESS:BYTES")?;

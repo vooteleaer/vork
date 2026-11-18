@@ -173,6 +173,8 @@ struct Session {
     paths: Vec<(u32, u64)>,
     /// First hops whose paths failed: (don't retry before, current backoff).
     failed: HashMap<u32, (Instant, Duration)>,
+    /// Whether a direct link was considered since the far end's identity was last learned.
+    direct_considered: bool,
 }
 
 struct Route {
@@ -212,6 +214,7 @@ impl Session {
             next_req: 0,
             paths: vec![],
             failed: HashMap::new(),
+            direct_considered: false,
         }
     }
 }
@@ -258,6 +261,8 @@ pub struct Config {
     pub spread: Spread,
     /// Named services of the node's identity, announced next to it.
     pub destinations: Vec<String>,
+    /// The owner's other devices: direct links with them even without `direct`.
+    pub devices: Vec<Hash>,
     /// Test: request this many bytes from a destination, again and again.
     pub fetch: Option<(Hash, usize)>,
     /// Test: identify in sessions we open.
@@ -1337,6 +1342,18 @@ impl Node {
     }
 
     /// The identity a destination belongs to, from its announce.
+    /// Whether a session's far end may learn our addresses: anyone with
+    /// `direct`, else only the owner's devices (known by identity: the
+    /// destination's, or the opener's once it identified).
+    fn direct_ok(&self, sid: u32) -> bool {
+        if self.cfg.direct {
+            return true;
+        }
+        let Some(s) = self.sessions.get(&sid) else { return false };
+        let who = s.peer_identity.or_else(|| s.peer_hash.and_then(|d| self.dest_identity(&d).or(Some(d))));
+        who.is_some_and(|w| self.cfg.devices.contains(&w))
+    }
+
     fn dest_identity(&self, dest: &Hash) -> Option<Hash> {
         self.routes.get(dest)?.values().next().map(|r| r.ann.identity())
     }
@@ -1583,6 +1600,17 @@ impl Node {
     }
 
     fn on_app(&mut self, sid: u32, key: (u32, u64), body: &[u8]) {
+        // The session works: offer a direct link, once, if this peer may have
+        // one (considered again when it identifies).
+        if let Some(s) = self.sessions.get_mut(&sid)
+            && !s.direct_considered
+        {
+            s.direct_considered = true;
+            if body.first() != Some(&3) && !self.punched.contains(&sid) && self.direct_ok(sid) {
+                self.punched.insert(sid);
+                self.send_punch(sid);
+            }
+        }
         match body.first() {
             Some(1) if body.len() == 9 => {
                 let mut reply = vec![2u8];
@@ -1596,7 +1624,7 @@ impl Node {
                     let path = if self.is_direct(sid, key) { "direct".to_string() } else { format!("via {}", self.name(key.0)) };
                     log(format!("pong from {who}: {} ({path})", ms(t.elapsed())));
                 }
-                if self.cfg.direct && self.punched.insert(sid) {
+                if self.direct_ok(sid) && self.punched.insert(sid) {
                     self.send_punch(sid);
                 }
             }
@@ -1719,6 +1747,7 @@ impl Node {
                 if identity::verify(&ed, LABEL_IDENTIFY, &s.nonce, &sig) {
                     let who = node_hash(&ed, &x);
                     s.peer_identity = Some(who);
+                    s.direct_considered = false;
                     log(format!("session {} identified as {}", hex::encode(&s.nonce[..4]), short(&who)));
                 } else {
                     warn("an identify with a bad signature");
@@ -2007,8 +2036,8 @@ impl Node {
     /// sides send WireGuard handshakes to each other at the same time, which
     /// also opens the way through most NATs.
     fn on_punch(&mut self, sid: u32, cands: Vec<SocketAddr>) {
-        if !self.cfg.direct {
-            return log("peer offered a direct link; not enabled here (--direct)");
+        if !self.direct_ok(sid) {
+            return debug("peer offered a direct link; not with this peer here (direct, devices)");
         }
         if self.punched.insert(sid) {
             self.send_punch(sid);
