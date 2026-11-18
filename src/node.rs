@@ -79,6 +79,8 @@ struct LinkCode {
 }
 /// An IPv6 packet between overlay addresses (M2), as a datagram.
 const APP_IP: u8 = 5;
+/// A direct-link offer: the node's link key, then its candidate addresses.
+const APP_DIRECT: u8 = 6;
 // Messages on the stream.
 const MSG_REQUEST: u8 = 1;
 const MSG_RESPONSE: u8 = 2;
@@ -222,6 +224,10 @@ struct Session {
     failed: HashMap<u32, (Instant, Duration)>,
     /// Whether a direct link was considered since the far end's identity was last learned.
     direct_considered: bool,
+    /// The far end's node link key, from its direct-link offer: a neighbor
+    /// with it is the direct path (the session key may be a one-off, or an
+    /// application's).
+    direct_key: Option<[u8; 32]>,
 }
 
 struct Route {
@@ -266,6 +272,7 @@ impl Session {
             paths: vec![],
             failed: HashMap::new(),
             direct_considered: false,
+            direct_key: None,
         }
     }
 }
@@ -1490,7 +1497,8 @@ impl Node {
     }
 
     fn is_direct(&self, sid: u32, key: (u32, u64)) -> bool {
-        self.neighbors.get(&key.0).map(|n| n.x_pub) == self.sessions.get(&sid).map(|s| s.peer_x)
+        let Some(n) = self.neighbors.get(&key.0) else { return false };
+        self.sessions.get(&sid).is_some_and(|s| n.x_pub == s.peer_x || Some(n.x_pub) == s.direct_key)
     }
 
     /// The identity a destination belongs to, from its announce.
@@ -1556,7 +1564,8 @@ impl Node {
             let resting: HashSet<u32> = s.failed.iter().filter(|(_, (until, _))| Instant::now() < *until).map(|(n, _)| *n).collect();
             let hops: Vec<u32> = self.first_hops(&dest).into_iter().filter(|v| !resting.contains(v)).collect();
             let owner = self.dest_identity(&dest);
-            let direct = hops.iter().copied().find(|v| owner.is_some() && self.neighbors[v].hash == owner);
+            let direct_key = s.direct_key;
+            let direct = hops.iter().copied().find(|v| (owner.is_some() && self.neighbors[v].hash == owner) || Some(self.neighbors[v].x_pub) == direct_key);
             if let Some(d) = direct {
                 if !used.contains(&d) {
                     self.open_path(sid, dest, d);
@@ -1845,7 +1854,7 @@ impl Node {
             && !s.direct_considered
         {
             s.direct_considered = true;
-            if body.first() != Some(&3) && !self.punched.contains(&sid) && self.direct_ok(sid) {
+            if !matches!(body.first(), Some(&3) | Some(&APP_DIRECT)) && !self.punched.contains(&sid) && self.direct_ok(sid) {
                 self.punched.insert(sid);
                 self.send_punch(sid);
             }
@@ -1868,10 +1877,16 @@ impl Node {
                 }
             }
             Some(&APP_IP) => self.on_ip(sid, &body[1..]),
-            Some(3) => match wire::decode_addrs(&body[1..]) {
-                Ok(cands) => self.on_punch(sid, cands),
-                Err(e) => log(format!("bad direct-link offer: {e}")),
-            },
+            // The old offer without the node's key: dialing the session's key
+            // instead (a one-off) disturbed the link already up. Ignored.
+            Some(3) => debug("an old direct-link offer: ignored"),
+            Some(&APP_DIRECT) if body.len() > 33 => {
+                let key: [u8; 32] = body[1..33].try_into().unwrap();
+                match wire::decode_addrs(&body[33..]) {
+                    Ok(cands) => self.on_punch(sid, key, cands),
+                    Err(e) => log(format!("bad direct-link offer: {e}")),
+                }
+            }
             Some(&APP_SEG) if body.len() >= 5 => {
                 let seq = u32::from_be_bytes(body[1..5].try_into().unwrap());
                 let msgs = {
@@ -2289,7 +2304,10 @@ impl Node {
             return;
         }
         log(format!("offering a direct link at {cands:?}"));
-        let mut body = vec![3u8];
+        // The node's own link key goes with the addresses: the session's key
+        // on either end may be a one-off (the opener's) or an application's.
+        let mut body = vec![APP_DIRECT];
+        body.extend_from_slice(self.me.x_pub().as_bytes());
         body.extend_from_slice(&wire::encode_addrs(&cands));
         self.send_app(sid, &body);
     }
@@ -2297,14 +2315,19 @@ impl Node {
     /// The far end offered its addresses: answer with ours (once), then both
     /// sides send WireGuard handshakes to each other at the same time, which
     /// also opens the way through most NATs.
-    fn on_punch(&mut self, sid: u32, cands: Vec<SocketAddr>) {
+    fn on_punch(&mut self, sid: u32, peer: [u8; 32], cands: Vec<SocketAddr>) {
         if !self.direct_ok(sid) {
             return debug("peer offered a direct link; not with this peer here (direct, devices)");
         }
         if self.punched.insert(sid) {
             self.send_punch(sid);
         }
-        let peer = self.sessions[&sid].peer_x;
+        if peer == *self.me.x_pub().as_bytes() {
+            return;
+        }
+        if let Some(s) = self.sessions.get_mut(&sid) {
+            s.direct_key = Some(peer);
+        }
         if self.neighbor_by_key.get(&peer).is_some_and(|id| self.neighbors[id].up) {
             return;
         }

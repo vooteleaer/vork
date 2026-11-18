@@ -560,6 +560,8 @@ fun SettingsTab(node: Node, s: JSONObject, said: (String) -> Unit) {
     val settings = s.optJSONObject("settings") ?: JSONObject()
     var name by remember(s.optString("name")) { mutableStateOf(s.optString("name")) }
     var peer by remember { mutableStateOf("") }
+    var showLog by remember { mutableStateOf(false) }
+    val copyLog = copier(said)
     val small = MaterialTheme.typography.bodySmall
     // A change that needs a restart says so; the others apply at once.
     val apply: (JSONObject, String) -> Unit = { r, done ->
@@ -624,7 +626,25 @@ fun SettingsTab(node: Node, s: JSONObject, said: (String) -> Unit) {
                 Column(Modifier.padding(16.dp)) {
                     Text("Node", style = MaterialTheme.typography.titleMedium)
                     Text("Address ${s.optString("address")}", style = small.copy(fontFamily = FontFamily.Monospace))
+                    if (showLog) {
+                        val lines = remember(s) { runCatching { node.log.readLines().takeLast(80) }.getOrDefault(emptyList()) }
+                        androidx.compose.material3.AlertDialog(
+                            onDismissRequest = { showLog = false },
+                            title = { Text("The node's log") },
+                            text = {
+                                LazyColumn(Modifier.height(420.dp)) {
+                                    items(lines) { Text(it, style = small.copy(fontFamily = FontFamily.Monospace)) }
+                                }
+                            },
+                            confirmButton = {
+                                TextButton(onClick = { copyLog("Log", lines.joinToString("\n")); showLog = false }) { Text("Copy") }
+                            },
+                            dismissButton = { TextButton(onClick = { showLog = false }) { Text("Close") } },
+                        )
+                    }
                     Row {
+                        OutlinedButton(onClick = { showLog = true }) { Text("Log") }
+                        Spacer(Modifier.width(8.dp))
                         OutlinedButton(onClick = { NodeService.restart(context); said("Restarting the node") }) { Text("Restart") }
                         Spacer(Modifier.width(8.dp))
                         OutlinedButton(onClick = { NodeService.stop(context); said("The node is stopped until the app is opened again") }) { Text("Stop") }
