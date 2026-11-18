@@ -16,6 +16,7 @@ Byte order: our own fields are **big-endian**. WireGuard's fields keep WireGuard
 |---|---|
 | `vork/v0/bind` | `x_pub ‖ flags` in `HELLO` |
 | `vork/v0/announce` | `destination ‖ x_pub ‖ name_hash ‖ seq ‖ flags ‖ app_data` in `ANNOUNCE` |
+| `vork/v0/identify` | the session nonce, in `IDENTIFY` |
 
 - **Overlay IPv6 address** (compatibility view): `fd` followed by the first 15 bytes of the address.
 - **Flags:** bit 0 `RELAY` (set: full node; clear: Lite node). Other bits are zero.
@@ -110,7 +111,8 @@ Relay entries and far-end path state expire after **60 s** without traffic; prob
 
 ## 4. Sessions (inner layer)
 
-- WireGuard between the two endpoints, carried in `DATA`. The initiator knows the responder's X25519 key from its announce; the responder learns the initiator's key from the handshake (the initiator need not announce).
+- A session goes to a **destination**. WireGuard between the two endpoints, carried in `DATA`: the responder's key is the destination's X25519 key (from its announce); the opener uses a **fresh X25519 key for every session**, so the far end can't tell who opened it, or link two sessions of the same opener, unless the opener identifies.
+- **Session nonce** = `SHA-256("vork/v0/session" ‖ opener's session key ‖ destination's key)`: both ends know it and no other session has it. Proofs are bound to it (storage's `link_nonce`).
 - An endpoint finds the session of an incoming message by WireGuard's receiver index (`index >> 8` is the local session number in boringtun); a handshake initiation creates a session for its sender's key.
 - The far end of a path learns which session the path belongs to from the first message on it.
 - **Paths per session:** the origin keeps up to N paths through different first hops (default 2), plus one through a direct link when there is one. A dropped path's first hop rests 5 s, doubling up to 60 s, before it is tried again.
@@ -127,8 +129,25 @@ The session carries IPv4/UDP datagrams to port 4799 framed as in §2, with an ap
 | 2 | pong: `nonce[8]` |
 | 3 | direct-link candidates: `count[1]` then addresses as in `OBSERVED` |
 | 4 | bench: `seq[8]` then padding |
+| 8 | stream segment: `seq[4]` then up to 1180 bytes |
+| 9 | stream acknowledgment: `next[4]` `count[1]` then `count` (≤ 8) ranges `start[4]` `end[4]` |
 
-This is a stand-in. From milestone M2 the session carries **IPv6 packets between overlay addresses** (ADR-0017), and these functions move into a control service.
+Bytes 1–4 are a stand-in. From milestone M2 the session also carries **IPv6 packets between overlay addresses** (ADR-0017), and ping, bench and candidates move into a control service.
+
+### Stream (reliable messages)
+
+Segments 8 and 9 make a reliable, ordered byte stream per session (ADR-0022), for messages too big or too important for single packets:
+- The receiver acknowledges everything before `next` and up to 8 ranges `[start, end)` received past it, at once after a gap or a duplicate, else every second segment or after 10 ms. It keeps at most 8192 segments past `next`.
+- The sender keeps a congestion window (start 16 segments, slow start, then +1 per window; halved on loss, at most once per window). A segment is lost when 3 later segments arrived, or when a segment sent later than it was acknowledged. With nothing acknowledged for two round trips it resends its newest segment (tail probe); with nothing for a retransmission timeout (2 × variance + round trip, 200 ms to 10 s, doubling) it resends what is out and starts from 2 segments.
+- The stream carries messages: `length[4]` then the message (at most 32 MiB + 1 KiB). The message's first byte is its kind:
+
+| Kind | Message |
+|---|---|
+| 1 | `REQUEST`: `id[4]` `path_len[1]` `path` `body` |
+| 2 | `RESPONSE`: `id[4]` `status[1]` `body`; status 0 ok, 1 no such path |
+| 3 | `IDENTIFY`: `ed_pub[32]` `x_pub[32]` `sig[64]` over `vork/v0/identify ‖ session nonce` |
+
+After a valid `IDENTIFY` the far end knows the session's opener by its address. Requests are answered by the destination the session goes to.
 
 ## 5. Direct links
 

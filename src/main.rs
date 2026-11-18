@@ -6,6 +6,7 @@ mod portmap;
 #[cfg(windows)]
 mod service;
 mod state;
+mod stream;
 mod wire;
 
 use anyhow::{Context, Result, bail};
@@ -129,6 +130,15 @@ pub struct RunArgs {
     /// Measure throughput: send to this address (hex); the receiver logs what arrives each second.
     #[arg(long)]
     bench: Option<String>,
+    /// Test: request BYTES from a destination again and again (ADDRESS:BYTES).
+    #[arg(long, hide = true)]
+    fetch: Option<String>,
+    /// Test: identify in the sessions this node opens.
+    #[arg(long, hide = true)]
+    identify: bool,
+    /// Test: drop this share (0..1) of the session packets sent.
+    #[arg(long, hide = true, default_value_t = 0.0)]
+    drop: f64,
     /// Bench sending rate in Mbit/s.
     #[arg(long, default_value_t = 100)]
     bench_rate: u64,
@@ -213,6 +223,15 @@ pub fn settings(a: RunArgs) -> Result<Settings> {
         paths: a.paths.or(file.paths).unwrap_or(2).max(1),
         spread,
         destinations: file.destinations.iter().chain(&a.destinations).cloned().collect(),
+        fetch: match a.fetch {
+            Some(f) => {
+                let (d, n) = f.split_once(':').context("--fetch ADDRESS:BYTES")?;
+                Some((parse_address(Some(d.to_string()))?.context("--fetch address")?, n.parse().context("--fetch bytes")?))
+            }
+            None => None,
+        },
+        identify: a.identify,
+        drop: a.drop,
         bench: parse_address(a.bench)?,
         bench_rate: a.bench_rate,
         control,

@@ -87,8 +87,8 @@ Links with fresh-handshake liveness, signed announces, path labels swapped per h
 
 - **Goal:** vØrk storage runs on vØrk with no Reticulum code, its format unchanged so existing libraries move over (ADR-0015, ADR-0022).
 - **Scope, in steps that each run:**
-  1. *Identities and destinations:* vØrk addresses and key files are storage identities (done); named destinations `SHA-256(SHA-256(name)[0..10] ‖ address)[0..16]`; announces of several destinations per node with app data; path requests for destinations.
-  2. *Sessions and requests:* sessions to a destination, anonymous opener with optional identify, a session nonce; `request(path, body) → response` up to 32 MiB, fragmented, reliable, flow-controlled over the session's paths.
+  1. *Identities and destinations:* **done.** vØrk addresses and key files are storage identities; named destinations `SHA-256(SHA-256(name)[0..10] ‖ address)[0..16]`; announces of several destinations per node with app data; path requests for destinations.
+  2. *Sessions and requests:* sessions to a destination, anonymous opener with optional identify, a session nonce; `request(path, body) → response` up to 32 MiB, fragmented, reliable, flow-controlled over the session's paths. **Done:** 32 MiB through a relay at ~200 Mbit/s on one VM, ~45 Mbit/s with 5 % loss each way; over two relayed paths too.
   3. *Shared node and native API* (the part of ADR-0020 storage needs): applications attach over the local socket/pipe, register destinations, announce, serve and send requests; a Rust client crate.
   4. *Storage transport:* storage's `Transport` and server side over the native API; storage announces, path lookups, identify and route information from vØrk; placement by measured round trip and direct-vs-relayed.
   5. *Prns removed:* shared-instance, remote-control and NomadNet code dropped; no Reticulum crate in the build.

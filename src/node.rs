@@ -18,7 +18,8 @@ use crate::identity::{self, Hash, Identity, LABEL_ANNOUNCE, LABEL_BIND, node_has
 use crate::wire::{self, Announce, FLAG_RELAY, Msg, wg};
 use boringtun::noise::handshake::parse_handshake_anon;
 use boringtun::noise::{Packet, Tunn, TunnResult};
-use boringtun::x25519::PublicKey;
+use boringtun::x25519::{PublicKey, StaticSecret};
+use crate::stream::{self, Stream};
 use crate::state::{Remembered, State, unix_now};
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
@@ -54,6 +55,17 @@ const PROBE_LOSS_DEAD: u32 = 3;
 /// probes every healthy path each second, so a quiet path is a dead one.
 const PATH_RECENT: Duration = Duration::from_secs(3);
 const MAX_HOPS: u8 = 16;
+// Session messages (inside WireGuard): datagrams 1–4, the stream 8–9.
+const APP_SEG: u8 = 8;
+const APP_ACK: u8 = 9;
+// Messages on the stream.
+const MSG_REQUEST: u8 = 1;
+const MSG_RESPONSE: u8 = 2;
+const MSG_IDENTIFY: u8 = 3;
+pub const STATUS_OK: u8 = 0;
+pub const STATUS_NO_PATH: u8 = 1;
+const LABEL_IDENTIFY: &[u8] = b"vork/v0/identify";
+const LABEL_SESSION: &[u8] = b"vork/v0/session";
 const TTL: u8 = 32;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -87,6 +99,8 @@ struct Neighbor {
 struct PathEnd {
     /// We opened it (and probe it); otherwise we are its far end.
     origin: bool,
+    /// At the far end: which of our destinations it was opened to.
+    dest: Option<Hash>,
     sid: Option<u32>,
     acked: bool,
     srtt: Option<Duration>,
@@ -102,7 +116,18 @@ struct PathEnd {
 struct Session {
     tunn: Tunn,
     peer_x: [u8; 32],
+    /// The destination we opened this session to (None: the far end opened it).
     peer_hash: Option<Hash>,
+    /// The destination of ours the far end opened it to.
+    local: Option<Hash>,
+    /// Who the far end is: the destination's identity, or the opener once it identified.
+    peer_identity: Option<Hash>,
+    /// Known to both ends and to no other session: what proofs are bound to.
+    nonce: [u8; 32],
+    stream: Stream,
+    /// Our requests waiting for an answer: id → (path, sent).
+    waiting: HashMap<u32, (String, Instant)>,
+    next_req: u32,
     paths: Vec<(u32, u64)>,
     /// First hops whose paths failed: (don't retry before, current backoff).
     failed: HashMap<u32, (Instant, Duration)>,
@@ -111,6 +136,35 @@ struct Session {
 struct Route {
     hops: u8,
     ann: Announce,
+}
+
+impl Session {
+    fn new(tunn: Tunn, peer_x: [u8; 32], peer_hash: Option<Hash>, local: Option<Hash>, peer_identity: Option<Hash>, nonce: [u8; 32]) -> Self {
+        Session {
+            tunn,
+            peer_x,
+            peer_hash,
+            local,
+            peer_identity,
+            nonce,
+            stream: Stream::default(),
+            waiting: HashMap::new(),
+            next_req: 0,
+            paths: vec![],
+            failed: HashMap::new(),
+        }
+    }
+}
+
+/// SHA-256(label ‖ opener's session key ‖ destination's key): the opener's
+/// key is fresh for every session, so no two sessions share it.
+fn session_nonce(opener: &[u8; 32], dest: &[u8; 32]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(LABEL_SESSION);
+    h.update(opener);
+    h.update(dest);
+    h.finalize().into()
 }
 
 /// A relay's entry: traffic from (neighbor, label) goes to (to, label).
@@ -139,6 +193,12 @@ pub struct Config {
     pub spread: Spread,
     /// Named services of the node's identity, announced next to it.
     pub destinations: Vec<String>,
+    /// Test: request this many bytes from a destination, again and again.
+    pub fetch: Option<(Hash, usize)>,
+    /// Test: identify in sessions we open.
+    pub identify: bool,
+    /// Test: drop this share of the session packets we send.
+    pub drop: f64,
     /// Send bench traffic to this destination...
     pub bench: Option<Hash>,
     /// ...at this rate (Mbit/s).
@@ -176,7 +236,10 @@ pub struct Node {
     neighbors: HashMap<u32, Neighbor>,
     neighbor_by_key: HashMap<[u8; 32], u32>,
     sessions: HashMap<u32, Session>,
+    /// Sessions others opened to us, by the opener's (per-session) key.
     session_by_key: HashMap<[u8; 32], u32>,
+    /// Sessions we opened, by destination.
+    session_by_dest: HashMap<Hash, u32>,
     /// destination -> (first hop -> route through it)
     routes: HashMap<Hash, HashMap<u32, Route>>,
     switch: HashMap<(u32, u64), Hop>,
@@ -345,6 +408,7 @@ impl Node {
             neighbor_by_key: HashMap::new(),
             sessions: HashMap::new(),
             session_by_key: HashMap::new(),
+            session_by_dest: HashMap::new(),
             routes: HashMap::new(),
             switch: HashMap::new(),
             ends: HashMap::new(),
@@ -373,6 +437,10 @@ impl Node {
                 return id;
             }
         }
+    }
+
+    fn session_tunn(secret: StaticSecret, peer: [u8; 32], id: u32) -> Tunn {
+        Tunn::new(secret, PublicKey::from(peer), None, None, id, None)
     }
 
     fn new_tunn(&self, peer: [u8; 32], keepalive: Option<u16>, id: u32) -> Tunn {
@@ -464,6 +532,8 @@ impl Node {
         let mut last_probe = Instant::now();
         let mut last_status = Instant::now();
         let mut last_retry = Instant::now();
+        let mut stream_tick = tokio::time::interval(Duration::from_millis(10));
+        stream_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut bench_tick = tokio::time::interval(Duration::from_millis(1));
         bench_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut last_bench_report = Instant::now();
@@ -481,6 +551,15 @@ impl Node {
                     while bench_due >= 1.0 {
                         bench_due -= 1.0;
                         self.bench_send();
+                    }
+                }
+                _ = stream_tick.tick() => {
+                    let busy: Vec<u32> = self.sessions.iter().filter(|(_, s)| !s.stream.idle()).map(|(id, _)| *id).collect();
+                    for sid in busy {
+                        self.flush(sid);
+                    }
+                    if self.cfg.fetch.is_some() {
+                        self.fetch();
                     }
                 }
                 r = self.sock.recv_from(&mut buf) => {
@@ -844,7 +923,7 @@ impl Node {
             .iter()
             .filter(|(via, _)| {
                 let n = &self.neighbors[*via];
-                n.up && (!self.is_lite(**via) || n.hash == Some(*dest))
+                n.up && (!self.is_lite(**via) || n.hash == Some(*dest) || n.hash == self.dest_identity(dest))
             })
             .map(|(via, r)| (r.hops, *via))
             .collect();
@@ -916,7 +995,7 @@ impl Node {
             // We are the far end. The session is known once traffic arrives.
             self.ends.insert(
                 (from, label),
-                PathEnd { origin: false, sid: None, acked: true, srtt: None, probe: None, lost: 0, last_seen: Instant::now(), rx: 0, credit: 0 },
+                PathEnd { origin: false, dest: Some(dest), sid: None, acked: true, srtt: None, probe: None, lost: 0, last_seen: Instant::now(), rx: 0, credit: 0 },
             );
             self.send_msg(from, &Msg::PathAck { label });
             return;
@@ -1012,7 +1091,7 @@ impl Node {
         let label = rand_u64();
         self.ends.insert(
             (via, label),
-            PathEnd { origin: true, sid: Some(sid), acked: false, srtt: None, probe: None, lost: 0, last_seen: Instant::now(), rx: 0, credit: 0 },
+            PathEnd { origin: true, dest: None, sid: Some(sid), acked: false, srtt: None, probe: None, lost: 0, last_seen: Instant::now(), rx: 0, credit: 0 },
         );
         self.sessions.get_mut(&sid).unwrap().paths.push((via, label));
         log(format!("opening a path to {} via {}", short(&dest), self.name(via)));
@@ -1039,6 +1118,11 @@ impl Node {
         self.neighbors.get(&key.0).map(|n| n.x_pub) == self.sessions.get(&sid).map(|s| s.peer_x)
     }
 
+    /// The identity a destination belongs to, from its announce.
+    fn dest_identity(&self, dest: &Hash) -> Option<Hash> {
+        self.routes.get(dest)?.values().next().map(|r| r.ann.identity())
+    }
+
     /// For sessions we opened: keep up to `--paths` paths through different
     /// first hops, plus a path over a direct link when there is one.
     fn maintain_sessions(&mut self) {
@@ -1048,7 +1132,8 @@ impl Node {
             let used: HashSet<u32> = s.paths.iter().map(|(n, _)| *n).collect();
             let resting: HashSet<u32> = s.failed.iter().filter(|(_, (until, _))| Instant::now() < *until).map(|(n, _)| *n).collect();
             let hops: Vec<u32> = self.first_hops(&dest).into_iter().filter(|v| !resting.contains(v)).collect();
-            let direct = hops.iter().copied().find(|v| self.neighbors[v].hash == Some(dest));
+            let owner = self.dest_identity(&dest);
+            let direct = hops.iter().copied().find(|v| owner.is_some() && self.neighbors[v].hash == owner);
             if let Some(d) = direct {
                 if !used.contains(&d) {
                     self.open_path(sid, dest, d);
@@ -1139,16 +1224,18 @@ impl Node {
         let sid = match wg::kind(inner) {
             Some(wg::INIT) => {
                 let Ok(Packet::HandshakeInit(init)) = Tunn::parse_incoming_packet(inner) else { return };
+                let local = self.ends.get(&key).and_then(|e| e.dest);
                 let Ok(half) = parse_handshake_anon(&self.me.dh, &self.me.x_pub(), &init) else { return };
                 match self.session_by_key.get(&half.peer_static_public) {
                     Some(sid) => *sid,
                     None => {
-                        // The initiator may be anonymous: we learn its key, not where it is.
+                        // The opener is anonymous (a fresh key per session) until it identifies.
                         let sid = self.new_id();
-                        let tunn = self.new_tunn(half.peer_static_public, None, sid);
-                        self.sessions.insert(sid, Session { tunn, peer_x: half.peer_static_public, peer_hash: None, paths: vec![], failed: HashMap::new() });
+                        let tunn = Self::session_tunn(self.me.dh.clone(), half.peer_static_public, sid);
+                        let nonce = session_nonce(&half.peer_static_public, self.me.x_pub().as_bytes());
+                        self.sessions.insert(sid, Session::new(tunn, half.peer_static_public, None, local, None, nonce));
                         self.session_by_key.insert(half.peer_static_public, sid);
-                        log(format!("new end-to-end session from {}", hex::encode(&half.peer_static_public[..4])));
+                        log(format!("new end-to-end session {} to {}", hex::encode(&nonce[..4]), local.map(|d| short(&d)).unwrap_or_default()));
                         sid
                     }
                 }
@@ -1186,6 +1273,9 @@ impl Node {
     }
 
     fn send_inner(&mut self, sid: u32, p: Vec<u8>) {
+        if self.cfg.drop > 0.0 && (rand_u64() as f64 / u64::MAX as f64) < self.cfg.drop {
+            return;
+        }
         let paths = self.pick_paths(sid);
         if paths.is_empty() {
             return;
@@ -1206,18 +1296,23 @@ impl Node {
     // ---- a tiny application: ping ------------------------------------------------
 
     fn session_to(&mut self, dest: Hash) -> Option<u32> {
-        let x_pub = self.routes.get(&dest)?.values().map(|r| r.ann.x_pub).next()?;
-        if let Some(sid) = self.session_by_key.get(&x_pub) {
+        if let Some(sid) = self.session_by_dest.get(&dest) {
             return Some(*sid);
         }
+        let ann = self.routes.get(&dest)?.values().map(|r| r.ann.clone()).next()?;
         if self.first_hops(&dest).is_empty() {
             return None;
         }
         let sid = self.new_id();
-        let tunn = self.new_tunn(x_pub, None, sid);
-        self.sessions.insert(sid, Session { tunn, peer_x: x_pub, peer_hash: Some(dest), paths: vec![], failed: HashMap::new() });
-        self.session_by_key.insert(x_pub, sid);
-        log(format!("opening end-to-end session to {}", short(&dest)));
+        // A fresh key for every session: the far end can't tell who opens it.
+        let mut seed = [0u8; 32];
+        getrandom::getrandom(&mut seed).expect("OS entropy");
+        let secret = StaticSecret::from(seed);
+        let nonce = session_nonce(PublicKey::from(&secret).as_bytes(), &ann.x_pub);
+        let tunn = Self::session_tunn(secret, ann.x_pub, sid);
+        self.sessions.insert(sid, Session::new(tunn, ann.x_pub, Some(dest), None, Some(ann.identity()), nonce));
+        self.session_by_dest.insert(dest, sid);
+        log(format!("opening end-to-end session {} to {}", hex::encode(&nonce[..4]), short(&dest)));
         self.maintain_sessions();
         Some(sid)
     }
@@ -1257,6 +1352,36 @@ impl Node {
                 Ok(cands) => self.on_punch(sid, cands),
                 Err(e) => log(format!("bad direct-link offer: {e}")),
             },
+            Some(&APP_SEG) if body.len() >= 5 => {
+                let seq = u32::from_be_bytes(body[1..5].try_into().unwrap());
+                let msgs = {
+                    let Some(s) = self.sessions.get_mut(&sid) else { return };
+                    s.stream.on_seg(seq, &body[5..], Instant::now());
+                    s.stream.messages()
+                };
+                match msgs {
+                    Ok(msgs) => {
+                        for m in msgs {
+                            self.on_message(sid, &m);
+                        }
+                    }
+                    Err(e) => warn(format!("session {}: {e}", sid)),
+                }
+                self.flush(sid);
+            }
+            Some(&APP_ACK) if body.len() >= 6 => {
+                let next = u32::from_be_bytes(body[1..5].try_into().unwrap());
+                let n = (body[5] as usize).min(stream::MAX_RANGES);
+                let ranges: Vec<(u32, u32)> = body[6..]
+                    .chunks_exact(8)
+                    .take(n)
+                    .map(|c| (u32::from_be_bytes(c[..4].try_into().unwrap()), u32::from_be_bytes(c[4..].try_into().unwrap())))
+                    .collect();
+                if let Some(s) = self.sessions.get_mut(&sid) {
+                    s.stream.on_ack(next, &ranges, Instant::now());
+                }
+                self.flush(sid);
+            }
             Some(4) if body.len() >= 9 => {
                 let seq = u64::from_be_bytes(body[1..9].try_into().unwrap());
                 let r = self.bench_rx.entry(sid).or_default();
@@ -1269,14 +1394,153 @@ impl Node {
         }
     }
 
+    // ---- messages: identify, requests ----------------------------------------------
+
+    /// Sends what the session's stream has ready: segments and acknowledgments.
+    fn flush(&mut self, sid: u32) {
+        let Some(s) = self.sessions.get_mut(&sid) else { return };
+        let outs = s.stream.poll(Instant::now());
+        for o in outs {
+            let body = match o {
+                stream::Out::Seg { seq, data } => {
+                    let mut b = Vec::with_capacity(5 + data.len());
+                    b.push(APP_SEG);
+                    b.extend_from_slice(&seq.to_be_bytes());
+                    b.extend_from_slice(&data);
+                    b
+                }
+                stream::Out::Ack { next, ranges } => {
+                    let mut b = vec![APP_ACK];
+                    b.extend_from_slice(&next.to_be_bytes());
+                    b.push(ranges.len() as u8);
+                    for (start, end) in ranges {
+                        b.extend_from_slice(&start.to_be_bytes());
+                        b.extend_from_slice(&end.to_be_bytes());
+                    }
+                    b
+                }
+            };
+            self.send_app(sid, &body);
+        }
+    }
+
+    fn send_message(&mut self, sid: u32, msg: &[u8]) {
+        if let Some(s) = self.sessions.get_mut(&sid) {
+            s.stream.send(msg);
+        }
+        self.flush(sid);
+    }
+
+    /// Proves to the far end who we are, bound to this session.
+    fn identify(&mut self, sid: u32) {
+        let Some(s) = self.sessions.get(&sid) else { return };
+        let sig = self.me.sign(LABEL_IDENTIFY, &s.nonce);
+        let mut m = vec![MSG_IDENTIFY];
+        m.extend_from_slice(&self.me.ed_pub());
+        m.extend_from_slice(self.me.x_pub().as_bytes());
+        m.extend_from_slice(&sig);
+        self.send_message(sid, &m);
+    }
+
+    /// Sends a request; the answer comes back as a RESPONSE message.
+    fn request(&mut self, sid: u32, path: &str, body: &[u8]) -> Option<u32> {
+        let s = self.sessions.get_mut(&sid)?;
+        let id = s.next_req;
+        s.next_req = s.next_req.wrapping_add(1);
+        s.waiting.insert(id, (path.to_string(), Instant::now()));
+        let mut m = vec![MSG_REQUEST];
+        m.extend_from_slice(&id.to_be_bytes());
+        m.push(path.len().min(255) as u8);
+        m.extend_from_slice(&path.as_bytes()[..path.len().min(255)]);
+        m.extend_from_slice(body);
+        self.send_message(sid, &m);
+        Some(id)
+    }
+
+    fn on_message(&mut self, sid: u32, m: &[u8]) {
+        match m.first() {
+            Some(&MSG_IDENTIFY) if m.len() == 1 + 32 + 32 + 64 => {
+                let ed: [u8; 32] = m[1..33].try_into().unwrap();
+                let x: [u8; 32] = m[33..65].try_into().unwrap();
+                let sig: [u8; 64] = m[65..129].try_into().unwrap();
+                let Some(s) = self.sessions.get_mut(&sid) else { return };
+                if identity::verify(&ed, LABEL_IDENTIFY, &s.nonce, &sig) {
+                    let who = node_hash(&ed, &x);
+                    s.peer_identity = Some(who);
+                    log(format!("session {} identified as {}", hex::encode(&s.nonce[..4]), short(&who)));
+                } else {
+                    warn("an identify with a bad signature");
+                }
+            }
+            Some(&MSG_REQUEST) if m.len() >= 6 => {
+                let id = u32::from_be_bytes(m[1..5].try_into().unwrap());
+                let plen = m[5] as usize;
+                if m.len() < 6 + plen {
+                    return;
+                }
+                let path = String::from_utf8_lossy(&m[6..6 + plen]).into_owned();
+                let (status, body) = self.serve(sid, &path, &m[6 + plen..]);
+                let mut r = vec![MSG_RESPONSE];
+                r.extend_from_slice(&id.to_be_bytes());
+                r.push(status);
+                r.extend_from_slice(&body);
+                self.send_message(sid, &r);
+            }
+            Some(&MSG_RESPONSE) if m.len() >= 6 => {
+                let id = u32::from_be_bytes(m[1..5].try_into().unwrap());
+                let status = m[5];
+                let Some(s) = self.sessions.get_mut(&sid) else { return };
+                let Some((path, sent)) = s.waiting.remove(&id) else { return };
+                let n = m.len() - 6;
+                let t = sent.elapsed();
+                log(format!(
+                    "{path}: status {status}, {n} bytes in {} ({:.1} Mbit/s)",
+                    ms(t),
+                    n as f64 * 8.0 / t.as_secs_f64().max(1e-6) / 1e6
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    /// Answers a request to one of our destinations. Built in for now:
+    /// `/vork/echo` (the body back) and `/vork/blob` (N bytes, N a u32 body).
+    fn serve(&mut self, _sid: u32, path: &str, body: &[u8]) -> (u8, Vec<u8>) {
+        match path {
+            "/vork/echo" => (STATUS_OK, body.to_vec()),
+            "/vork/blob" if body.len() == 4 => {
+                let n = (u32::from_be_bytes(body.try_into().unwrap()) as usize).min(stream::MAX_MESSAGE - 64);
+                (STATUS_OK, (0..n).map(|i| (i % 251) as u8).collect())
+            }
+            _ => (STATUS_NO_PATH, Vec::new()),
+        }
+    }
+
+    /// The `--fetch` test: one request at a time to the destination.
+    fn fetch(&mut self) {
+        let Some((dest, n)) = self.cfg.fetch else { return };
+        let Some(sid) = self.session_to(dest) else {
+            self.request_path(dest);
+            return;
+        };
+        let s = &self.sessions[&sid];
+        if !s.waiting.is_empty() {
+            return;
+        }
+        if self.cfg.identify && s.next_req == 0 {
+            self.identify(sid);
+        }
+        self.request(sid, "/vork/blob", &(n as u32).to_be_bytes());
+    }
+
     // ---- bench: throughput -------------------------------------------------------
 
     fn bench_send(&mut self) {
         let dest = self.cfg.bench.unwrap();
-        let Some(x_pub) = self.routes.get(&dest).and_then(|r| r.values().next()).map(|r| r.ann.x_pub) else {
+        if !self.routes.contains_key(&dest) {
             return self.request_path(dest);
-        };
-        let sid = match self.session_by_key.get(&x_pub) {
+        }
+        let sid = match self.session_by_dest.get(&dest) {
             Some(sid) => *sid,
             None => match self.session_to(dest) {
                 Some(sid) => sid,
@@ -1487,6 +1751,11 @@ impl Node {
                 json!({
                     "peer": s.peer_hash.map(hex::encode),
                     "peer_key": hex::encode(s.peer_x),
+                    "to": s.local.map(hex::encode),
+                    "identity": s.peer_identity.map(hex::encode),
+                    "nonce": hex::encode(&s.nonce[..8]),
+                    "stream_rtt_ms": s.stream.srtt().map(|d| d.as_secs_f64() * 1000.0),
+                    "resent": s.stream.retransmits,
                     "paths": paths,
                 })
             })
