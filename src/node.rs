@@ -2149,6 +2149,11 @@ impl Node {
         tun.send(p);
     }
 
+    /// A session something was heard on within 10 s (its paths are probed every second).
+    fn session_alive(&self, sid: u32) -> bool {
+        self.sessions.get(&sid).is_some_and(|s| s.paths.iter().any(|k| self.ends.get(k).is_some_and(|e| e.last_seen.elapsed() < Duration::from_secs(10))))
+    }
+
     /// Asks the far end of a session who it is (at most once a second per session).
     fn ask_who(&mut self, sid: u32) {
         let now = Instant::now();
@@ -2165,7 +2170,9 @@ impl Node {
     /// The session IP to a node goes in: the one it came in on, or one opened
     /// (and identified in, so the far end knows who sends).
     fn ip_session(&mut self, dest: Hash) -> Option<u32> {
-        let came_in = self.ip_peer.get(&dest).copied().filter(|s| self.sessions.contains_key(s));
+        // The one it came in on only while alive: a session the far end opened
+        // dies with its restart, and this end, not the opener, can't renew it.
+        let came_in = self.ip_peer.get(&dest).copied().filter(|s| self.session_alive(*s));
         let sid = came_in.or_else(|| self.session_to(dest))?;
         if came_in.is_none() && self.ip_identified.insert(sid) {
             let me = self.me_arc.clone();
