@@ -877,6 +877,12 @@ impl Node {
         let mut last_bench_report = Instant::now();
         let mut bench_due = 0.0f64;
         let mut bench_last = Instant::now();
+        #[cfg(unix)]
+        let mut sig_int = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+        #[cfg(unix)]
+        let mut sig_term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        #[cfg(windows)]
+        let mut sig_int = tokio::signal::windows::ctrl_c()?;
         loop {
             // The interface was let go (interface_off): its descriptor closes here.
             if self.tun.is_none() && tun.is_some() {
@@ -957,7 +963,17 @@ impl Node {
                     log("stopped");
                     return Ok(());
                 }
-                _ = tokio::signal::ctrl_c() => {
+                // Listeners made once, before the loop: a fresh one each turn
+                // missed a signal that came while a packet was being handled
+                // (a busy node then ignored systemd's stop).
+                _ = async {
+                    #[cfg(unix)]
+                    tokio::select! { _ = sig_int.recv() => {} _ = sig_term.recv() => {} }
+                    #[cfg(windows)]
+                    sig_int.recv().await;
+                    #[cfg(not(any(unix, windows)))]
+                    std::future::pending::<()>().await;
+                } => {
                     self.remember_neighbors();
                     self.reach.save();
                     let _ = stop_tx.send(true);
