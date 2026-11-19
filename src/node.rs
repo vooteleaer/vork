@@ -2324,17 +2324,21 @@ impl Node {
             Some(&APP_EXIT) => self.on_exit_packet(sid, &body[1..]),
             // Asked who this node is: said again, in sessions it identified in before.
             Some(&APP_WHO) => {
-                if self.ip_identified.contains(&sid) || self.link_identified.contains(&sid) {
-                    // The other end restarted (its stream is at 0, ours isn't): its end of
-                    // the session is new, so ours starts its stream over too, or the
-                    // identification would wait behind bytes it will never see.
-                    let theirs = body.get(1..5).map(|b| u32::from_be_bytes(b.try_into().unwrap()));
-                    if let Some(s) = self.sessions.get_mut(&sid) {
-                        if theirs == Some(0) && s.stream.sent() > 0 {
-                            s.stream = Stream::default();
-                            log(format!("session {sid:08x}: the other end started afresh; so does this end's stream"));
-                        }
+                // The other end restarted (its stream is at 0, ours isn't): its end of
+                // the session is new, so ours starts its stream over too, or anything
+                // sent on it (identification, link messages, storage) would wait
+                // behind bytes it will never see. Whatever was in flight is sent again
+                // by those who sent it (link messages are, from their outbox).
+                let theirs = body.get(1..5).map(|b| u32::from_be_bytes(b.try_into().unwrap()));
+                if let Some(s) = self.sessions.get_mut(&sid) {
+                    if theirs == Some(0) && s.stream.sent() > 0 {
+                        s.stream = Stream::default();
+                        log(format!("session {sid:08x}: the other end started afresh; so does this end's stream"));
+                        // Link messages lost in flight go again now, not at the next round.
+                        self.send_links();
                     }
+                }
+                if self.ip_identified.contains(&sid) || self.link_identified.contains(&sid) {
                     let me = self.me_arc.clone();
                     self.identify(sid, &me);
                 }
@@ -2351,6 +2355,11 @@ impl Node {
             }
             Some(&APP_SEG) if body.len() >= 5 => {
                 let seq = u32::from_be_bytes(body[1..5].try_into().unwrap());
+                // This end has nothing yet and the other starts mid-way: it kept a session
+                // this end lost (a restart here). Asked who it is, it starts its stream over.
+                if seq > 0 && self.sessions.get(&sid).is_some_and(|s| s.stream.received() == 0) {
+                    self.ask_who(sid);
+                }
                 let msgs = {
                     let Some(s) = self.sessions.get_mut(&sid) else { return };
                     s.stream.on_seg(seq, &body[5..], Instant::now());
