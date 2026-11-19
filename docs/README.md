@@ -42,3 +42,8 @@ New decisions copy [adr/0000-template.md](adr/0000-template.md). *Accepted* mean
 | [0022](adr/0022-storage-leaves-reticulum.md) | Storage leaves Reticulum: destinations, sessions, requests | accepted |
 | [0023](adr/0023-reachability-learned.md) | Reachability is learned from others, never claimed | accepted |
 | [0024](adr/0024-linking-devices.md) | Devices are linked with both sides agreeing | accepted |
+| [0025](adr/adr\0025-resolver-in-the-route.md) | The resolver at fd00::53; device names | accepted |
+| [0026](adr/adr\0026-exit-nodes.md) | Exit nodes | accepted |
+| [0027](adr/adr\0027-walled-garden.md) | The walled garden | accepted |
+| [0028](adr/adr\0028-self-updating.md) | Self-updating | accepted |
+| [0029](adr/adr\0029-releases.md) | Public releases | accepted |
