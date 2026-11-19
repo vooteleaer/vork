@@ -442,6 +442,8 @@ pub struct Node {
     link_sent: HashMap<String, Instant>,
     /// Sessions opened for links in which we identified.
     link_identified: HashSet<u32>,
+    /// Names asked lately (logged once a minute each).
+    dns_seen: HashMap<(String, u16), Instant>,
 }
 
 /// Socket buffers big enough to absorb bursts (the Linux default, ~200 KB,
@@ -623,6 +625,7 @@ impl Node {
             link_codes: Vec::new(),
             link_sent: HashMap::new(),
             link_identified: HashSet::new(),
+            dns_seen: HashMap::new(),
         };
         for name in node.cfg.destinations.clone() {
             let me = node.me_arc.clone();
@@ -1576,6 +1579,19 @@ impl Node {
             let label = name.strip_suffix(DOMAIN).unwrap_or("").trim_end_matches('.');
             let found = self.resolve(label);
             let rcode = if found.is_some() { NOERROR } else { NXDOMAIN };
+            let key = (name.clone(), qtype);
+            if self.dns_seen.get(&key).is_none_or(|t| t.elapsed() > Duration::from_secs(60)) {
+                if self.dns_seen.len() > 256 {
+                    self.dns_seen.clear();
+                }
+                self.dns_seen.insert(key, Instant::now());
+                let kind = match qtype { 28 => "AAAA".to_string(), 1 => "A".to_string(), 65 => "HTTPS".to_string(), t => format!("type {t}") };
+                log(format!("name asked: {name} {kind} → {}", match found {
+                    Some(a) if qtype == 28 => a.to_string(),
+                    Some(_) => "no records of that type (vØrk names are IPv6)".to_string(),
+                    None => "no such name".to_string(),
+                }));
+            }
             return tun.send(&reply(&q, &answer(&q.msg, end, qtype, rcode, found)));
         }
         let upstream = self.cfg.dns_upstream.clone();
