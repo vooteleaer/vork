@@ -2558,6 +2558,19 @@ impl Node {
         }
     }
 
+    /// The session's stream started over: the request in flight was lost; asked again.
+    fn update_resend(&mut self, sid: u32) {
+        match self.update.take() {
+            Some((UpdateStep::Asked(s, _), _)) if s == sid => {
+                if let Some(req) = self.request(sid, crate::update::PATH, br#"{"op":"manifest"}"#, None) {
+                    self.update = Some((UpdateStep::Asked(sid, req), Instant::now()));
+                }
+            }
+            Some((UpdateStep::Getting(s, _, d), _)) if s == sid => self.update_get(sid, d),
+            other => self.update = other,
+        }
+    }
+
     fn update_get(&mut self, sid: u32, d: crate::update::Download) {
         let body = json!({ "op": "get", "target": crate::update::target(), "offset": d.offset }).to_string();
         let Some(req) = self.request(sid, crate::update::PATH, body.as_bytes(), None) else { return };
@@ -2827,8 +2840,10 @@ impl Node {
                     if theirs == Some(0) && s.stream.sent() > 0 {
                         s.stream = Stream::default();
                         log(format!("session {sid:08x}: the other end started afresh; so does this end's stream"));
-                        // Link messages lost in flight go again now, not at the next round.
+                        // Link messages lost in flight go again now, not at the next round,
+                        // and a self-update asks again for what it was waiting for.
                         self.send_links();
+                        self.update_resend(sid);
                     }
                 }
                 if self.ip_identified.contains(&sid) || self.link_identified.contains(&sid) {
