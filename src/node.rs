@@ -987,7 +987,15 @@ impl Node {
 
     fn send_raw(&self, addr: SocketAddr, p: &[u8]) {
         if let Err(e) = self.send_sock.send_to(p, addr) {
-            debug(format!("send to {addr}: {e}"));
+            // Shown (at most every 10 s): a node that can't send is otherwise silent.
+            static LAST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+            if now >= LAST.load(std::sync::atomic::Ordering::Relaxed) + 10 {
+                LAST.store(now, std::sync::atomic::Ordering::Relaxed);
+                warn(format!("can't send to {addr}: {e}"));
+            } else {
+                debug(format!("send to {addr}: {e}"));
+            }
         }
     }
 
@@ -2905,6 +2913,9 @@ impl Node {
     /// Asks the node at `addr` for its key (answered unauthenticated: the key
     /// is public, and a neighbor is trusted with nothing but relaying).
     fn ask_key(&mut self, addr: SocketAddr) {
+        if !self.asking.contains_key(&addr) {
+            log(format!("asking {addr} for its key"));
+        }
         let nonce = rand_u64();
         self.asking.insert(addr, (nonce, Instant::now()));
         let mut q = KEY_ASK.to_vec();
