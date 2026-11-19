@@ -1,3 +1,6 @@
 /target
 /dist
 __pycache__/
+
+# Local context for Claude (machine-specific)
+CLAUDE.md
