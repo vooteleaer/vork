@@ -340,6 +340,8 @@ pub struct Config {
     pub dns_upstream: Vec<SocketAddr>,
     /// Offers itself as an exit node to the owner's devices (ADR-0026).
     pub exit: bool,
+    /// Openings in the walled garden for other nodes (ADR-0027).
+    pub allow: Vec<String>,
     /// Its internet traffic goes out through this node.
     pub exit_via: Option<Hash>,
     /// The exit chosen by this node: the fastest of the owner's devices offering it.
@@ -466,6 +468,10 @@ pub struct Node {
     exit_dns: HashMap<u16, (crate::dns::Query, Instant)>,
     /// Sessions asked who is on them, and when.
     who_asked: HashMap<u32, Instant>,
+    /// The walled garden: what other nodes may reach here (ADR-0027).
+    firewall: crate::firewall::Firewall,
+    /// Blocked traffic logged lately (once a minute per node and port).
+    blocked_seen: HashMap<(Hash, String), Instant>,
 }
 
 /// Socket buffers big enough to absorb bursts (the Linux default, ~200 KB,
@@ -600,6 +606,7 @@ fn timers(tunn: &mut Tunn) -> Option<Vec<u8>> {
 impl Node {
     pub async fn new(me: Identity, cfg: Config, state: State) -> anyhow::Result<Node> {
         let aliases = crate::alias::Aliases::open(state.dir(), &me.hash());
+        let cfg_allow = cfg.allow.clone();
         let std_sock = bind_socket(cfg.listen)?;
         let send_sock = std_sock.try_clone()?;
         let sock = Arc::new(UdpSocket::from_std(std_sock)?);
@@ -654,6 +661,8 @@ impl Node {
             exit_clients: Default::default(),
             exit_dns: HashMap::new(),
             who_asked: HashMap::new(),
+            firewall: crate::firewall::Firewall::new(&cfg_allow).unwrap_or_default(),
+            blocked_seen: HashMap::new(),
         };
         for name in node.cfg.destinations.clone() {
             let me = node.me_arc.clone();
@@ -2112,6 +2121,7 @@ impl Node {
             return;
         };
         let Some(sid) = self.ip_session(dest) else { return };
+        self.firewall.note_out(&dest, p);
         // Sent over IPv6 now: its answers come back as IPv6, whatever went before over IPv4.
         if !self.v4_flows.is_empty() {
             if let Some(flow) = crate::alias::flow_v6_out(p) {
@@ -2137,6 +2147,18 @@ impl Node {
             return debug(format!("IP with source {} from {}: dropped", std::net::Ipv6Addr::from(src), short(&who)));
         }
         self.ip_peer.insert(who, sid);
+        // The walled garden: the owner's devices reach everything, others what `allow` opens.
+        if let Err(what) = self.firewall.check_in(&who, self.is_device(&who), p) {
+            let key = (who, what.clone());
+            if self.blocked_seen.get(&key).is_none_or(|t| t.elapsed() > Duration::from_secs(60)) {
+                if self.blocked_seen.len() > 512 {
+                    self.blocked_seen.clear();
+                }
+                self.blocked_seen.insert(key, Instant::now());
+                log(format!("blocked {what} from {} (not one of your devices; to let it in: allow = [\"{what} from {}\"])", short(&who), hex::encode(&who[..4])));
+            }
+            return;
+        }
         // An answer in a conversation a program here began over IPv4: back as IPv4.
         if let Some(alias) = self.aliases.known(&who) {
             if let Some((v4, flow)) = crate::alias::to_v4(p, alias, self.aliases.me) {
@@ -3057,7 +3079,7 @@ impl Node {
                 Ok(answer) => answer.to_string(),
                 Err(e) => json!({ "error": e }).to_string(),
             },
-            Some("set" | "peer_add" | "peer_remove" | "device_add" | "device_remove") => match self.change_settings(cmd, &v) {
+            Some("set" | "peer_add" | "peer_remove" | "device_add" | "device_remove" | "allow_add" | "allow_remove") => match self.change_settings(cmd, &v) {
                 Ok(restart) => json!({ "ok": true, "restart": restart }).to_string(),
                 Err(e) => json!({ "error": e }).to_string(),
             },
@@ -3285,6 +3307,7 @@ impl Node {
             "port": self.cfg.listen.port(),
             "exit": self.cfg.exit,
             "exit_via": self.cfg.exit_via.map(hex::encode),
+            "allow": self.firewall.rules_text(),
             "exit_auto": self.cfg.exit_auto,
         })
     }
@@ -3371,6 +3394,24 @@ impl Node {
                 let off: Vec<String> = crate::settings::list(&text, "peers_off").into_iter().filter(|p| p != addr).collect();
                 restart = true; // a neighbor already up stays until the next start
                 crate::settings::set_list(&crate::settings::set_list(&text, "peers", &peers), "peers_off", &off)
+            }
+            "allow_add" | "allow_remove" => {
+                let rule = arg("rule")?;
+                let mut rules = self.firewall.rules_text();
+                if cmd == "allow_add" {
+                    crate::firewall::Rule::parse(rule)?;
+                    let norm = rule.trim().to_ascii_lowercase();
+                    if !rules.contains(&norm) {
+                        rules.push(norm);
+                    }
+                } else {
+                    let norm = rule.trim().to_ascii_lowercase();
+                    rules.retain(|r| *r != norm);
+                }
+                self.firewall.rules = rules.iter().map(|r| crate::firewall::Rule::parse(r)).collect::<Result<_, _>>()?;
+                self.cfg.allow = rules.clone();
+                log(format!("open to other nodes: {}", if rules.is_empty() { "nothing (your devices only)".to_string() } else { rules.join(", ") }));
+                crate::settings::set_list(&text, "allow", &rules)
             }
             "device_add" | "device_remove" => {
                 let address = arg("address")?.to_ascii_lowercase();

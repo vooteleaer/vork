@@ -132,6 +132,9 @@ function settings() {
   <div class="card"><h2>Connections</h2><div class="dim">Other nodes this one dials by address (host:port). One is enough to join; the rest is learned.</div>
     ${(s.peers || []).map((p) => `<div class="row"><span class="mono">${esc(p)}</span><button class="t" data-peer-remove="${esc(p)}">Remove</button></div>`).join("")}
     <div class="row"><input type="text" id="peer" placeholder="host:port"><button class="b" id="addPeer">Add</button></div></div>
+  <div class="card"><h2>Open to other vØrk nodes</h2><div class="dim">Your devices reach this node's services always; other nodes only what's opened here. Relaying for others isn't affected.</div>
+    ${(s.allow || []).map((r) => `<div class="row"><span class="mono">${esc(r)}</span><button class="t" data-allow-remove="${esc(r)}">Remove</button></div>`).join("") || `<div class="dim">Nothing: a walled garden.</div>`}
+    <div class="row"><input type="text" id="rule" placeholder="tcp/80 · tcp/22 from 7ea8703b · icmp"><button class="b" id="addRule">Open</button></div></div>
   <div class="card"><h2>Network</h2>
     ${tog("lan", "Find nodes on this network (mDNS)", s.lan)}
     ${tog("map_port", "Ask the router for a port (UPnP)", s.map_port)}
@@ -199,6 +202,8 @@ document.addEventListener("click", async (e) => {
   else if (t.id === "saveName") done(await cmd({ cmd: "set", key: "name", value: document.getElementById("name").value.trim() }), "Saved");
   else if (t.id === "addPeer") { let v = document.getElementById("peer").value.trim(); if (!v) return; if (!v.includes(":")) v += ":51820"; done(await cmd({ cmd: "peer_add", addr: v }), "Connecting to " + v); }
   else if (d.peerRemove) done(await cmd({ cmd: "peer_remove", addr: d.peerRemove }), "Removed");
+  else if (t.id === "addRule") { const v = document.getElementById("rule").value.trim(); if (!v) return; document.getElementById("rule").value = ""; done(await cmd({ cmd: "allow_add", rule: v }), "Opened: " + v); }
+  else if (d.allowRemove) done(await cmd({ cmd: "allow_remove", rule: d.allowRemove }), "Closed: " + d.allowRemove);
   else if (d.set) done(await cmd({ cmd: "set", key: d.set, value: t.checked }), "Saved");
 });
 

@@ -16,6 +16,7 @@ mod tun;
 mod dns;
 mod alias;
 mod exit;
+mod firewall;
 mod web;
 mod wire;
 
@@ -297,6 +298,11 @@ pub fn settings(a: RunArgs) -> Result<Settings> {
         config_path,
         dns_upstream: Vec::new(),
         exit: file.exit == Some(true),
+        allow: {
+            let a = file.allow.clone().unwrap_or_default();
+            crate::firewall::Firewall::new(&a).map_err(|e| anyhow::anyhow!("allow: {e}"))?;
+            a
+        },
         exit_auto: file.exit_via.as_deref() == Some("auto"),
         exit_via: file.exit_via.as_deref().filter(|s| !s.is_empty() && *s != "auto").map(|s| crate::links::parse(s).with_context(|| format!("exit_via: {s} isn't an address (or \"auto\")"))).transpose()?,
         web: file.web.as_deref().filter(|w| !w.is_empty()).map(|w| w.parse().with_context(|| format!("web: {w} isn't host:port"))).transpose()?,

@@ -32,6 +32,8 @@ pub struct FileConfig {
     pub name: Option<String>,
     /// The web dashboard's address (`0.0.0.0:8742`): off when missing.
     pub web: Option<String>,
+    /// Openings in the walled garden for nodes that aren't the owner's devices (ADR-0027).
+    pub allow: Option<Vec<String>>,
     /// Offer this node as an exit node to the owner's devices.
     pub exit: Option<bool>,
     /// Send this device's internet traffic out through that node (its address).
@@ -166,6 +168,15 @@ map_port = true
 # A web dashboard (pairing codes, devices, settings) for a machine without a
 # screen: open the link `vork web-link` prints.
 # web = "0.0.0.0:8742"
+
+# Who reaches this node's own services over vØrk: your devices always; other
+# nodes only what's opened here (relaying for others is never affected).
+#   "tcp/80"                 port 80 for every vØrk node
+#   "udp/5000-5010"          a range
+#   "tcp/22 from 7ea8703b"   for one node (its address, 8+ digits)
+#   "any from 7ea8703b"      everything, for one node
+#   "icmp"                   ping
+allow = []
 
 # Offer this node as an exit node: the owner's devices may send their internet
 # traffic (IPv4) out through it (Linux, with the interface on).
