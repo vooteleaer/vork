@@ -13,6 +13,7 @@ mod settings;
 mod state;
 mod stream;
 mod tun;
+mod dns;
 mod web;
 mod wire;
 
@@ -292,6 +293,7 @@ pub fn settings(a: RunArgs) -> Result<Settings> {
         lan: !(a.no_lan || file.lan == Some(false)),
         tun: file.tun.clone().filter(|t| !t.is_empty()),
         config_path,
+        dns_upstream: Vec::new(),
         web: file.web.as_deref().filter(|w| !w.is_empty()).map(|w| w.parse().with_context(|| format!("web: {w} isn't host:port"))).transpose()?,
         name: file.name.clone().filter(|n| !n.trim().is_empty()).unwrap_or_else(node::machine_name),
         gateway: a.gateway.or(file.gateway),

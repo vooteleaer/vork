@@ -47,6 +47,7 @@ Links with fresh-handshake liveness, signed announces, path labels swapped per h
 
 - **Goal:** applications know who is on the other end, and names replace addresses.
 - **Scope:** the rest of the **shared node** (ADR-0020; M9 brings the first part): status, peers, `whois(overlay address) → identity`; **DNS** (ADR-0018): `<address>.vork` and petnames from a local file, AAAA and PTR, and **IPv4 aliases** handed out by `A` queries with translation at the node (ADR-0021), wired into the OS only for its own domain (systemd-resolved routing domain, Windows NRPT, macOS `/etc/resolver`); an **identity firewall**: which identities may reach which ports/services.
+- **Progress:** the resolver at `fd00::53` answers `<name>.vork` for this node and the owner's devices and `<address>.vork` for any node, wired in through systemd-resolved, NRPT and the Android VPN (ADR-0025).
 - **Done when:** `ssh nas.vork` works over IPv6 and an IPv4-only program reaches the same name through its alias; a service sees the caller's identity through whois; a connection from an identity not on the list is refused; two programs on one machine, each with its own identity, are reachable through the same node.
 - **Depends on:** M2.
 

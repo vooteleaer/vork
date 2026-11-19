@@ -136,6 +136,16 @@ fn announced_name(app_data: &[u8]) -> Option<String> {
     Some(v["name"].as_str()?.chars().take(64).collect())
 }
 
+/// A DNS server: an address, with port 53 unless given; link-local ones are
+/// skipped (they need their interface).
+fn parse_dns_server(s: &str) -> Option<SocketAddr> {
+    let a = s.parse::<SocketAddr>().ok().or_else(|| s.trim_matches(|c| c == '[' || c == ']').parse::<std::net::IpAddr>().ok().map(|ip| SocketAddr::new(ip, 53)))?;
+    match a.ip() {
+        std::net::IpAddr::V6(v6) if v6.segments()[0] & 0xffc0 == 0xfe80 => None,
+        _ => Some(a),
+    }
+}
+
 /// `HOST:PORT` or `HOST:PORT@KEY`.
 pub fn parse_peer_text(s: &str) -> Result<(SocketAddr, Option<[u8; 32]>), String> {
     use std::net::ToSocketAddrs;
@@ -320,6 +330,9 @@ pub struct Config {
     pub config_path: Option<std::path::PathBuf>,
     /// The web dashboard's address, if it's on.
     pub web: Option<SocketAddr>,
+    /// Where names outside `.vork` are asked (when this node is the system's
+    /// resolver, as on Android): the network's own servers.
+    pub dns_upstream: Vec<SocketAddr>,
     /// The router for PCP/NAT-PMP; guessed as x.y.z.1 if not given.
     pub gateway: Option<std::net::Ipv4Addr>,
     /// How many paths (through different first hops) a session opens.
@@ -784,6 +797,7 @@ impl Node {
             match crate::tun::Tun::open(&name, addr, crate::tun::MTU) {
                 Ok(t) => {
                     log(format!("interface {} up: this node is {addr}", t.name));
+                    crate::dns::register(&t.name);
                     self.tun = Some(Arc::new(t));
                 }
                 Err(e) => warn(format!("no interface: {e:#}")),
@@ -1551,6 +1565,65 @@ impl Node {
 
     /// Nodes known by their own announce (unnamed destination): name, overlay
     /// address, how far, and whether a neighbor or a direct session reaches it.
+    // ---- names (ADR-0025) ---------------------------------------------------------
+
+    fn on_dns(&mut self, q: crate::dns::Query) {
+        use crate::dns::*;
+        let Some(tun) = self.tun.clone() else { return };
+        let Some((name, qtype, end)) = question(&q.msg) else { return };
+        let ours = name == DOMAIN || name.ends_with(".vork");
+        if ours {
+            let label = name.strip_suffix(DOMAIN).unwrap_or("").trim_end_matches('.');
+            let found = self.resolve(label);
+            let rcode = if found.is_some() { NOERROR } else { NXDOMAIN };
+            return tun.send(&reply(&q, &answer(&q.msg, end, qtype, rcode, found)));
+        }
+        let upstream = self.cfg.dns_upstream.clone();
+        if upstream.is_empty() {
+            return tun.send(&reply(&q, &answer(&q.msg, end, qtype, REFUSED, None)));
+        }
+        tokio::spawn(async move {
+            let msg = match forward(upstream, q.msg.clone()).await {
+                Some(m) => m,
+                None => answer(&q.msg, end, qtype, SERVFAIL, None),
+            };
+            tun.send(&reply(&q, &msg));
+        });
+    }
+
+    /// The address a `.vork` label names: this node or one of the owner's
+    /// devices by name (others could claim any name), or any node by its
+    /// address (in full, or 8+ digits that only one known node starts with).
+    fn resolve(&self, label: &str) -> Option<std::net::Ipv6Addr> {
+        if label.is_empty() || label.contains('.') {
+            return None;
+        }
+        if label == crate::dns::label(&self.cfg.name) {
+            return Some(crate::tun::overlay(&self.my_hash));
+        }
+        if label.len() >= 8 && label.len() <= 32 && label.bytes().all(|b| b.is_ascii_hexdigit()) {
+            if let Ok(h) = hex::decode(label) {
+                if let Ok(full) = <Hash>::try_from(h.as_slice()) {
+                    return Some(crate::tun::overlay(&full));
+                }
+            }
+            let mut hits = self.routes.keys().chain(std::iter::once(&self.my_hash)).filter(|d| hex::encode(d).starts_with(label));
+            if let (Some(one), None) = (hits.next(), hits.next()) {
+                return Some(crate::tun::overlay(one));
+            }
+            return None;
+        }
+        let device = |d: &Hash| {
+            self.cfg.devices.contains(d)
+                || self.dest_identity(d).is_some_and(|i| self.cfg.devices.contains(&i))
+                || self.clients.values().any(|c| c.devices.contains(d))
+        };
+        self.routes.iter().filter(|(d, _)| device(d)).find_map(|(d, by)| {
+            let r = by.values().filter(|r| r.ann.name_hash == wire::NO_NAME).min_by_key(|r| r.hops)?;
+            (crate::dns::label(&announced_name(&r.ann.app_data)?) == label).then(|| crate::tun::overlay(d))
+        })
+    }
+
     fn known_nodes(&self) -> Vec<serde_json::Value> {
         let mut list: Vec<serde_json::Value> = self
             .routes
@@ -1832,6 +1905,9 @@ impl Node {
         let Some((src, dst)) = crate::tun::v6_ends(p) else { return };
         if src != crate::tun::overlay(&self.my_hash).octets() {
             return; // only this node's own address goes out
+        }
+        if let Some(q) = crate::dns::query_in(p) {
+            return self.on_dns(q);
         }
         let Some(prefix) = crate::tun::prefix_of(&dst) else { return };
         let dest = self
@@ -2601,6 +2677,18 @@ impl Node {
         match Some(cmd) {
             Some("status") => self.status_json().to_string(),
             // Lets go of the interface (Android's VPN turned off): no restart needed.
+            // The network's own DNS servers (the Android app tells them, and again on each network change).
+            Some("dns_upstream") => {
+                let list: Vec<SocketAddr> = v["servers"]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(|s| s.as_str()).filter_map(parse_dns_server).collect())
+                    .unwrap_or_default();
+                if list != self.cfg.dns_upstream {
+                    log(format!("names outside .vork go to {}", if list.is_empty() { "nobody".to_string() } else { list.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", ") }));
+                }
+                self.cfg.dns_upstream = list;
+                json!({ "ok": true }).to_string()
+            }
             Some("interface_off") => {
                 self.tun = None;
                 self.ip_peer.clear();
@@ -3023,6 +3111,11 @@ impl Node {
             "nodes": self.known_nodes(),
             // The interface for ordinary programs (M2), if there is one: this node's address on it.
             "interface": self.tun.as_ref().map(|t| json!({ "name": t.name, "address": crate::tun::overlay(&self.my_hash).to_string() })),
+            "dns": json!({
+                "server": crate::dns::ADDR.to_string(),
+                "name": format!("{}.{}", crate::dns::label(&self.cfg.name), crate::dns::DOMAIN),
+                "upstream": self.cfg.dns_upstream.iter().map(|a| a.to_string()).collect::<Vec<_>>(),
+            }),
             "reach": {
                 "known": self.reach.len().0,
                 "proven_here": self.reach.len().1,

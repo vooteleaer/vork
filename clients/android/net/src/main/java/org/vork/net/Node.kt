@@ -53,4 +53,7 @@ class Node(context: Context) {
 
     /** The node lets go of the interface (the VPN is off). */
     fun interfaceOff(): JSONObject = ask(JSONObject().put("cmd", "interface_off"))
+    /** The network's own DNS servers: the node passes names outside `.vork` on to them. */
+    fun dnsUpstream(servers: List<String>): JSONObject =
+        ask(JSONObject().put("cmd", "dns_upstream").put("servers", org.json.JSONArray(servers)))
 }

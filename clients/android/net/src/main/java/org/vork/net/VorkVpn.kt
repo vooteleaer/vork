@@ -2,7 +2,9 @@ package org.vork.net
 
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
 import android.net.LocalSocket
+import android.net.NetworkCapabilities
 import android.net.LocalSocketAddress
 import android.net.VpnService
 import android.os.ParcelFileDescriptor
@@ -16,6 +18,12 @@ import java.net.InetAddress
  * its own process, so the interface is handed to it over
  * `node/state/tun.sock` (the node has `tun = "fd"`); handed again whenever
  * the node comes back without it.
+ *
+ * Names (ADR-0025): the phone's DNS server is the node, at `fd00::53` inside
+ * that route. It answers `.vork` itself and passes the rest on to the
+ * network's own servers, which this service tells it (again on every change
+ * of network). The app stays out of its own VPN, so the node's traffic, those
+ * questions included, goes out as before.
  */
 class VorkVpn : VpnService() {
     private var iface: ParcelFileDescriptor? = null
@@ -76,6 +84,7 @@ class VorkVpn : VpnService() {
                         }
                     }
                 }
+                if (state == null) keepDns(node, n)
                 if (state != before) say(state ?: "Apps reach vØrk addresses now")
                 Thread.sleep(if (state == null) 5_000 else 2_000)
             } catch (e: InterruptedException) {
@@ -87,6 +96,30 @@ class VorkVpn : VpnService() {
                 try { Thread.sleep(10_000) } catch (stop: InterruptedException) { return }
             }
         }
+    }
+
+    /** Tells the node the network's DNS servers when they aren't what it has (a new network, a restarted node). */
+    private fun keepDns(node: Node, status: org.json.JSONObject) {
+        val want = upstreamDns()
+        val has = status.optJSONObject("dns")?.optJSONArray("upstream")
+        val now = (0 until (has?.length() ?: 0)).map { has!!.getString(it) }
+        if (now != want.map { if (it.contains(':')) "[$it]:53" else "$it:53" }) node.dnsUpstream(want)
+    }
+
+    /** The DNS servers of the network the phone uses under the VPN (link-local ones can't be used from the node). */
+    private fun upstreamDns(): List<String> {
+        val cm = getSystemService(ConnectivityManager::class.java)
+        val networks = listOfNotNull(cm.activeNetwork) + cm.allNetworks.toList()
+        for (net in networks.distinct()) {
+            val caps = cm.getNetworkCapabilities(net) ?: continue
+            if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) || !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) continue
+            val list = cm.getLinkProperties(net)?.dnsServers.orEmpty()
+                .filterNot { it.isLinkLocalAddress }
+                .mapNotNull { it.hostAddress?.substringBefore('%') }
+            if (list.isNotEmpty()) return list
+        }
+        // None known: public resolvers, so the phone's names keep working.
+        return listOf("1.1.1.1", "9.9.9.9")
     }
 
     /** Says it on screen too (the service has no window of its own). */
@@ -103,6 +136,10 @@ class VorkVpn : VpnService() {
             .setSession("vØrk")
             .addAddress(InetAddress.getByAddress(bytes), 128)
             .addRoute("fd00::", 8)
+            // The node answers names (.vork itself, the rest from the network's servers).
+            .addDnsServer(InetAddress.getByName("fd00::53"))
+            // The node's own traffic (to other nodes, and those DNS questions) stays outside.
+            .addDisallowedApplication(packageName)
             // Without this, Android blocks every family the VPN has no route
             // for: IPv4 (the phone's internet) went dark when it came on.
             .allowFamily(android.system.OsConstants.AF_INET)
