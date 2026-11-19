@@ -83,6 +83,9 @@ const APP_IP: u8 = 5;
 const APP_DIRECT: u8 = 6;
 /// An IPv4 packet to or from the internet through an exit node (ADR-0026).
 const APP_EXIT: u8 = 7;
+/// "Who are you?": IP came in a session whose sender this node doesn't know
+/// (it restarted, and the other end kept the session it had identified in).
+const APP_WHO: u8 = 10;
 // Messages on the stream.
 const MSG_REQUEST: u8 = 1;
 const MSG_RESPONSE: u8 = 2;
@@ -461,6 +464,8 @@ pub struct Node {
     /// Names asked through the exit, by the port they went from: who asked,
     /// when, and the network's servers to ask instead if no answer comes.
     exit_dns: HashMap<u16, (crate::dns::Query, Instant)>,
+    /// Sessions asked who is on them, and when.
+    who_asked: HashMap<u32, Instant>,
 }
 
 /// Socket buffers big enough to absorb bursts (the Linux default, ~200 KB,
@@ -648,6 +653,7 @@ impl Node {
             v4_flows: HashMap::new(),
             exit_clients: Default::default(),
             exit_dns: HashMap::new(),
+            who_asked: HashMap::new(),
         };
         for name in node.cfg.destinations.clone() {
             let me = node.me_arc.clone();
@@ -2124,7 +2130,8 @@ impl Node {
         let Some(tun) = self.tun.clone() else { return };
         let Some((src, dst)) = crate::tun::v6_ends(p) else { return };
         let Some(who) = self.sessions.get(&sid).and_then(|s| s.peer_identity) else {
-            return debug("IP from a session that hasn't identified: dropped");
+            self.ask_who(sid);
+            return debug("IP from a session that hasn't identified: dropped (asked who it is)");
         };
         if src != crate::tun::overlay(&who).octets() || dst != crate::tun::overlay(&self.my_hash).octets() {
             return debug(format!("IP with source {} from {}: dropped", std::net::Ipv6Addr::from(src), short(&who)));
@@ -2140,6 +2147,19 @@ impl Node {
             }
         }
         tun.send(p);
+    }
+
+    /// Asks the far end of a session who it is (at most once a second per session).
+    fn ask_who(&mut self, sid: u32) {
+        let now = Instant::now();
+        if self.who_asked.get(&sid).is_some_and(|t| now.duration_since(*t) < Duration::from_secs(1)) {
+            return;
+        }
+        if self.who_asked.len() > 1024 {
+            self.who_asked.retain(|_, t| now.duration_since(*t) < Duration::from_secs(60));
+        }
+        self.who_asked.insert(sid, now);
+        self.send_app(sid, &[APP_WHO]);
     }
 
     /// The session IP to a node goes in: the one it came in on, or one opened
@@ -2159,7 +2179,9 @@ impl Node {
     /// the exit it chose, onto the interface.
     fn on_exit_packet(&mut self, sid: u32, p: &[u8]) {
         let Some(tun) = self.tun.clone() else { return };
-        let Some(who) = self.sessions.get(&sid).and_then(|s| s.peer_identity) else { return };
+        let Some(who) = self.sessions.get(&sid).and_then(|s| s.peer_identity) else {
+            return self.ask_who(sid);
+        };
         if p.len() < 20 || p[0] >> 4 != 4 {
             return;
         }
@@ -2263,6 +2285,13 @@ impl Node {
             }
             Some(&APP_IP) => self.on_ip(sid, &body[1..]),
             Some(&APP_EXIT) => self.on_exit_packet(sid, &body[1..]),
+            // Asked who this node is: said again, in sessions it identified in before.
+            Some(&APP_WHO) => {
+                if self.ip_identified.contains(&sid) || self.link_identified.contains(&sid) {
+                    let me = self.me_arc.clone();
+                    self.identify(sid, &me);
+                }
+            }
             // The old offer without the node's key: dialing the session's key
             // instead (a one-off) disturbed the link already up. Ignored.
             Some(3) => debug("an old direct-link offer: ignored"),
