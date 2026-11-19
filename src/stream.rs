@@ -109,6 +109,16 @@ impl Stream {
         self.pending.extend(msg);
     }
 
+    /// Bytes received in order so far (where the other end's next byte goes).
+    pub fn received(&self) -> u32 {
+        self.rcv_next
+    }
+
+    /// Bytes sent so far.
+    pub fn sent(&self) -> u32 {
+        self.next_seq
+    }
+
     /// Nothing left to send or to be acknowledged.
     pub fn idle(&self) -> bool {
         self.pending.is_empty() && self.inflight.is_empty() && self.ack_due.is_none()

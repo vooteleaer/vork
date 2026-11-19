@@ -2164,7 +2164,10 @@ impl Node {
             self.who_asked.retain(|_, t| now.duration_since(*t) < Duration::from_secs(60));
         }
         self.who_asked.insert(sid, now);
-        self.send_app(sid, &[APP_WHO]);
+        // With where this end's stream stands: 0 tells the other end this one started afresh.
+        let mut body = vec![APP_WHO];
+        body.extend_from_slice(&self.sessions.get(&sid).map_or(0, |s| s.stream.received()).to_be_bytes());
+        self.send_app(sid, &body);
     }
 
     /// The session IP to a node goes in: the one it came in on, or one opened
@@ -2295,6 +2298,16 @@ impl Node {
             // Asked who this node is: said again, in sessions it identified in before.
             Some(&APP_WHO) => {
                 if self.ip_identified.contains(&sid) || self.link_identified.contains(&sid) {
+                    // The other end restarted (its stream is at 0, ours isn't): its end of
+                    // the session is new, so ours starts its stream over too, or the
+                    // identification would wait behind bytes it will never see.
+                    let theirs = body.get(1..5).map(|b| u32::from_be_bytes(b.try_into().unwrap()));
+                    if let Some(s) = self.sessions.get_mut(&sid) {
+                        if theirs == Some(0) && s.stream.sent() > 0 {
+                            s.stream = Stream::default();
+                            log(format!("session {sid:08x}: the other end started afresh; so does this end's stream"));
+                        }
+                    }
                     let me = self.me_arc.clone();
                     self.identify(sid, &me);
                 }
