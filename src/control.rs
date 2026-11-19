@@ -64,9 +64,8 @@ pub fn listen(endpoint: &str) -> Result<mpsc::Receiver<Request>> {
 
 #[cfg(windows)]
 pub fn listen(endpoint: &str) -> Result<mpsc::Receiver<Request>> {
-    use tokio::net::windows::named_pipe::ServerOptions;
     let name = endpoint.to_string();
-    let mut server = ServerOptions::new().first_pipe_instance(true).create(&name).with_context(|| format!("control pipe {name}"))?;
+    let mut server = create_pipe(&name, true).with_context(|| format!("control pipe {name}"))?;
     let (tx, rx) = mpsc::channel(16);
     tokio::spawn(async move {
         loop {
@@ -74,15 +73,38 @@ pub fn listen(endpoint: &str) -> Result<mpsc::Receiver<Request>> {
                 return;
             }
             let conn = server;
-            server = match ServerOptions::new().create(&name) {
+            server = match create_pipe(&name, false) {
                 Ok(s) => s,
                 Err(_) => return,
             };
-            // The pipe's default ACL: administrators, SYSTEM and its creator.
+            // Who may connect is the pipe's ACL (create_pipe): those are the owner.
             tokio::spawn(serve_conn(conn, true, tx.clone()));
         }
     });
     Ok(rx)
+}
+
+/// A pipe instance that SYSTEM, administrators and the users signed in at
+/// this computer (interactive) may use: the default ACL left out the user
+/// whose app talks to a node running as a service.
+#[cfg(windows)]
+fn create_pipe(name: &str, first: bool) -> std::io::Result<tokio::net::windows::named_pipe::NamedPipeServer> {
+    use windows_sys::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
+    use windows_sys::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
+    let sddl: Vec<u16> = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)".encode_utf16().chain([0]).collect();
+    let mut sd: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+    // Safe: the SDDL string is NUL-terminated; the descriptor is freed below.
+    if unsafe { ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.as_ptr(), SDDL_REVISION_1, &mut sd, std::ptr::null_mut()) } == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let mut sa = SECURITY_ATTRIBUTES { nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32, lpSecurityDescriptor: sd, bInheritHandle: 0 };
+    let r = unsafe {
+        tokio::net::windows::named_pipe::ServerOptions::new()
+            .first_pipe_instance(first)
+            .create_with_security_attributes_raw(name, &mut sa as *mut _ as *mut std::ffi::c_void)
+    };
+    unsafe { windows_sys::Win32::Foundation::LocalFree(sd as _) };
+    r
 }
 
 async fn ask_conn<S: AsyncRead + AsyncWrite + Unpin>(conn: S, request: &str) -> Result<String> {

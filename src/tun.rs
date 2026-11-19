@@ -218,7 +218,8 @@ mod windows_tun {
             let _ = netsh(&["interface", "ipv6", "add", "address", &iface, &format!("address={addr}/128"), "store=active"]);
             let _ = netsh(&["interface", "ipv6", "add", "route", "prefix=fd00::/8", &iface, "store=active"]);
             // IPv4 (ADR-0021): this node's address and the range.
-            let _ = netsh(&["interface", "ipv4", "add", "address", &iface, &format!("address={v4}"), "mask=255.255.255.255", "store=active"]);
+            // (IPv4's netsh names the interface with name=, not interface=.)
+            let _ = netsh(&["interface", "ipv4", "add", "address", &format!("name={idx}"), &format!("address={v4}"), "mask=255.255.255.255", "store=active"]);
             let _ = netsh(&["interface", "ipv4", "add", "route", &format!("prefix={}/{}", crate::alias::NET, crate::alias::PREFIX), &iface, "store=active"]);
             let (tx, rx) = tokio::sync::mpsc::channel(1024);
             let s = session.clone();

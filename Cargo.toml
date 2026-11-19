@@ -46,3 +46,4 @@ qrcode = { version = "0.14.1", default-features = false }
 [target."cfg(windows)".dependencies]
 windows-service = "0.8"
 wintun = "0.5"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization"] }
