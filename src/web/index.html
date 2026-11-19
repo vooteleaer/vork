@@ -74,7 +74,14 @@ function lines(ip, addr, nm, v4) {
 }
 function reach(n) { return (n.direct ? "direct" : `${n.hops} hop(s), relayed`) + (n.on_lan ? " · this network" : ""); }
 
+function keyCard() {
+  return `<div class="card ask"><h2>This browser needs the dashboard's key</h2>
+    <div class="dim">The key comes with the link the node prints (<code>vork web-link</code> on the node shows it). Paste the link or just the key; this browser keeps it (each address, http or https, separately).</div>
+    <div class="row"><input type="text" id="key" placeholder="https://…/#t=… or the key"><button class="b" id="useKey">Use</button></div></div>`;
+}
+
 function overview() {
+  if (status.nokey) return keyCard();
   if (status.error) return `<div class="card"><h2>The vØrk node isn't answering</h2><div class="dim">${esc(status.error)}</div></div>`;
   const up = (status.neighbors || []).filter((n) => n.up).length;
   const by = (status.reach?.reached_by || []).length;
@@ -157,7 +164,7 @@ function draw() {
   const main = document.getElementById("main");
   // Typing in a field isn't interrupted by the refresh.
   if (main.contains(document.activeElement) && document.activeElement.tagName === "INPUT" && document.activeElement.type === "text") return;
-  main.innerHTML = requests() + (tab === "overview" ? overview() : tab === "devices" ? devices() : settings());
+  main.innerHTML = status.nokey ? keyCard() : requests() + (tab === "overview" ? overview() : tab === "devices" ? devices() : settings());
   const c = document.getElementById("qr");
   if (c && code) {
     const rows = code.qr, n = rows.length, q = 4, cell = Math.floor(c.width / (n + 2 * q));
@@ -168,8 +175,13 @@ function draw() {
 }
 
 async function refresh() {
-  if (!token()) { status = { error: "Open the dashboard with the link the node printed: `vork web-link` shows it." }; draw(); return; }
-  try { status = await api("/api/status"); } catch (e) { status = { error: "can't reach the node" }; }
+  if (!token()) { status = { nokey: true }; draw(); return; }
+  try {
+    const r = await fetch("/api/status", { headers: { "X-Vork-Token": token() } });
+    // A key that doesn't fit (another node's, or an old one): asked for again.
+    if (r.status === 401) { localStorage.removeItem("vork-token"); status = { nokey: true }; }
+    else status = await r.json();
+  } catch (e) { status = { error: "can't reach the node" }; }
   draw();
 }
 
@@ -202,6 +214,12 @@ document.addEventListener("click", async (e) => {
   else if (t.id === "saveName") done(await cmd({ cmd: "set", key: "name", value: document.getElementById("name").value.trim() }), "Saved");
   else if (t.id === "addPeer") { let v = document.getElementById("peer").value.trim(); if (!v) return; if (!v.includes(":")) v += ":51820"; done(await cmd({ cmd: "peer_add", addr: v }), "Connecting to " + v); }
   else if (d.peerRemove) done(await cmd({ cmd: "peer_remove", addr: d.peerRemove }), "Removed");
+  else if (t.id === "useKey") {
+    const v = document.getElementById("key").value.trim();
+    const m = v.match(/(?:#t=)?([0-9a-f]{16,})\s*$/i);
+    if (!m) return say("That isn't the dashboard's key or its link", true);
+    localStorage.setItem("vork-token", m[1].toLowerCase()); say("Key saved"); refresh();
+  }
   else if (t.id === "addRule") { const v = document.getElementById("rule").value.trim(); if (!v) return; document.getElementById("rule").value = ""; done(await cmd({ cmd: "allow_add", rule: v }), "Opened: " + v); }
   else if (d.allowRemove) done(await cmd({ cmd: "allow_remove", rule: d.allowRemove }), "Closed: " + d.allowRemove);
   else if (d.set) done(await cmd({ cmd: "set", key: d.set, value: t.checked }), "Saved");
