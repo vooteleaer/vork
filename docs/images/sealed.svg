@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 300" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+  <style>
+    .bg { fill: #ffffff; }
+    .t { fill: #1f2328; }
+    .m { fill: #656d76; }
+    .outer { fill: #f3f4f6; stroke: #9aa4ae; stroke-width: 1.5; }
+    .label { fill: #fff4d6; stroke: #d4a72c; stroke-width: 1.5; }
+    .inner { fill: #e7efff; stroke: #4f7cff; stroke-width: 2; }
+    .ln { stroke: #9aa4ae; stroke-width: 1.5; fill: none; }
+    .acc { fill: #4f7cff; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #0d1117; }
+      .t { fill: #e6edf3; }
+      .m { fill: #8b949e; }
+      .outer { fill: #161b22; stroke: #484f58; }
+      .label { fill: #2e2410; stroke: #bb8a1e; }
+      .inner { fill: #15213d; stroke: #6d93ff; }
+      .ln { stroke: #6e7681; }
+      .acc { fill: #8fb0ff; }
+    }
+  </style>
+  <rect class="bg" width="900" height="300" rx="16"/>
+  <text class="t" x="40" y="44" font-size="16" font-weight="600">One packet, as a relay in the middle sees it</text>
+
+  <!-- the packet: envelope in an envelope -->
+  <rect class="outer" x="40" y="70" width="820" height="110" rx="12"/>
+  <text class="m" x="58" y="94" font-size="12.5">Outer envelope: opened by each relay, re-sealed for the next one</text>
+  <rect class="label" x="58" y="108" width="150" height="56" rx="8"/>
+  <text class="t" x="133" y="133" text-anchor="middle" font-size="14" font-weight="600">label 7a3f</text>
+  <text class="m" x="133" y="152" text-anchor="middle" font-size="12">random, this hop only</text>
+  <rect class="inner" x="222" y="108" width="622" height="56" rx="8"/>
+  <text class="t" x="533" y="133" text-anchor="middle" font-size="14" font-weight="600">Your data, sealed for home-server only</text>
+  <text class="m" x="533" y="152" text-anchor="middle" font-size="12">the relay can't open this: it never has the key</text>
+
+  <!-- what the relay knows / doesn't -->
+  <g transform="translate(40 210)">
+    <circle class="acc" cx="7" cy="-4" r="5"/>
+    <text class="t" x="22" y="1" font-size="14"><tspan font-weight="600">The relay sees:</tspan> which neighbor it came from, where to pass it, its size and time.</text>
+    <circle class="acc" cx="7" cy="30" r="5"/>
+    <text class="t" x="22" y="35" font-size="14"><tspan font-weight="600">It can't see:</tspan> what's inside, or who sent it: packets carry no sender address.</text>
+    <circle class="acc" cx="7" cy="64" r="5"/>
+    <text class="t" x="22" y="69" font-size="14"><tspan font-weight="600">It can't forge:</tspan> every node's address is the fingerprint of its key, so nobody can pretend to be your device.</text>
+  </g>
+</svg>

@@ -1,167 +1,196 @@
 # vØrk
 
-*Technical name `vork` (crate, binary, folder), since `Ø` breaks shells, URLs and package registries.* A serverless, identity-addressed network over WireGuard: Reticulum's ideas on plain IP, fast, with no central servers. Any node can relay for others, and any node is assumed hostile.
+**Your own private network between your devices: no account, no company in the middle.**
 
-> **Status: prototype (milestone M1 of the [roadmap](docs/04-roadmap.md)).** Not for real use. The wire format will change. Tested on localhost and between two machines across a router.
+vØrk (say "vurk"; written `vork` wherever the `Ø` won't fit) connects your laptop, phone, home server and desktop so they can reach each other from anywhere, as if they were on the same home network. You get names like `laptop.vork`, you can send your internet traffic out through home when you're on someone else's Wi-Fi, and nothing outside your own devices can get in.
 
-## Principles
+It does what Tailscale and similar tools do, without their coordination server. There is no sign-up and no central server that could go down, be shut off, or be told who talks to whom. Your devices find each other through one shared network of vØrk nodes, and everything they send is sealed so that only the receiving device can open it.
 
-- **Identity, not location.** A node's address is the hash of its keys. IP addresses only carry packets between neighbors; inside the network nothing is addressed by IP.
-- **Proof, not trust.** Identities, announces and permissions are signatures. Where a proof is impossible (whether a relay really forwards), the node measures and routes around it, and never falls back to trusting a central party.
-- **Every node may be hostile.** A hostile node can delay, drop and watch metadata. It can't forge, read or impersonate. Trusted nodes (your own, your island's) are an optimization, never an assumption.
-- **No roles.** Every node runs the same code. Who relays, holds data or reflects addresses follows from measured properties (public address, uptime, bandwidth), not configuration.
-- **Runs on small devices.** An ESP32 running ESPHome must be able to join (see [Lite nodes](#lite-nodes-esp32-esphome)).
+> [!WARNING]
+> **vØrk is an early prototype.** It runs every day on the author's own machines, but the wire format still changes between versions, nothing has been audited, and there are no ready-made downloads yet. Try it if you're curious and comfortable with a terminal. Don't rely on it for anything important yet.
 
-## How phase 1 works
+<p align="center"><img src="docs/images/network.svg" alt="Your laptop, phone, home server and desktop connect through a mesh of other people's vØrk nodes. A highlighted path runs from the phone to the home server through two relays, sealed end to end." width="860"></p>
 
-```
-[ outer WireGuard: neighbor <-> neighbor ]   proves the link works both ways
-  [ IPv4/UDP to port 4799 ]                  any WireGuard implementation can carry it
-    [ HELLO | OBSERVED | ANNOUNCE | PATH_* | DATA | PROBE ]
-      DATA: [ label ][ inner WireGuard: end <-> end ]   relays hold no keys for it
-```
+## What you can do with it
 
-- **Identity:** Ed25519 (signing) + X25519 (the WireGuard key). `address = SHA-256(x_pub ‖ ed_pub)[:16]`, the same as a storage identity.
-- **Links:** a neighbor is *up* only while its WireGuard handshake is fresh (< 180 s), so every link used is proven to work in both directions. This avoids RNS's asymmetric-link problem.
-- **Announces** are signed (`vork/v0/announce`, sequence number), flooded only over up links, and carry no IP address. The hop count is a hint, not trusted.
-- **Paths:** a session runs over one or more paths. `PATH_OPEN` is routed by destination address; every hop swaps the label for a fresh random one on the next link and remembers the pair. After that, `DATA` carries only a label: **no packet carries a source, only the opening message carries a destination, and a label means something on one link only**, so colluding relays can't match packets by it.
-- **Several paths per session** (`--paths N`, default 2): a node keeps a route per neighbor it heard an announce from, and opens paths through different first hops. The origin probes every path each second (round-trip time, loss); a path that misses 3 probes is dropped and that first hop rests (5 s, doubling to 60 s) before it is tried again. Packets go out by `--spread spray` (one path each, weighted by round-trip time) or `--spread dup` (every packet on every path; WireGuard drops the second copy). A healthy direct link is used alone, sparing the relays. The far end answers on the paths it heard from in the last 3 s, so it can also start a new handshake to an initiator that never announced itself.
-- **Silent neighbors:** a neighbor that sends nothing for 35 s (it keepalives every 25 s) is down, and every path through it is torn down hop by hop with `PATH_ERR`.
-- **Anonymous initiators:** a node needn't announce itself to reach others (`--no-announce`). The destination learns its key, not its address or location.
-- **Roaming:** a neighbor's endpoint is wherever its last authenticated packet came from.
-- **Lite nodes** (`--lite`) never relay, receive no floods and ask for the paths they need (`PATH_REQ`). Nobody routes through a Lite node unless it is the destination.
-- **Direct links** (`--direct`, opt-in on both ends): once a session works through relays, the two ends send each other the addresses their neighbors see them at, then both send WireGuard handshakes to those addresses at once (hole punching). When the link comes up, the session moves to it and the relays drop out. This reveals each end's address to the other, so it's off by default.
+- **Reach your own devices from anywhere.** Open your home server's files, SSH to your desktop, or check a camera from your phone on mobile data with `home-server.vork`. It works behind home routers and mobile networks, with no port forwarding needed on every device.
+- **Use your home internet when you're away.** Turn on an *exit node* at home, and on hotel or café Wi-Fi your laptop and phone send all their internet traffic through it. The local network sees only sealed traffic.
+- **Keep everything else out.** Only your linked devices can reach your devices' services. A stranger's node can carry your traffic but can't open a connection to you. If you want to share one thing, for example a game server with a friend, you open that one port, for everyone or for one friend's device.
+- **Run without anyone's permission.** No accounts, no licence server, nobody to ask. If one node disappears, the network routes around it.
 
-### Tested (localhost)
+## How it works, in plain words
 
-| Test | Result |
-|---|---|
-| C → B through A (1 relay), C anonymous | ~0.8 ms ping; A relayed 21 packets with 0 sessions |
-| C → D through A and B (2 relays), 193 s | 184 pings, 0 lost, survives the inner rekey at 120 s; each relay switched 356 packets with 0 sessions |
-| Lite node L behind A pings B; C pings L | both work; L learned only the 2 destinations it asked for and relayed nothing |
-| C and B with `--direct`, meeting through A | 1 ping relayed, then 20 direct; A stopped at 7 relayed packets |
-| C → B over two relays A and E (`--paths 2`, spray), A killed after 12 s, 57 s run | first 11 pings split 6/5 between A and E; A's path dropped 3 s after the kill, then all traffic on E; 51 of about 55 pings answered; A retried after 5 s and 10 s, given up when its link went silent |
-| Same with `--spread dup` | every ping on both paths, no errors; each relay carried about half the packets |
+**Every device has a key, and its address *is* the key's fingerprint.** A vØrk address looks like `c3c79f5a8859dff3188c4db7d7d9dc7c`. Nobody hands it out and nobody can take it over, because only the holder of the matching key can answer for it. For convenience, your own devices also get a short name (`laptop.vork`) and an ordinary-looking IP address (`198.18.x.x`) that stays the same everywhere.
 
-## Try it
+**Any node can carry traffic for others.** When two of your devices can't reach each other directly (both behind routers, say), their packets travel through other vØrk nodes, called *relays*. A relay forwards packets but can't read them. The packet is an envelope inside an envelope: the outer one is just for the next hop, and the inner one is sealed with [WireGuard](https://www.wireguard.com/) for the final device only.
 
-Prebuilt static binaries are in `dist/` (Linux x86_64, Linux aarch64 for a Raspberry Pi, Windows x86_64), or `cargo build --release`.
+<p align="center"><img src="docs/images/sealed.svg" alt="A packet as a relay sees it: an outer envelope with a random per-hop label, and inside it your data sealed for the destination only." width="860"></p>
+
+**It's always looking for the best route.** A connection runs over two routes at once, through different relays. Each route is measured every second, and a route that stops answering is dropped within seconds. When your devices *can* reach each other directly (on the same Wi-Fi, or a router that cooperates), they switch to a direct link and the relays drop out.
+
+**Your devices form a private garden.** Linking a device is a two-sided agreement (scan a QR code, or approve a request). Linked devices reach each other's services and resolve each other's `.vork` names. Every other node can only carry traffic.
+
+## Getting started
+
+You need at least two devices. One of them should be reachable from the internet: a home server or always-on PC is ideal. vØrk asks your router to open a port by itself (UPnP / NAT-PMP / PCP), which works on most home routers. After that, every other device only needs to find that one.
+
+There are no ready-made downloads yet, so you build vØrk from source with [Rust](https://rustup.rs/):
 
 ```sh
-vork init                         # writes vork.toml, creates the identity, prints address and wg key
-                                  # (as root: /etc/vork/vork.toml + /var/lib/vork; Windows: %ProgramData%\vork)
-vork run                          # uses the default vork.toml; or: vork run --config path/to/vork.toml
-vork status                       # asks the running node (neighbors, destinations, sessions, paths)
+git clone https://github.com/vooteleaer/vork
+cd vork
+cargo build --release          # the program is target/release/vork (vork.exe on Windows)
 ```
 
-`vork.toml` holds the listening address, bootstrap `peers` (`"host:port@wg key"`), and the options below; command-line flags override it. The node remembers its neighbors in its state directory, so after the first contact `peers` can be empty and it still reconnects after a restart. Everything also works without a file: `vork run --key node.key --peer host:port@key ...`.
+### 1. Install it on each computer
 
-As a service:
+**Linux** (as root):
 
-- **Linux:** `packaging/vork.service` (instructions inside): `vork init` as root, install the unit, `systemctl enable --now vork`.
-- **Windows** (as administrator): `vork init`, then `vork service install` (starts at boot; logs to `vork.log` in the state directory), `vork service uninstall` to remove it.
+```sh
+install -m 755 target/release/vork /usr/local/bin/vork
+vork init                      # creates /etc/vork/vork.toml and this machine's key
+```
 
-Testing tools: `--ping <address>` once a second; `--bench <address> --bench-rate <Mbit/s>` sends paced traffic (1200-byte packets) and the receiver logs what arrives and the loss each second. There is no congestion control in the bench: above the ceiling it just loses packets.
+Open `/etc/vork/vork.toml` and remove the `#` in front of `tun = "vork0"`, so that ordinary programs can use vØrk addresses and `.vork` names. Then start it as a service:
 
-Options (file or flags): `paths` (paths per session through different first hops, default 2), `spread` (`spray` or `dup`), `lite` (don't relay, small devices), `direct` (try a direct link to the far end of a session; reveals your address to it), `announce = false` / `--no-announce` (reach others without being findable), `map_port` (ask the router to open the port: UPnP, then PCP/NAT-PMP; `gateway` if the router isn't x.y.z.1), `log` (`warn`, `info`, `debug`), `log_file`. Stop with Ctrl-C, which also removes a router mapping.
+```sh
+install -m 644 packaging/vork.service /etc/systemd/system/vork.service
+systemctl daemon-reload && systemctl enable --now vork
+vork status
+```
 
-### Testing on real machines
+**Windows** (in a terminal opened *as administrator*):
 
-1. **A public node** (e.g. cafa-cloud): `vork run --key a.key --listen 0.0.0.0:51820`, with UDP 51820 forwarded to it.
-2. **Two nodes behind different NATs** (home, a laptop on a phone hotspot), each with `--peer <A public IP>:51820@<A wg key>`.
-3. Ping one from the other by address: first through A, then with `--direct` on both to see whether the hole punch gets through. Symmetric NAT and CGNAT on both ends won't; the session then simply stays relayed.
-4. A Lite node anywhere with `--lite`.
+1. Put `vork.exe` in `C:\Program Files\vork\`, together with `wintun.dll` from [wintun.net](https://www.wintun.net/) (the 64-bit one).
+2. Run `vork init`. It creates `C:\ProgramData\vork\vork.toml`.
+3. In that file, set `tun = "vork"`.
+4. Run `vork service install`. vØrk now starts with Windows.
 
-Watch the logs for `link up`, `a neighbor sees us at` (your public address as others see it), `dialing … directly`, `session … now goes direct`, and the `(relayed)` / `(direct)` tag on each pong.
+**Android:** the app in [`clients/android`](clients/android) runs vØrk as a VPN. It's built with `clients\android\build-apk.ps1` (needs the Android SDK and NDK). It can scan pairing codes and use an exit node.
 
-### Throughput (localhost, 2-core VM)
+### 2. Link your devices
 
-All nodes ran on one machine with two CPU cores, so every relay competes with the endpoints for CPU. These are CPU limits of this prototype, not network limits:
+On the first device (say, the home server):
 
-| Topology | Ceiling (received, low loss) |
-|---|---|
-| Direct (2 processes) | about 700–1000 Mbit/s |
-| 1 relay (3 processes) | about 300–400 Mbit/s |
-| 2 relays in a chain (4 processes) | about 300 Mbit/s |
-| 2 parallel paths over 2 relays (4 processes) | about 400–470 Mbit/s |
+```sh
+vork link-code
+```
 
-One node is a single thread doing two layers of WireGuard in userspace, so it handles roughly 1 Gbit/s of traffic on one core of this VM. On separate machines each relay has its own CPU, and the limit is usually the slowest uplink on the path. Room to grow: batch socket calls (`sendmmsg`/`recvmmsg`, UDP GSO/GRO) — on older CPUs with Meltdown mitigations the per-packet system call is the main cost —, reuse buffers instead of allocating per packet, and spread work across threads.
+It prints a QR code and a link like `vork-link:c3c7…?c=…&n=home-server&a=…`. The link carries everything the other device needs to find this one. It's good for 10 minutes and one device, unless you ask for more (`--for 1d`, `--uses 0` for any number, `--approve` to confirm each device yourself).
 
-### Real machines
+On the other device, scan the QR code with the Android app, or paste the link:
 
-A Windows PC (10.10.10.238) and cafa-cloud (Debian 13, Xeon E5-2650 from 2012, a busy production host; 10.10.30.2), in different subnets with a router between them, linked directly:
+```sh
+vork link 'vork-link:c3c7…'
+```
 
-| Bench rate (Mbit/s) | Received | Loss |
-|---|---|---|
-| 100 | 100 | 0% |
-| 250 | 250 | 0% |
-| 500 | 430–497 | mostly 0–2%, spikes to 23% |
-| 800–1000 | 280–460 | 20–64% |
+That's it: the two are now each other's devices. To link without a code, run `vork link <address>`. The other side then sees a request (`vork requests`) and decides (`vork allow` / `vork dismiss`). `vork unlink` undoes a link.
 
-The ping round trip was 2–4 ms. The ceiling, **about 450–500 Mbit/s**, is cafa-cloud's receiving side: an old CPU where Meltdown/MDS mitigations make every system call expensive, and vØrk makes one or more per packet. The PC sent up to ~830 Mbit/s. Before 4 MB socket buffers (`SO_RCVBUFFORCE` as root) and a larger burst allowance for Windows' ~15 ms timer, the same link lost 10% at 100 Mbit/s and topped out at ~130.
+> [!TIP]
+> Linking isn't transitive: a phone and a laptop that are both linked to the home server aren't linked to *each other* until you link them too.
 
-### Storage: vØrk against Reticulum (2026-11-18)
+### 3. Use it
 
-The same 200 MiB file (same read-cap: the storage format is the same) fetched by a fresh store on the PC from a store on cafa-cloud, both sides throwaway stores:
+Your devices now reach each other by name, from anywhere:
 
-| Network | Time | Throughput |
-|---|---|---|
-| Reticulum: retifs over Prns (`prnsd` on both machines) | 54.7 s | 30.7 Mbit/s |
-| vØrk, 4 links (the default) | 44.5–47.9 s | 35–38 Mbit/s |
-| vØrk, 16 links | 22.2–24.6 s | 68–76 Mbit/s |
-| vØrk stream alone, 32 MiB requests on the same link | 1.3–1.4 s each | ~200 Mbit/s |
+```sh
+ping home-server.vork
+ssh me@desktop.vork
+http://home-server.vork:8080      # in a browser
+```
 
-Storage on vØrk is limited by storage's request pattern (about 460 KB per request, a few in flight) and by CPU on cafa-cloud (its vØrk node near 140 %, `vorkd` near 110 % during the 16-link run), not by the link. Both are M6 work.
+Each device also has a fixed IPv4 address in `198.18.0.0/16` (shown in the dashboard and in `vork status`) for programs that can't use names or IPv6.
 
-`scripts/bench-local.sh` runs a topology on one machine (several nodes on 127.0.0.1) to measure its CPU ceiling.
+## The dashboard
 
-## Lite nodes (ESP32, ESPHome)
+Any node can show a web dashboard. It's especially handy on a server without a screen. Add `web = "0.0.0.0:8742"` to `vork.toml`, restart, and run:
 
-ESPHome's WireGuard component has **one peer and IPv4 only**, and it can't accept unknown peers. So a small device runs **vork Lite**: the same protocol and identity, minus relaying. It isn't a different kind of node to the network, it just announces that it doesn't relay (`FLAG_RELAY` unset), and no one routes through it. The same build option suits battery devices and phones.
+```sh
+vork web-link
+```
 
-- **Outer layer unchanged.** The stock `wireguard:` component with a single upstream peer (a full node). That's why the layer travels as plain IPv4/UDP inside the tunnel: the Lite node needs only a UDP socket, no WireGuard changes.
-  ```yaml
-  wireguard:
-    address: 10.89.0.2
-    peer_allowed_ips: [10.89.0.1/32]
-    peer_persistent_keepalive: 25s
-  ```
-- **No flooding to Lite nodes.** The upstream doesn't send a Lite node every announce. The Lite node asks for the path it needs (`PATH_REQ`, implemented) and uses the upstream as its default route.
-- **End-to-end layer** needs a second WireGuard-compatible session engine on the device, running over `FWD` instead of a socket. To check: whether the Noise core of wireguard-lwip (which esp_wireguard is built on) can be used without its netif, or whether the fugo101/wireguard_lwip fork (16 peers, custom output for relays) fits.
-- **Time:** WireGuard handshakes carry a timestamp the responder checks, so the device needs SNTP (ESPHome's `time:`). Announce sequence numbers must not depend on the clock (see below).
-- **Identity:** the device's own (server-type) identity in encrypted flash, delegated by its owner. Ed25519 via libsodium (an ESP-IDF component).
-- **Budget:** the Lite node side of L0 must stay small: fixed binary layouts, no CBOR/JSON in L0, a handful of neighbors and sessions.
-- **Goal:** an ESPHome external component (`external_components:`), so that Home Assistant reaches a device by its identity, end to end, through any number of relays.
+It prints a private link to open in your browser. The dashboard uses its own certificate, so the browser asks once; `vork web-link` shows the fingerprint to compare it with.
 
-## Known limits and next steps
+<p align="center"><img src="docs/images/dashboard.png" alt="The vØrk dashboard: throughput, devices online, neighbors and relayed traffic; a traffic graph for the last hour; and a map of the node's connections." width="860"></p>
 
-- **Sequence numbers** are wall-clock milliseconds here. The spec must say only "monotonic per identity" so devices without a clock can use a persisted counter.
-- **First hops are chosen by advertised hop count**, which isn't proven; once open, paths are weighted by measured round trip and dropped when they stop answering, so a sinkhole costs a few seconds, not the session. Paths through different first hops may still share later hops (distance-vector routing can't see them).
-- **Spraying one TCP connection over paths with different latency reorders it.** Pinning each flow to a path comes with the TUN interface (phase 3), where flows exist.
-- **Several local uplinks at once** (Wi-Fi + 4G) aren't used yet: that needs a socket per interface, with the same path machinery on top.
-- **Router port mapping** (`--map-port`) is untested against a real router. It detects a second NAT beyond the router (CGNAT) and gives up there, but it doesn't yet ask a neighbor to confirm the mapped address is reachable from outside.
-- **Direct links are untested through real NATs.** Candidates are the addresses neighbors observe plus the listening address if it is a specific one; a node listening on `0.0.0.0` doesn't yet offer its LAN addresses, and observed addresses aren't yet cross-checked by several neighbors (a hostile neighbor could report a wrong one).
-- **Eclipse resistance:** several bootstrap sources, diverse neighbors, long-lived anchors.
-- **Sybil:** proof-of-work stamps on announces.
-- **boringtun** 0.7.1 is used as-is; it needs payloads framed as IP packets. Check its maintenance status against the forks (defguard, nordisk) before relying on it.
+It shows traffic, connections and the log, and lets you pair devices, open firewall ports, choose an exit node and check for updates:
 
-## Storage
+<p align="center"><img src="docs/images/devices.png" alt="The Devices page: linked devices with their connection type, IPv4 address, .vork name and traffic, and a panel for showing a pairing code." width="860"></p>
 
-vØrk storage (formerly [retifs](https://github.com/vooteleaer/retifs)) is the encrypted, replicated data layer: libraries of records and files, kept on your own devices and blind storage nodes. Its code was copied here and renamed (ADR-0015), and it runs on vØrk: `vorkd` attaches to the machine's vØrk node through its [local API](docs/06-local-api.md) (ADR-0022). The storage format is retifs's, byte for byte, so existing libraries move over.
+## Exit node: browse safely on someone else's Wi-Fi
 
-| Crate | What |
-|---|---|
-| `vork-api` | the vØrk node's local API: protocol and client |
-| `vork-core` | chunks, CIDs, manifests, records, leases, channels, recovery |
-| `vork-store` | the local slab store |
-| `vork-storage-net` | the network side: fetching, serving, the connection to the vØrk node |
-| `vork-storage-node` | `vorkd`, the storage daemon, and `vork-storage`, its commands |
-| `libvork` | client of the daemon's local API |
-| `vork-tree`, `vork-fuse`, `vork-cloudfiles`, `vork-haikufs` | a library as a folder: FUSE (`vork-mount`), Windows Explorer, Haiku |
-| `vork-gateway`, `vork-extract`, `vork-card` | libraries as local websites, attribute extraction, identities on a YubiKey |
+<p align="center"><img src="docs/images/exit.svg" alt="A laptop on hotel Wi-Fi sends sealed traffic through vØrk to the home server, which forwards it to the internet." width="860"></p>
 
-To run it: a vØrk node first (`vork run`, or the service), then `vorkd` (it finds the node's API socket, or `VORK_API=<socket or pipe>`); `vorkd --store DIR` keeps a separate store. `vork put FILE`, `vork query LIB …` and the other storage commands are passed to `vork-storage`; `vork help-storage` lists them. `vork status` on its own is the network node's; `vork status READ-CAP` is storage's. Storage documents: [docs/storage](docs/storage/README.md).
+On a **Linux** device that should be the exit (with the `tun` line on), add to `vork.toml`:
 
-## Documentation
+```toml
+exit = true
+```
 
-The design, the protocol, the threat model and the plan are in [`docs/`](docs/README.md): vision, architecture, wire format v0, threat model, roadmap (milestones M1–M12 with acceptance tests), open questions, and the decisions so far as ADRs.
+On the devices that should use it:
+
+```toml
+exit_via = "auto"        # the fastest of your devices that offers itself as an exit
+```
+
+The Android app has a switch for the same thing. If the exit stops answering, your device goes back to its normal connection instead of cutting you off. By default, devices using the exit reach the internet only, not the exit's home network. `exit_lan = true` on the exit lets them in there too. Today the exit carries IPv4 traffic, and Windows can't use an exit yet.
+
+## The firewall
+
+Out of the box, **only your own linked devices can reach a device's services.** That's the whole firewall. Relaying traffic for others is never affected. To let other vØrk nodes in, add rules to `allow` in `vork.toml`, or use the dashboard's Firewall page:
+
+```toml
+allow = [
+  "tcp/80",                                         # a web server, for every vØrk node
+  "udp/27015 from 9e1f0c2b7d6a45e38f1b2c3d4e5f6a7b", # a game server, for one friend's device
+  "icmp",                                           # answer pings
+]
+```
+
+A rule for one node always uses its full 32-digit address, since that can't be faked. The dashboard also lists recent blocked attempts, and one click turns one into a rule.
+
+## Updates
+
+vØrk can update itself with releases you sign with your own key. One of your nodes holds the releases, and the others fetch, check and install them. This is currently meant for people building their own releases; see [ADR-0028](docs/adr/0028-self-updating.md) and the `update_*` settings in `vork.toml`.
+
+## How it compares
+
+|  | vØrk | Tailscale and similar | A classic VPN |
+|---|---|---|---|
+| Account needed | no | yes | depends |
+| Central server | none | coordination server | the VPN server |
+| Devices behind routers reach each other | yes, through relays or directly | yes | only via the server |
+| Who can read your traffic | only the receiving device | only the receiving device | the VPN server |
+| Who decides who's in your network | you, device by device | the account and its admin | the server's admin |
+| Maturity | **early prototype** | mature | mature |
+
+## Privacy: what others can and can't see
+
+- **Relays** see that a packet passes through them, its size and its timing. When a route is opened, they learn which device it goes to, but not who opened it: packets carry no sender address. They can't read anything, and they can't pretend to be one of your devices.
+- **Your devices** know each other's addresses. When two of them link directly, they also learn each other's IP addresses. That's the point of linking, so direct links with strangers are off unless you turn them on.
+- **The network** learns that your device's address exists (it announces itself so it can be found). You can stay unannounced and still reach others.
+- **Stronger anonymity**, where no single relay knows both ends, is planned but not built.
+
+The full analysis is in the [threat model](docs/03-threat-model.md).
+
+## Status and known limits
+
+- Prototype: the protocol and file formats will change, and nodes of different versions may stop understanding each other. Keep your devices on the same version.
+- No ready-made downloads or installers yet.
+- Windows can't use an exit node yet; the exit itself must be Linux.
+- To get started, you need one device that's reachable from the internet (or two on the same network: vØrk finds neighbors on the local network by itself).
+- Large networks: route announcements are flooded to everyone today. That's fine for many nodes, but not for millions.
+- No per-relay bandwidth limits yet.
+
+What's next is in the [roadmap](docs/04-roadmap.md).
+
+## For developers
+
+- [Technical overview](docs/technical-overview.md): the protocol layers, paths, test results and throughput measurements.
+- [Documentation](docs/README.md): vision, architecture, wire format, threat model, roadmap, open questions, and the design decisions (ADRs).
+- [Local API](docs/06-local-api.md): how applications talk to the node on their machine.
+- The repository also contains an experimental encrypted storage application built on vØrk (`crates/`, [docs/storage](docs/storage/README.md)).
+
+## License
+
+[MIT](LICENSE)

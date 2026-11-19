@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 230" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+  <style>
+    .bg { fill: #ffffff; }
+    .t { fill: #1f2328; }
+    .m { fill: #656d76; }
+    .mine { fill: #e7efff; stroke: #4f7cff; stroke-width: 2.5; }
+    .net { fill: #f3f4f6; stroke: #9aa4ae; stroke-width: 1.5; }
+    .path { stroke: #4f7cff; stroke-width: 3.5; fill: none; stroke-linecap: round; }
+    .plain { stroke: #9aa4ae; stroke-width: 3; fill: none; stroke-dasharray: 2 7; stroke-linecap: round; }
+    .ico { fill: none; stroke: #4f7cff; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .ico2 { fill: none; stroke: #656d76; stroke-width: 2; stroke-linecap: round; }
+    .pill { fill: #4f7cff; } .pt { fill: #ffffff; font-weight: 600; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #0d1117; } .t { fill: #e6edf3; } .m { fill: #8b949e; }
+      .mine { fill: #15213d; stroke: #6d93ff; } .net { fill: #161b22; stroke: #484f58; }
+      .path { stroke: #6d93ff; } .plain { stroke: #6e7681; }
+      .ico { stroke: #8fb0ff; } .ico2 { stroke: #8b949e; }
+      .pill { fill: #6d93ff; } .pt { fill: #0d1117; }
+    }
+  </style>
+  <rect class="bg" width="900" height="230" rx="16"/>
+
+  <path class="path" d="M150 100 L670 100"/>
+  <path class="plain" d="M730 100 L800 100"/>
+
+  <circle class="mine" cx="120" cy="100" r="32"/>
+  <g class="ico" transform="translate(120 100)"><rect x="-12" y="-9" width="24" height="15" rx="2"/><path d="M-16 10 h32"/></g>
+  <text class="t" x="120" y="156" text-anchor="middle" font-size="14" font-weight="600">Your laptop</text>
+  <text class="m" x="120" y="175" text-anchor="middle" font-size="12.5">on a hotel's Wi-Fi</text>
+
+  <rect class="net" x="300" y="70" width="220" height="60" rx="30"/>
+  <text class="t" x="410" y="105" text-anchor="middle" font-size="14" font-weight="600">vØrk (any relays)</text>
+  <g transform="translate(225 70)"><rect class="pill" x="-50" y="-13" width="100" height="24" rx="12"/><text class="pt" x="0" y="4" text-anchor="middle" font-size="12">sealed</text></g>
+  <g transform="translate(595 70)"><rect class="pill" x="-50" y="-13" width="100" height="24" rx="12"/><text class="pt" x="0" y="4" text-anchor="middle" font-size="12">sealed</text></g>
+
+  <circle class="mine" cx="700" cy="100" r="32"/>
+  <g class="ico" transform="translate(700 100)"><rect x="-12" y="-13" width="24" height="10" rx="2"/><rect x="-12" y="1" width="24" height="10" rx="2"/><path d="M-7 -8 h2 M-7 6 h2"/></g>
+  <text class="t" x="700" y="156" text-anchor="middle" font-size="14" font-weight="600">Your home server</text>
+  <text class="m" x="700" y="175" text-anchor="middle" font-size="12.5">the exit node</text>
+
+  <g class="ico2" transform="translate(830 100)"><circle r="18"/><path d="M-18 0 h36 M0 -18 c-9 9 -9 27 0 36 M0 -18 c9 9 9 27 0 36"/></g>
+  <text class="t" x="830" y="156" text-anchor="middle" font-size="14" font-weight="600">Internet</text>
+  <text class="m" x="830" y="175" text-anchor="middle" font-size="12.5">sees your home</text>
+
+  <text class="m" x="450" y="212" text-anchor="middle" font-size="13">The hotel sees only sealed vØrk traffic. Websites see your home connection, as if you were there.</text>
+</svg>

@@ -2,6 +2,7 @@
 
 | Document | What |
 |---|---|
+| [technical-overview](technical-overview.md) | how the prototype works, what was tested, throughput |
 | [00-vision](00-vision.md) | what vØrk is for, principles, non-goals |
 | [01-architecture](01-architecture.md) | how the parts fit: layers, paths, NAT traversal, node profiles, privacy classes, applications |
 | [02-protocol](02-protocol.md) | wire format v0, byte by byte, as implemented |
@@ -9,7 +10,7 @@
 | [04-roadmap](04-roadmap.md) | milestones with scope, approach and acceptance tests |
 | [05-open-questions](05-open-questions.md) | decisions still to make |
 | [06-local-api](06-local-api.md) | how applications use the machine's node: frames, endpoint |
-| [storage/](storage/README.md) | vØrk storage (formerly retifs): its own documents and ADRs |
+| [storage/](storage/README.md) | vØrk storage (experimental): its own documents and ADRs |
 
 ## Decisions (ADRs)
 
