@@ -7,7 +7,7 @@
 #   vork status
 #
 # Runs as root with only CAP_NET_ADMIN left (socket buffers past rmem_max now,
-# the TUN interface later), and sees the file system read-only except its state.
+# the TUN interface later), and sees the file system read-only except its state and /etc/vork.
 
 [Unit]
 Description=vØrk node
@@ -27,6 +27,8 @@ StateDirectoryMode=0755
 CapabilityBoundingSet=CAP_NET_ADMIN
 NoNewPrivileges=yes
 ProtectSystem=strict
+# The dashboard and `vork set` change the config.
+ReadWritePaths=/etc/vork
 ProtectHome=yes
 PrivateTmp=yes
 ProtectKernelTunables=yes
