@@ -15,7 +15,7 @@ A node's `devices` are the owner's other devices: they get direct links (ADR-001
 
 ## Consequences
 - A node can't make itself someone's device; a leaked code works only until it expires or is used.
-- The owner's network is the set of mutual links; whether linking is transitive (a device of my device is mine) is still open.
+- The owner's network is the set of mutual links; whether linking is transitive (a device of my device is mine) is still open. (It is since ADR-0030: the owner's devices are one group.)
 - Storage's keyring is another list of the owner's devices; joining the two is next.
 
 ## Addendum (2026-11-19): links carry where to dial

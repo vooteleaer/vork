@@ -47,3 +47,4 @@ New decisions copy [adr/0000-template.md](adr/0000-template.md). *Accepted* mean
 | [0027](adr/0027-walled-garden.md) | The walled garden | accepted |
 | [0028](adr/0028-self-updating.md) | Self-updating | accepted |
 | [0029](adr/0029-releases.md) | Public releases | accepted |
+| [0030](adr/0030-one-owner-one-group.md) | One owner, one group: a device of my device is mine | accepted |

@@ -69,6 +69,10 @@ const LINK_PATH: &str = "/vork/link";
 const LINK_AGAIN: Duration = Duration::from_secs(20);
 /// A link code is good this long unless given otherwise.
 const LINK_CODE_TTL: Duration = Duration::from_secs(600);
+/// Where devices tell each other who the owner's devices are (ADR-0030).
+const GROUP_PATH: &str = "/vork/devices";
+/// A device that heard the group is told it again this often anyway.
+const GROUP_AGAIN: Duration = Duration::from_secs(1800);
 
 /// Counters for the dashboard: totals since start (Cell: counted where the node
 /// only reads itself, as in send_raw), and a sample every 5 s for an hour.
@@ -538,6 +542,10 @@ pub struct Node {
     link_sent: HashMap<String, Instant>,
     /// Sessions opened for links in which we identified.
     link_identified: HashSet<u32>,
+    /// The group sent to a device: when, and which revision (ADR-0030).
+    group_sent: HashMap<String, (Instant, u64)>,
+    /// The group a device took: when, and which revision.
+    group_heard: HashMap<String, (Instant, u64)>,
     /// Names asked lately (logged once a minute each).
     dns_seen: HashMap<(String, u16), Instant>,
     /// IPv4 aliases for nodes (ADR-0021), and the conversations programs
@@ -727,7 +735,10 @@ impl Node {
         let send_sock = std_sock.try_clone()?;
         let sock = Arc::new(UdpSocket::from_std(std_sock)?);
         let my_hash = me.hash();
-        let links = crate::links::Links::open(state.dir());
+        let mut links = crate::links::Links::open(state.dir());
+        // The owner's group agrees with vork.toml (edited by hand, or from before groups).
+        links.reconcile(&cfg.devices.iter().map(hex::encode).collect::<Vec<_>>(), crate::state::unix_now());
+        links.save();
         let mut node = Node {
             my_hash,
             local: HashMap::new(),
@@ -771,6 +782,8 @@ impl Node {
             link_codes: Vec::new(),
             link_sent: HashMap::new(),
             link_identified: HashSet::new(),
+            group_sent: HashMap::new(),
+            group_heard: HashMap::new(),
             dns_seen: HashMap::new(),
             aliases,
             v4_flows: HashMap::new(),
@@ -1181,6 +1194,7 @@ impl Node {
                     if last_links.elapsed() >= Duration::from_secs(5) {
                         last_links = Instant::now();
                         self.send_links();
+                        self.send_group();
                         self.update_tick();
                         // A session to the exit node kept open, so whether it works is known before traffic needs it.
                         // (One this node opened: its paths are probed, so their state is known.)
@@ -2845,6 +2859,8 @@ impl Node {
                         // Link messages lost in flight go again now, not at the next round,
                         // and a self-update asks again for what it was waiting for.
                         self.send_links();
+                        self.group_sent.clear();
+                        self.send_group();
                         self.update_resend(sid);
                     }
                 }
@@ -3023,6 +3039,18 @@ impl Node {
                     let body = m[6..].to_vec();
                     return self.on_update_answer(sid, id, status, &body);
                 }
+                // The group arrived at a device: not sent again until it changes.
+                if path == GROUP_PATH && for_client.is_none() {
+                    if let Some(dest) = s.peer_hash {
+                        let a = hex::encode(dest);
+                        if status == STATUS_OK {
+                            if let Some(&(_, rev)) = self.group_sent.get(&a) {
+                                self.group_heard.insert(a, (Instant::now(), rev));
+                            }
+                        }
+                    }
+                    return;
+                }
                 // A link message arrived: off the outbox.
                 if path == LINK_PATH && for_client.is_none() {
                     if let Some(dest) = s.peer_hash {
@@ -3196,6 +3224,7 @@ impl Node {
         match path {
             "/vork/echo" => (STATUS_OK, body.to_vec()),
             "/vork/link" => self.on_link_message(_sid, body),
+            GROUP_PATH => self.on_group_message(_sid, body),
             // Releases, for the owner's devices only (ADR-0028).
             crate::update::PATH => {
                 let device = self.sessions.get(&_sid).and_then(|s| s.peer_identity).is_some_and(|w| self.is_device(&w));
@@ -3690,8 +3719,16 @@ impl Node {
         self.cfg.devices.contains(h)
     }
 
-    /// Adds or removes a device in `vork.toml` (both sides agreed, or one unlinked).
+    /// Links or unlinks a device here: in `vork.toml`, and in the owner's
+    /// group, which the other devices then hear (ADR-0030).
     fn set_device(&mut self, address: &str, on: bool) {
+        self.links.mark(address, on, crate::state::unix_now());
+        self.apply_device(address, on);
+        self.links.save();
+    }
+
+    /// Adds or removes a device in `vork.toml`.
+    fn apply_device(&mut self, address: &str, on: bool) {
         let cmd = if on { "device_add" } else { "device_remove" };
         if let Err(e) = self.change_settings(cmd, &json!({ "address": address })) {
             warn(format!("{cmd} {address}: {e}"));
@@ -3866,14 +3903,72 @@ impl Node {
             "remove" => {
                 self.links.forget(&address);
                 if self.is_device(&who) {
-                    self.set_device(&address, false);
-                    log(format!("{name} ({}) unlinked", short(&who)));
+                    // Unlinked by one of the owner's devices: out of the owner's
+                    // group, so off every device of it (they hear it from that one).
+                    let all: Vec<String> = self.cfg.devices.iter().map(hex::encode).collect();
+                    for d in &all {
+                        self.apply_device(d, false);
+                    }
+                    self.links.leave_group();
+                    log(format!("{name} ({}) unlinked this node: no longer one of that owner's {} device(s)", short(&who), all.len()));
                 }
             }
             _ => return (STATUS_REFUSED, b"unknown op".to_vec()),
         }
         self.links.save();
         self.send_links();
+        (STATUS_OK, Vec::new())
+    }
+
+    /// Tells the owner's devices who the owner's devices are, until each has
+    /// taken this revision (and again now and then), in a session where this
+    /// node identified (ADR-0030).
+    fn send_group(&mut self) {
+        let rev = self.links.group_rev;
+        let mut body = None;
+        for d in self.cfg.devices.clone() {
+            let a = hex::encode(d);
+            if self.group_heard.get(&a).is_some_and(|&(t, r)| r == rev && t.elapsed() < GROUP_AGAIN) {
+                continue;
+            }
+            if self.group_sent.get(&a).is_some_and(|&(t, r)| r == rev && t.elapsed() < LINK_AGAIN) {
+                continue;
+            }
+            let Some(sid) = self.session_to(d) else { continue };
+            if self.link_identified.insert(sid) {
+                let me = self.me_arc.clone();
+                self.identify(sid, &me);
+            }
+            let body = body.get_or_insert_with(|| json!({ "devices": self.links.group }).to_string()).clone();
+            self.request(sid, GROUP_PATH, body.as_bytes(), None);
+            self.group_sent.insert(a, (Instant::now(), rev));
+        }
+    }
+
+    /// The owner's group, from one of the owner's devices: a device it linked
+    /// is linked here too, one it unlinked is unlinked here.
+    fn on_group_message(&mut self, sid: u32, body: &[u8]) -> (u8, Vec<u8>) {
+        let Some(who) = self.sessions.get(&sid).and_then(|s| s.peer_identity) else {
+            return (STATUS_REFUSED, b"identify first".to_vec());
+        };
+        if !self.is_device(&who) {
+            return (STATUS_REFUSED, b"not one of this owner's devices".to_vec());
+        }
+        #[derive(serde::Deserialize)]
+        struct Group {
+            devices: std::collections::BTreeMap<String, crate::links::Member>,
+        }
+        let Ok(g) = serde_json::from_slice::<Group>(body) else { return (STATUS_REFUSED, b"bad message".to_vec()) };
+        let from = hex::encode(who);
+        let changed = self.links.merge(&g.devices, &[hex::encode(self.my_hash), from.clone()], crate::state::unix_now());
+        for (a, present) in &changed {
+            self.links.forget(a);
+            if *present != self.cfg.devices.iter().any(|d| hex::encode(d) == *a) {
+                self.apply_device(a, *present);
+            }
+            log(format!("{} {} as one of this owner's devices (heard from {})", if *present { "linked" } else { "unlinked" }, &a[..8], short(&who)));
+        }
+        self.links.save();
         (STATUS_OK, Vec::new())
     }
 
