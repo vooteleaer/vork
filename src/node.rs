@@ -108,6 +108,22 @@ const SEEK_EVERY: Duration = Duration::from_secs(30);
 const TRIAL: Duration = Duration::from_secs(20);
 /// A learned node that didn't answer isn't dialed again for this long.
 const TRIED_AGAIN: Duration = Duration::from_secs(600);
+// Limits on what strangers can make a node keep (docs/07-threat-model.md).
+/// Neighbors at most; a new anonymous one beyond takes the place of an idle one, or is refused.
+const MAX_NEIGHBORS: usize = 512;
+/// New anonymous neighbors from one IP address per minute.
+const NEW_NEIGHBORS_PER_IP: u32 = 16;
+/// A neighbor that dialed in, down and silent this long, is forgotten.
+const NEIGHBOR_IDLE: Duration = Duration::from_secs(600);
+/// Sessions at most; a new one beyond is refused.
+const MAX_SESSIONS: usize = 4096;
+/// A session with nothing sent or received this long is closed.
+const SESSION_IDLE: Duration = Duration::from_secs(900);
+/// Key queries answered for one IP address per 10 s, and in all per second.
+const KEY_ANSWERS_PER_IP: u32 = 20;
+const KEY_ANSWERS_PER_S: u32 = 100;
+/// Link requests without a code waiting for the owner at most.
+const MAX_LINK_REQUESTS: usize = 16;
 /// Neighbors are told what this node proved this often (and at link up).
 const SHARE_EVERY: Duration = Duration::from_secs(600);
 /// "What is your key?" `nonce[8]`, and the answer `nonce[8] x_pub[32] ed_pub[32]`.
@@ -217,6 +233,8 @@ struct PathEnd {
 }
 
 struct Session {
+    /// Last sent or received on (idle ones close, SESSION_IDLE).
+    active: Instant,
     tunn: Tunn,
     peer_x: [u8; 32],
     /// The destination we opened this session to (None: the far end opened it).
@@ -288,6 +306,7 @@ impl Session {
             failed: HashMap::new(),
             direct_considered: false,
             direct_key: None,
+            active: Instant::now(),
         }
     }
 }
@@ -468,6 +487,15 @@ pub struct Node {
     exit_dns: HashMap<u16, (crate::dns::Query, Instant)>,
     /// Sessions asked who is on them, and when.
     who_asked: HashMap<u32, Instant>,
+    /// New anonymous neighbors per IP in the current minute.
+    new_from: HashMap<std::net::IpAddr, (u32, Instant)>,
+    /// Key queries answered per IP in the current 10 s, and in all this second.
+    key_answers: HashMap<std::net::IpAddr, (u32, Instant)>,
+    key_answers_all: (u32, Instant),
+    /// Addresses dialed on others' word lately (each once per TRIED_AGAIN).
+    tried_addr: HashMap<SocketAddr, Instant>,
+    /// Limits hit lately (logged once a minute each).
+    limit_logged: HashMap<&'static str, Instant>,
     /// The walled garden: what other nodes may reach here (ADR-0027).
     firewall: crate::firewall::Firewall,
     /// Blocked traffic logged lately (once a minute per node and port).
@@ -661,6 +689,11 @@ impl Node {
             exit_clients: Default::default(),
             exit_dns: HashMap::new(),
             who_asked: HashMap::new(),
+            new_from: HashMap::new(),
+            key_answers: HashMap::new(),
+            key_answers_all: (0, Instant::now()),
+            tried_addr: HashMap::new(),
+            limit_logged: HashMap::new(),
             firewall: crate::firewall::Firewall::new(&cfg_allow).unwrap_or_default(),
             blocked_seen: HashMap::new(),
         };
@@ -1134,6 +1167,22 @@ impl Node {
                 match self.neighbor_by_key.get(&half.peer_static_public) {
                     Some(id) => *id,
                     None => {
+                        // Identities are free: limits keep a stranger from filling the table.
+                        let now = Instant::now();
+                        let e = self.new_from.entry(addr.ip()).or_insert((0, now));
+                        if now.duration_since(e.1) >= Duration::from_secs(60) {
+                            *e = (0, now);
+                        }
+                        e.0 += 1;
+                        if e.0 > NEW_NEIGHBORS_PER_IP {
+                            return self.limit_hit("new neighbors from one address");
+                        }
+                        if self.new_from.len() > 4096 {
+                            self.new_from.retain(|_, (_, t)| now.duration_since(*t) < Duration::from_secs(60));
+                        }
+                        if self.neighbors.len() >= MAX_NEIGHBORS && !self.make_room_for_neighbor() {
+                            return self.limit_hit("neighbors");
+                        }
                         log(format!("new neighbor at {addr}"));
                         self.add_neighbor(half.peer_static_public, Some(addr), None)
                     }
@@ -1796,7 +1845,9 @@ impl Node {
                     return Some(full);
                 }
             }
-            let mut hits = self.routes.keys().chain(std::iter::once(&self.my_hash)).filter(|d| hex::encode(d).starts_with(label));
+            // A prefix only among this node and the owner's devices: for anyone else,
+            // a made-up node could be ground to share it (2³² tries for 8 digits).
+            let mut hits = self.cfg.devices.iter().chain(std::iter::once(&self.my_hash)).filter(|d| hex::encode(d).starts_with(label));
             if let (Some(one), None) = (hits.next(), hits.next()) {
                 return Some(*one);
             }
@@ -1953,6 +2004,12 @@ impl Node {
                 match self.session_by_key.get(&half.peer_static_public) {
                     Some(sid) => *sid,
                     None => {
+                        if self.sessions.len() >= MAX_SESSIONS {
+                            self.close_idle_sessions(Duration::from_secs(60));
+                            if self.sessions.len() >= MAX_SESSIONS {
+                                return self.limit_hit("sessions");
+                            }
+                        }
                         // The opener is anonymous (a fresh key per session) until it identifies.
                         let sid = self.new_id();
                         let tunn = Self::session_tunn(ident.dh.clone(), half.peer_static_public, sid);
@@ -2011,6 +2068,7 @@ impl Node {
 
     fn send_app(&mut self, sid: u32, body: &[u8]) {
         let Some(s) = self.sessions.get_mut(&sid) else { return };
+        s.active = Instant::now();
         if let Some(other) = s.looped {
             return self.on_app(other, (0, 0), body);
         }
@@ -2158,7 +2216,7 @@ impl Node {
                 let hint = if what.starts_with("icmp type") || what.starts_with("protocol") {
                     String::new()
                 } else {
-                    format!("; to let it in: allow = [\"{what} from {}\"]", hex::encode(&who[..4]))
+                    format!("; to let it in: allow = [\"{what} from {}\"]", hex::encode(who))
                 };
                 log(format!("blocked {what} from {} (not one of your devices{hint})", short(&who)));
             }
@@ -2179,6 +2237,84 @@ impl Node {
     /// A session something was heard on within 10 s (its paths are probed every second).
     fn session_alive(&self, sid: u32) -> bool {
         self.sessions.get(&sid).is_some_and(|s| s.paths.iter().any(|k| self.ends.get(k).is_some_and(|e| e.last_seen.elapsed() < Duration::from_secs(10))))
+    }
+
+    /// Says once a minute that a limit turned something away.
+    fn limit_hit(&mut self, what: &'static str) {
+        if self.limit_logged.get(what).is_none_or(|t| t.elapsed() >= Duration::from_secs(60)) {
+            self.limit_logged.insert(what, Instant::now());
+            warn(format!("limit reached: {what} (more turned away for a while)"));
+        }
+    }
+
+    /// Forgets a neighbor and its paths.
+    fn remove_neighbor(&mut self, id: u32) {
+        let paths: Vec<(u32, u64)> = self.ends.keys().filter(|k| k.0 == id).copied().collect();
+        for k in paths {
+            self.drop_path(k, "its neighbor was let go");
+        }
+        if let Some(n) = self.neighbors.remove(&id) {
+            if self.neighbor_by_key.get(&n.x_pub) == Some(&id) {
+                self.neighbor_by_key.remove(&n.x_pub);
+            }
+        }
+    }
+
+    /// Room for a new anonymous neighbor: the longest-silent one that dialed
+    /// in and is down goes. False: none to let go.
+    fn make_room_for_neighbor(&mut self) -> bool {
+        let victim = self
+            .neighbors
+            .iter()
+            .filter(|(_, n)| !n.up && n.retry.is_none())
+            .min_by_key(|(_, n)| n.last_rx.unwrap_or(n.last_try))
+            .map(|(id, _)| *id);
+        match victim {
+            Some(id) => {
+                self.remove_neighbor(id);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Closes sessions with nothing sent or received for `idle` and nothing in flight.
+    fn close_idle_sessions(&mut self, idle: Duration) {
+        let keep = self.cfg.exit_via;
+        let gone: Vec<u32> = self
+            .sessions
+            .iter()
+            .filter(|(sid, s)| {
+                s.active.elapsed() >= idle
+                    && s.stream.idle()
+                    && s.waiting.is_empty()
+                    && s.looped.is_none()
+                    && !(keep.is_some() && self.session_by_dest.get(&keep.unwrap()) == Some(sid))
+            })
+            .map(|(sid, _)| *sid)
+            .collect();
+        for sid in gone {
+            self.close_session(sid);
+        }
+    }
+
+    /// Forgets a session and everything kept about it.
+    fn close_session(&mut self, sid: u32) {
+        let paths: Vec<(u32, u64)> = self.ends.iter().filter(|(_, e)| e.sid == Some(sid)).map(|(k, _)| *k).collect();
+        for k in paths {
+            self.ends.remove(&k);
+        }
+        let Some(s) = self.sessions.remove(&sid) else { return };
+        if self.session_by_key.get(&s.peer_x) == Some(&sid) {
+            self.session_by_key.remove(&s.peer_x);
+        }
+        self.session_by_dest.retain(|_, v| *v != sid);
+        self.ip_peer.retain(|_, v| *v != sid);
+        self.ip_identified.remove(&sid);
+        self.link_identified.remove(&sid);
+        self.punched.remove(&sid);
+        self.who_asked.remove(&sid);
+        debug(format!("session {sid:08x} closed: idle"));
     }
 
     /// Asks the far end of a session who it is (at most once a second per session).
@@ -2292,6 +2428,9 @@ impl Node {
     }
 
     fn on_app(&mut self, sid: u32, key: (u32, u64), body: &[u8]) {
+        if let Some(s) = self.sessions.get_mut(&sid) {
+            s.active = Instant::now();
+        }
         // The session works: offer a direct link, once, if this peer may have
         // one (considered again when it identifies).
         if let Some(s) = self.sessions.get_mut(&sid)
@@ -2873,6 +3012,17 @@ impl Node {
             self.seen_req.clear();
         }
         self.pings.retain(|_, t| t.elapsed() < Duration::from_secs(10));
+        // Neighbors that dialed in and went silent, and sessions nobody uses: let go.
+        let idle: Vec<u32> = self
+            .neighbors
+            .iter()
+            .filter(|(_, n)| !n.up && n.retry.is_none() && n.trial.is_none() && n.last_rx.unwrap_or(n.last_try).elapsed() >= NEIGHBOR_IDLE)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in idle {
+            self.remove_neighbor(id);
+        }
+        self.close_idle_sessions(SESSION_IDLE);
         // Learned nodes that didn't come up: let go.
         let failed: Vec<u32> = self.neighbors.iter().filter(|(_, n)| !n.up && n.trial.is_some_and(|t| t.elapsed() >= TRIAL)).map(|(id, _)| *id).collect();
         for id in failed {
@@ -2996,9 +3146,21 @@ impl Node {
         }
         self.tried.retain(|_, t| t.elapsed() < TRIED_AGAIN);
         let mine = *self.me.x_pub().as_bytes();
+        self.tried_addr.retain(|_, t| t.elapsed() < TRIED_AGAIN);
         let skip = |k: &[u8; 32]| *k == mine || self.tried.contains_key(k) || self.neighbor_by_key.get(k).is_some_and(|id| self.is_up(*id));
-        let Some((key, addr)) = self.reach.candidates(skip).into_iter().next() else { return };
+        // Others' word sends this node to an address: once in a while each, and
+        // only to one that could be a node (not a broadcast, port 0, or itself).
+        let listen = self.cfg.listen;
+        let plausible = |a: &SocketAddr| {
+            a.port() != 0
+                && !a.ip().is_unspecified()
+                && !a.ip().is_multicast()
+                && !matches!(a.ip(), std::net::IpAddr::V4(v) if v.is_broadcast())
+                && *a != listen
+        };
+        let Some((key, addr)) = self.reach.candidates(skip).into_iter().find(|(_, a)| plausible(a) && !self.tried_addr.contains_key(a)) else { return };
         self.tried.insert(key, Instant::now());
+        self.tried_addr.insert(addr, Instant::now());
         let id = match self.neighbor_by_key.get(&key) {
             // Known but down: try it at the learned address.
             Some(id) => {
@@ -3275,6 +3437,12 @@ impl Node {
                     self.links.send(&address, "accept");
                     log(format!("linked with {name} ({})", short(&who)));
                 } else if !self.links.requests.iter().any(|r| r.address == address) {
+                    // Strangers can ask as many times as they have identities: a queue
+                    // of bounded length, so the owner isn't flooded (the oldest stay).
+                    if self.links.requests.len() >= MAX_LINK_REQUESTS {
+                        self.limit_hit("link requests waiting for the owner");
+                        return (STATUS_REFUSED, b"too many requests waiting; try later".to_vec());
+                    }
                     self.links.requests.push(crate::links::Request { address: address.clone(), name: name.clone(), since: unix_now(), with_link: valid.is_some() });
                     log(format!("{name} ({}) asks to be linked as one of this owner's devices", short(&who)));
                 }
@@ -3463,13 +3631,33 @@ impl Node {
         self.asking.insert(addr, (nonce, Instant::now()));
         let mut q = KEY_ASK.to_vec();
         q.extend_from_slice(&nonce.to_be_bytes());
+        // Padded to the answer's size: no node is made to send more than it got
+        // (a spoofed source can't use it to amplify).
+        q.extend_from_slice(&[0u8; 64]);
         self.send_raw(addr, &q);
     }
 
     fn on_key_query(&mut self, addr: SocketAddr, data: &[u8]) {
-        if data.starts_with(KEY_ASK) && data.len() == KEY_ASK.len() + 8 {
+        if data.starts_with(KEY_ASK) && (data.len() == KEY_ASK.len() + 8 || data.len() == KEY_ASK.len() + 8 + 64) {
+            // Unauthenticated answers are rationed, per address and in all.
+            let now = Instant::now();
+            if now.duration_since(self.key_answers_all.1) >= Duration::from_secs(1) {
+                self.key_answers_all = (0, now);
+            }
+            let e = self.key_answers.entry(addr.ip()).or_insert((0, now));
+            if now.duration_since(e.1) >= Duration::from_secs(10) {
+                *e = (0, now);
+            }
+            e.0 += 1;
+            self.key_answers_all.0 += 1;
+            if e.0 > KEY_ANSWERS_PER_IP || self.key_answers_all.0 > KEY_ANSWERS_PER_S {
+                return self.limit_hit("key queries");
+            }
+            if self.key_answers.len() > 4096 {
+                self.key_answers.retain(|_, (_, t)| now.duration_since(*t) < Duration::from_secs(10));
+            }
             let mut a = KEY_TELL.to_vec();
-            a.extend_from_slice(&data[KEY_ASK.len()..]);
+            a.extend_from_slice(&data[KEY_ASK.len()..KEY_ASK.len() + 8]);
             a.extend_from_slice(self.me.x_pub().as_bytes());
             a.extend_from_slice(&self.me.ed_pub());
             return self.send_raw(addr, &a);

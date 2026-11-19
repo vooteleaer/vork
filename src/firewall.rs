@@ -5,8 +5,9 @@
 //!
 //! Rules (`allow = [...]` in vork.toml):
 //! - `tcp/80`, `udp/5000-5010`: those ports, for every vØrk node;
-//! - `tcp/22 from 7ea8703b`: for nodes whose address starts so (8+ digits);
-//! - `any from 7ea8703b…`: everything, for those nodes;
+//! - `tcp/22 from <address>`: for one node (its full 32-digit address: a
+//!   shorter prefix can be matched by grinding keys, 2³² tries for 8 digits);
+//! - `any from <address>`: everything, for one node;
 //! - `icmp`: ping (echo), for every node; `icmp from …` likewise for some.
 
 use std::collections::HashMap;
@@ -26,8 +27,8 @@ enum Proto {
 pub struct Rule {
     proto: Proto,
     ports: (u16, u16),
-    /// The leading bytes of the addresses it's for (None: every node).
-    from: Option<Vec<u8>>,
+    /// The node it's for (None: every node).
+    from: Option<Hash>,
     text: String,
 }
 
@@ -41,10 +42,8 @@ impl Rule {
         let from = match from {
             Some(f) => {
                 let f = f.trim_end_matches(".vork");
-                if f.len() < 8 || f.len() > 32 || f.len() % 2 != 0 || !f.bytes().all(|b| b.is_ascii_hexdigit()) {
-                    return Err(format!("{s}: after \"from\" goes a node's address, at least its first 8 digits (an even count)"));
-                }
-                Some(hex::decode(f).map_err(|e| e.to_string())?)
+                let h = hex::decode(f).ok().and_then(|b| Hash::try_from(b.as_slice()).ok());
+                Some(h.ok_or(format!("{s}: after \"from\" goes a node's full address (32 hex digits; a shorter prefix could be matched by a made-up node)"))?)
             }
             None => None,
         };
@@ -80,7 +79,7 @@ impl Rule {
 
     fn matches(&self, from: &Hash, proto: u8, port: u16, echo: bool) -> bool {
         if let Some(f) = &self.from {
-            if !from.starts_with(f) {
+            if from != f {
                 return false;
             }
         }
@@ -217,14 +216,18 @@ mod tests {
 
     #[test]
     fn holes() {
-        let mut f = Firewall::new(&["tcp/80".into(), "udp/5000-5010".into(), "tcp/22 from 7ea8703b".into(), "icmp".into()]).unwrap();
+        let mut f = Firewall::new(&["tcp/80".into(), "udp/5000-5010".into(), format!("tcp/22 from {}", hex::encode(FRIEND)), "icmp".into()]).unwrap();
         assert!(f.check_in(&STRANGER, false, &packet(6, 4000, 80, 0)).is_ok());
         assert!(f.check_in(&STRANGER, false, &packet(17, 4000, 5005, 0)).is_ok());
         assert!(f.check_in(&STRANGER, false, &packet(17, 4000, 5011, 0)).is_err());
         assert!(f.check_in(&STRANGER, false, &packet(6, 4000, 22, 0)).is_err());
         assert!(f.check_in(&FRIEND, false, &packet(6, 4000, 22, 0)).is_ok());
         assert!(f.check_in(&STRANGER, false, &packet(58, 9, 0, 128)).is_ok());
-        let mut g = Firewall::new(&["any from 7ea8703b".into()]).unwrap();
+        let mut g = Firewall::new(&[format!("any from {}", hex::encode(FRIEND))]).unwrap();
+        // A node sharing the friend's first 8 digits (made by grinding keys) isn't the friend.
+        let mut twin = FRIEND;
+        twin[15] ^= 1;
+        assert!(g.check_in(&twin, false, &packet(17, 1, 9999, 0)).is_err());
         assert!(g.check_in(&FRIEND, false, &packet(17, 1, 9999, 0)).is_ok());
         assert!(g.check_in(&STRANGER, false, &packet(17, 1, 9999, 0)).is_err());
     }
@@ -245,7 +248,8 @@ mod tests {
         assert!(Rule::parse("any").is_err());
         assert!(Rule::parse("tcp/99999").is_err());
         assert!(Rule::parse("tcp/22 from 7ea8").is_err());
+        assert!(Rule::parse("tcp/22 from 7ea8703b").is_err(), "a prefix can be ground");
         assert!(Rule::parse("sctp/5").is_err());
-        assert!(Rule::parse("TCP/22 FROM 7EA8703B").is_ok());
+        assert!(Rule::parse("TCP/22 FROM 7EA8703B3525E41AF092D5E1960D7CDF").is_ok());
     }
 }

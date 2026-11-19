@@ -402,3 +402,59 @@ mod tests {
         assert_eq!(ipv4_checksum(&p[..20]), 0);
     }
 }
+
+/// Junk from a neighbor (anyone can become one) must never take the node
+/// down: every parser it reaches gets random and half-valid input here.
+#[cfg(test)]
+mod fuzz {
+    use super::*;
+
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+        fn bytes(&mut self, max: usize) -> Vec<u8> {
+            let n = (self.next() as usize) % (max + 1);
+            (0..n).map(|_| self.next() as u8).collect()
+        }
+    }
+
+    #[test]
+    fn parsers_survive_junk() {
+        let mut r = Rng(0x9e37_79b9_7f4a_7c15);
+        for i in 0..300_000u32 {
+            let mut b = r.bytes(400);
+            // Half the time a plausible message type first, so the parsers behind it run.
+            if i % 2 == 0 && !b.is_empty() {
+                b[0] = (r.next() % 24) as u8;
+            }
+            let _ = Msg::decode(&b);
+            let _ = decode_addrs(&b);
+            let _ = unframe(&b);
+            // The node's other parsers of what comes over sessions and the interface.
+            let _ = crate::dns::question(&b);
+            let _ = crate::dns::query_in(&b);
+            let _ = crate::tun::v6_ends(&b);
+            let _ = crate::alias::to_v4(&b, std::net::Ipv4Addr::new(198, 18, 0, 2), std::net::Ipv4Addr::new(198, 18, 0, 1));
+            let _ = crate::alias::to_v6(&b, "fd00::1".parse().unwrap(), "fd00::2".parse().unwrap());
+            let _ = crate::alias::flow_v6_out(&b);
+            let _ = crate::exit::readdress(&b, Some(std::net::Ipv4Addr::new(1, 2, 3, 4)), Some(std::net::Ipv4Addr::new(5, 6, 7, 8)));
+            let _ = crate::exit::udp4_parts(&b);
+            let mut f = crate::firewall::Firewall::default();
+            let _ = f.check_in(&[1; 16], false, &b);
+            f.note_out(&[1; 16], &b);
+            // IP-looking input, so the deeper branches run too.
+            if b.len() > 40 {
+                b[0] = if i % 3 == 0 { 0x45 } else { 0x60 };
+                let _ = crate::alias::to_v4(&b, std::net::Ipv4Addr::new(198, 18, 0, 2), std::net::Ipv4Addr::new(198, 18, 0, 1));
+                let _ = crate::alias::to_v6(&b, "fd00::1".parse().unwrap(), "fd00::2".parse().unwrap());
+                let _ = crate::exit::readdress(&b, Some(std::net::Ipv4Addr::new(1, 2, 3, 4)), None);
+                let _ = f.check_in(&[1; 16], false, &b);
+            }
+        }
+    }
+}

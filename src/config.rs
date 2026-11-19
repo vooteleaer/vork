@@ -173,8 +173,8 @@ map_port = true
 # nodes only what's opened here (relaying for others is never affected).
 #   "tcp/80"                 port 80 for every vØrk node
 #   "udp/5000-5010"          a range
-#   "tcp/22 from 7ea8703b"   for one node (its address, 8+ digits)
-#   "any from 7ea8703b"      everything, for one node
+#   "tcp/22 from <address>"  for one node (its full 32-digit address)
+#   "any from <address>"     everything, for one node
 #   "icmp"                   ping
 allow = []
 

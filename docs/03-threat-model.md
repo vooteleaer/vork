@@ -32,6 +32,12 @@ Any node may be hostile: neighbors, relays, the far end of a path that isn't the
 | Advertised hop count lies | it only orders first hops; measurement decides afterwards | partly; scoring by delivery planned |
 | Flood `PATH_OPEN` to fill relay tables | per-neighbor limits, table caps | **planned (M4)** |
 | Flood announces / path requests | rate limits per neighbor, proof-of-work stamps | **planned (M4)** |
+| Fill the neighbor table with fresh identities (identities are free) | at most 512 neighbors; a new anonymous one takes the place of the longest-silent one that dialed in, or is refused; 16 new anonymous neighbors per IP per minute; ones that dialed in and went silent are forgotten after 10 min | implemented |
+| Open sessions until memory runs out | at most 4096 sessions; idle ones (15 min, nothing in flight or waiting) close | implemented |
+| Use the key query as a reflector (spoofed source) | asks are padded to the answer's size; answers rationed (20 per IP per 10 s, 100 per s in all); old unpadded asks still answered within that ration | implemented (drop unpadded asks once old nodes are gone) |
+| Steer a node's dials (lie in `REACH`) to scan or flood an address | dials only to fill a gap (fewer than 2 relaying neighbors), one at a time; each address at most once per 10 min, each key likewise; no port 0, multicast, broadcast or own address | implemented |
+| Flood the owner with link requests | at most 16 waiting without a code; more refused | implemented |
+| Junk from the network or from a neighbor crashes the node | memory-safe code; every parser reachable from a neighbor fuzzed (300 000 inputs in the tests); a node took 4 M junk packets in 20 s | tested; continuous fuzzing planned |
 | Lie in `OBSERVED` (wrong outside address) | only a candidate; take it only when several neighbors agree | **planned (M4)** |
 | Eclipse: surround a new node | several bootstrap sources, diverse neighbors (AS, /16), long-lived anchors (own and island nodes) | **planned (M4)** |
 | Sybil attracting paths | diversity rules in path choice, PoW cost on identities, island trust for strong paths | planned |
@@ -56,3 +62,17 @@ Any node may be hostile: neighbors, relays, the far end of a path that isn't the
 | its two neighbors on the path, and their IP addresses | the source or destination of `DATA` |
 | the destination address in `PATH_OPEN` | content |
 | packet sizes, counts and timing | which session a packet belongs to beyond its own two labels |
+
+## Services, names and the local surface
+
+| Attack | Answer | Status |
+|---|---|---|
+| Reach a node's services (SSH, dashboards, Docker) from any node | the walled garden (ADR-0027): only the owner's devices, other nodes only what `allow` opens; relaying untouched | implemented |
+| Grind a key to match an address prefix (2³² tries for 8 digits) | `allow` rules name nodes by full address; `<prefix>.vork` resolves only among the owner's devices | implemented |
+| Take a name (`cafa-cloud.vork`) by announcing it | names resolve only for the owner's devices | implemented |
+| Use someone's exit node | only the owner's devices (ADR-0026) | implemented |
+| An exit client reaches the exit's LAN | the exit forwards to any destination, the LAN included | **open**: allow the internet only, optionally |
+| Sniff the web dashboard's key on the LAN | plain HTTP, key in the link | **open**: listen on the vØrk interface (or localhost) only |
+| Another user of a Windows PC changes the node | the control pipe lets interactive users in with full rights (a personal PC's trade-off) | accepted; an operator setting planned |
+| A compromised device | a full member until unlinked | open: short-lived delegations (ADR-0013) |
+| Tampered binaries | built and copied by hand | **open**: signed releases before strangers' nodes join |

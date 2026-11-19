@@ -134,7 +134,7 @@ function settings() {
     <div class="row"><input type="text" id="peer" placeholder="host:port"><button class="b" id="addPeer">Add</button></div></div>
   <div class="card"><h2>Open to other vØrk nodes</h2><div class="dim">Your devices reach this node's services always; other nodes only what's opened here. Relaying for others isn't affected.</div>
     ${(s.allow || []).map((r) => `<div class="row"><span class="mono">${esc(r)}</span><button class="t" data-allow-remove="${esc(r)}">Remove</button></div>`).join("") || `<div class="dim">Nothing: a walled garden.</div>`}
-    <div class="row"><input type="text" id="rule" placeholder="tcp/80 · tcp/22 from 7ea8703b · icmp"><button class="b" id="addRule">Open</button></div></div>
+    <div class="row"><input type="text" id="rule" placeholder="tcp/80 · tcp/22 from <full address> · icmp"><button class="b" id="addRule">Open</button></div></div>
   <div class="card"><h2>Network</h2>
     ${tog("lan", "Find nodes on this network (mDNS)", s.lan)}
     ${tog("map_port", "Ask the router for a port (UPnP)", s.map_port)}
