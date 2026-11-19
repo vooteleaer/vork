@@ -297,6 +297,11 @@ pub fn settings(a: RunArgs) -> Result<Settings> {
         tun: file.tun.clone().filter(|t| !t.is_empty()),
         config_path,
         dns_upstream: Vec::new(),
+        web_cert: match (&file.web_cert, &file.web_key) {
+            (Some(c), Some(k)) => Some((c.clone(), k.clone())),
+            (None, None) => None,
+            _ => anyhow::bail!("web_cert and web_key go together"),
+        },
         exit: file.exit == Some(true),
         allow: {
             let a = file.allow.clone().unwrap_or_default();
@@ -492,6 +497,11 @@ fn run_storage(args: &[String]) -> ! {
 }
 
 fn main() -> Result<()> {
+    // Output piped into `head` and closed early: end quietly, as other tools do.
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     if is_storage_command(&args) {
         run_storage(&args);
@@ -584,7 +594,11 @@ async fn network_main() -> Result<()> {
             let web = s.cfg.web.context("the dashboard is off: set web = \"0.0.0.0:8742\" in vork.toml and restart the node")?;
             let token = std::fs::read_to_string(s.state.as_ref().context("no state directory")?.join("web.token")).context("no dashboard token yet: has the node run with web set?")?;
             let host = if web.ip().is_unspecified() { node::machine_name() } else { web.ip().to_string() };
-            println!("http://{host}:{}/#t={}", web.port(), token.trim());
+            println!("https://{host}:{}/#t={}", web.port(), token.trim());
+            if let Some(fp) = s.state.as_ref().and_then(|d| web::kept_fingerprint(d)) {
+                println!("certificate SHA-256 {fp}");
+                println!("(the browser asks once: compare this with the certificate it shows, then accept)");
+            }
         }
         Cmd::Requests { config } => {
             let r = ask_node(config, serde_json::json!({ "cmd": "status" })).await?;

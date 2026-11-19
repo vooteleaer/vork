@@ -354,6 +354,8 @@ pub struct Config {
     pub config_path: Option<std::path::PathBuf>,
     /// The web dashboard's address, if it's on.
     pub web: Option<SocketAddr>,
+    /// Its certificate chain and key, if given (else self-signed).
+    pub web_cert: Option<(std::path::PathBuf, std::path::PathBuf)>,
     /// Where names outside `.vork` are asked (when this node is the system's
     /// resolver, as on Android): the network's own servers.
     pub dns_upstream: Vec<SocketAddr>,
@@ -887,12 +889,26 @@ impl Node {
         let (web_tx, mut web_rx) = tokio::sync::mpsc::channel::<crate::control::Request>(16);
         if let Some(addr) = self.cfg.web {
             let token = crate::web::token(self.state.dir());
-            match crate::web::serve(addr, token.clone(), web_tx).await {
-                Ok(()) => {
-                    let host = if addr.ip().is_unspecified() { machine_name() } else { addr.ip().to_string() };
-                    log(format!("dashboard at http://{host}:{}/#t={token}", addr.port()));
-                }
-                Err(e) => warn(format!("no dashboard on {addr}: {e:#}")),
+            // The certificate covers the names and addresses the dashboard is reached at.
+            let host = machine_name();
+            let names = vec![host.clone(), format!("{}.{}", crate::dns::label(&self.cfg.name), crate::dns::DOMAIN), "localhost".to_string()];
+            let mut ips: Vec<std::net::IpAddr> = vec![crate::tun::overlay(&self.my_hash).into(), self.aliases.me.into(), "127.0.0.1".parse().unwrap(), "::1".parse().unwrap()];
+            if !addr.ip().is_unspecified() {
+                ips.push(addr.ip());
+            }
+            if let Ok(Some(lan)) = std::net::UdpSocket::bind("0.0.0.0:0").and_then(|s| s.connect("192.0.2.1:9").and_then(|_| s.local_addr())).map(|a| Some(a.ip()).filter(|ip| !ip.is_unspecified())) {
+                ips.push(lan);
+            }
+            let given = self.cfg.web_cert.as_ref().map(|(c, k)| (c.as_path(), k.as_path()));
+            match crate::web::certificate(self.state.dir(), &names, &ips, given) {
+                Ok((tls, fp)) => match crate::web::serve(addr, token.clone(), tls, web_tx).await {
+                    Ok(()) => {
+                        let shown = if addr.ip().is_unspecified() { host } else { addr.ip().to_string() };
+                        log(format!("dashboard at https://{shown}:{}/#t={token} (certificate SHA-256 {fp})", addr.port()));
+                    }
+                    Err(e) => warn(format!("no dashboard on {addr}: {e:#}")),
+                },
+                Err(e) => warn(format!("no dashboard: its certificate: {e:#}")),
             }
         } else {
             drop(web_tx);

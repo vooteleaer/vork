@@ -32,6 +32,10 @@ pub struct FileConfig {
     pub name: Option<String>,
     /// The web dashboard's address (`0.0.0.0:8742`): off when missing.
     pub web: Option<String>,
+    /// The dashboard's certificate chain and key (PEM), e.g. Let's Encrypt's;
+    /// without them it makes a self-signed one.
+    pub web_cert: Option<std::path::PathBuf>,
+    pub web_key: Option<std::path::PathBuf>,
     /// Openings in the walled garden for nodes that aren't the owner's devices (ADR-0027).
     pub allow: Option<Vec<String>>,
     /// Offer this node as an exit node to the owner's devices.
@@ -168,6 +172,10 @@ map_port = true
 # A web dashboard (pairing codes, devices, settings) for a machine without a
 # screen: open the link `vork web-link` prints.
 # web = "0.0.0.0:8742"
+# It's HTTPS, with a certificate the node makes itself (the browser asks once;
+# `vork web-link` shows its fingerprint), or one you give, e.g. Let's Encrypt's:
+# web_cert = "/etc/letsencrypt/live/node.example.org/fullchain.pem"
+# web_key = "/etc/letsencrypt/live/node.example.org/privkey.pem"
 
 # Who reaches this node's own services over vØrk: your devices always; other
 # nodes only what's opened here (relaying for others is never affected).

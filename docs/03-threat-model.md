@@ -72,7 +72,7 @@ Any node may be hostile: neighbors, relays, the far end of a path that isn't the
 | Take a name (`cafa-cloud.vork`) by announcing it | names resolve only for the owner's devices | implemented |
 | Use someone's exit node | only the owner's devices (ADR-0026) | implemented |
 | An exit client reaches the exit's LAN | the exit forwards to any destination, the LAN included | **open**: allow the internet only, optionally |
-| Sniff the web dashboard's key on the LAN | plain HTTP, key in the link | **open**: listen on the vØrk interface (or localhost) only |
+| Sniff the web dashboard's key on the LAN | HTTPS: a certificate the node makes and keeps (trust on first use, its SHA-256 shown by `vork web-link` to compare), or one given (`web_cert`, `web_key`: Let's Encrypt's, say); plain HTTP is redirected | implemented (a reload when a given certificate is renewed is to come: restart the node meanwhile) |
 | Another user of a Windows PC changes the node | the control pipe lets interactive users in with full rights (a personal PC's trade-off) | accepted; an operator setting planned |
 | A compromised device | a full member until unlinked | open: short-lived delegations (ADR-0013) |
 | Tampered binaries | built and copied by hand | **open**: signed releases before strangers' nodes join |

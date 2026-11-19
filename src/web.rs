@@ -7,12 +7,17 @@
 //! at start, kept by the browser), so being on the same network isn't enough
 //! to change the node. The API is the control protocol: `GET /api/status`,
 //! and `POST /api/cmd` with one control request as JSON.
+//!
+//! **HTTPS** with a certificate the node makes once and keeps
+//! (`state/web.crt`, `state/web.key`): self-signed, so the browser asks once;
+//! `vork web-link` shows its SHA-256 fingerprint to compare. A plain `http://`
+//! visit is sent to `https://`.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
+use std::sync::Arc;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::control::Request;
@@ -42,21 +47,117 @@ pub fn token(dir: Option<&Path>) -> String {
     t
 }
 
-/// Serves the dashboard on `addr`; requests go to the node as control requests.
-pub async fn serve(addr: SocketAddr, token: String, to_node: mpsc::Sender<Request>) -> anyhow::Result<()> {
+/// The dashboard's certificate: made once (for these names and addresses)
+/// and kept. Returns the TLS setup and the certificate's SHA-256 fingerprint.
+pub fn certificate(dir: Option<&Path>, names: &[String], ips: &[IpAddr], given: Option<(&Path, &Path)>) -> anyhow::Result<(Arc<rustls::ServerConfig>, String)> {
+    use rustls::pki_types::pem::PemObject;
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+    // One the operator gives (Let's Encrypt's fullchain.pem and privkey.pem, say): used as it is.
+    if let Some((c, k)) = given {
+        let chain: Vec<CertificateDer<'static>> = CertificateDer::pem_file_iter(c)
+            .map_err(|e| anyhow::anyhow!("web_cert {}: {e}", c.display()))?
+            .collect::<Result<_, _>>()
+            .map_err(|e| anyhow::anyhow!("web_cert {}: {e}", c.display()))?;
+        let key = PrivateKeyDer::from_pem_file(k).map_err(|e| anyhow::anyhow!("web_key {}: {e}", k.display()))?;
+        let fp = chain.first().map(|c| fingerprint(c)).ok_or_else(|| anyhow::anyhow!("web_cert {}: no certificate in it", c.display()))?;
+        let config = rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+            .with_safe_default_protocol_versions()?
+            .with_no_client_auth()
+            .with_single_cert(chain, key)?;
+        return Ok((Arc::new(config), fp));
+    }
+    let files = dir.map(|d| (d.join("web.crt"), d.join("web.key")));
+    let kept = files.as_ref().and_then(|(c, k)| Some((CertificateDer::from_pem_file(c).ok()?, PrivateKeyDer::from_pem_file(k).ok()?)));
+    let (cert, key) = match kept {
+        Some(ck) => ck,
+        None => {
+            let mut params = rcgen::CertificateParams::default();
+            let mut dn = rcgen::DistinguishedName::new();
+            dn.push(rcgen::DnType::CommonName, names.first().cloned().unwrap_or_else(|| "vork".into()));
+            dn.push(rcgen::DnType::OrganizationName, "vØrk node");
+            params.distinguished_name = dn;
+            params.subject_alt_names = names
+                .iter()
+                .filter_map(|n| n.as_str().try_into().ok().map(rcgen::SanType::DnsName))
+                .chain(ips.iter().map(|ip| rcgen::SanType::IpAddress(*ip)))
+                .collect();
+            let year = 1970 + (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()) / 31_556_952) as i32;
+            params.not_before = rcgen::date_time_ymd(year - 1, 1, 1);
+            params.not_after = rcgen::date_time_ymd(year + 10, 1, 1);
+            let key_pair = rcgen::KeyPair::generate()?;
+            let cert = params.self_signed(&key_pair)?;
+            if let Some((c, k)) = &files {
+                std::fs::write(c, cert.pem())?;
+                std::fs::write(k, key_pair.serialize_pem())?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = std::fs::set_permissions(k, std::fs::Permissions::from_mode(0o600));
+                }
+            }
+            (cert.der().clone(), PrivateKeyDer::Pkcs8(key_pair.serialize_der().into()))
+        }
+    };
+    let fingerprint = fingerprint(&cert);
+    let config = rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+        .with_safe_default_protocol_versions()?
+        .with_no_client_auth()
+        .with_single_cert(vec![cert], key)?;
+    Ok((Arc::new(config), fingerprint))
+}
+
+/// SHA-256 of a certificate, as browsers show it (AB:CD:…).
+pub fn fingerprint(der: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(der).iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(":")
+}
+
+/// The kept certificate's fingerprint (for `vork web-link`).
+pub fn kept_fingerprint(dir: &Path) -> Option<String> {
+    use rustls::pki_types::pem::PemObject;
+    let c = rustls::pki_types::CertificateDer::from_pem_file(dir.join("web.crt")).ok()?;
+    Some(fingerprint(&c))
+}
+
+/// Serves the dashboard on `addr` over HTTPS; requests go to the node as control requests.
+pub async fn serve(addr: SocketAddr, token: String, tls: Arc<rustls::ServerConfig>, to_node: mpsc::Sender<Request>) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    let acceptor = tokio_rustls::TlsAcceptor::from(tls);
     tokio::spawn(async move {
         while let Ok((conn, _)) = listener.accept().await {
-            let (token, to_node) = (token.clone(), to_node.clone());
+            let (token, to_node, acceptor) = (token.clone(), to_node.clone(), acceptor.clone());
             tokio::spawn(async move {
-                let _ = handle(conn, &token, to_node).await;
+                // TLS begins with a handshake record (0x16); anything else is plain HTTP.
+                let mut first = [0u8; 1];
+                let tls = matches!(tokio::time::timeout(std::time::Duration::from_secs(10), conn.peek(&mut first)).await, Ok(Ok(1)) if first[0] == 0x16);
+                if tls {
+                    if let Ok(Ok(s)) = tokio::time::timeout(std::time::Duration::from_secs(10), acceptor.accept(conn)).await {
+                        let _ = handle(s, &token, to_node).await;
+                    }
+                } else {
+                    let _ = to_https(conn).await;
+                }
             });
         }
     });
     Ok(())
 }
 
-async fn handle(mut conn: TcpStream, token: &str, to_node: mpsc::Sender<Request>) -> anyhow::Result<()> {
+/// A plain-HTTP visit: sent to the same place over HTTPS.
+async fn to_https(mut conn: tokio::net::TcpStream) -> anyhow::Result<()> {
+    let mut buf = vec![0u8; 4096];
+    let n = tokio::time::timeout(std::time::Duration::from_secs(10), conn.read(&mut buf)).await??;
+    let head = String::from_utf8_lossy(&buf[..n]);
+    let host = head.lines().find_map(|l| l.strip_prefix("Host:").or_else(|| l.strip_prefix("host:")).map(str::trim)).unwrap_or_default();
+    let path = head.lines().next().and_then(|l| l.split_whitespace().nth(1)).filter(|p| p.starts_with('/')).unwrap_or("/");
+    // Only a plausible host goes into the header.
+    let host: String = host.chars().filter(|c| c.is_ascii_alphanumeric() || "-.:[]".contains(*c)).collect();
+    let r = format!("HTTP/1.1 301 Moved Permanently\r\nLocation: https://{host}{path}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    conn.write_all(r.as_bytes()).await?;
+    Ok(())
+}
+
+async fn handle<S: AsyncRead + AsyncWrite + Unpin>(mut conn: S, token: &str, to_node: mpsc::Sender<Request>) -> anyhow::Result<()> {
     // One request per connection (Connection: close), headers and a small body.
     let mut buf = Vec::with_capacity(4096);
     let mut chunk = [0u8; 4096];
@@ -116,7 +217,7 @@ async fn ask(to_node: &mpsc::Sender<Request>, line: String) -> String {
     rx.await.unwrap_or_else(|_| r#"{"error":"no answer"}"#.into())
 }
 
-async fn respond(conn: &mut TcpStream, code: u16, kind: &str, body: &[u8]) -> anyhow::Result<()> {
+async fn respond<S: AsyncWrite + Unpin>(conn: &mut S, code: u16, kind: &str, body: &[u8]) -> anyhow::Result<()> {
     let reason = match code {
         200 => "OK",
         400 => "Bad Request",
@@ -125,11 +226,13 @@ async fn respond(conn: &mut TcpStream, code: u16, kind: &str, body: &[u8]) -> an
         _ => "Error",
     };
     let head = format!(
-        "HTTP/1.1 {code} {reason}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {code} {reason}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer\r\nStrict-Transport-Security: max-age=31536000\r\nConnection: close\r\n\r\n",
         body.len()
     );
     conn.write_all(head.as_bytes()).await?;
     conn.write_all(body).await?;
+    conn.flush().await?;
+    let _ = conn.shutdown().await;
     Ok(())
 }
 
