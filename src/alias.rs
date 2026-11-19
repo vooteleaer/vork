@@ -213,6 +213,21 @@ pub fn to_v4(p: &[u8], src: Ipv4Addr, dst: Ipv4Addr) -> Option<(Vec<u8>, Flow)> 
     Some((out, flow))
 }
 
+/// The flow of an IPv6 packet a program here sends (as `to_v6` names a
+/// translated one's), so the same conversation begun over IPv6 isn't taken
+/// for an IPv4 one (Windows pings both with the same echo id).
+pub fn flow_v6_out(p: &[u8]) -> Option<Flow> {
+    if p.len() < 48 || p[0] >> 4 != 6 {
+        return None;
+    }
+    let b = &p[40..];
+    match p[6] {
+        6 | 17 => Some((p[6], port(b, 0), port(b, 2))),
+        58 if b[0] == 128 => Some((58, port(b, 4), 0)),
+        _ => None,
+    }
+}
+
 fn port(b: &[u8], at: usize) -> u16 {
     u16::from_be_bytes([b[at], b[at + 1]])
 }

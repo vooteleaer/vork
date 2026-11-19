@@ -2106,6 +2106,12 @@ impl Node {
             return;
         };
         let Some(sid) = self.ip_session(dest) else { return };
+        // Sent over IPv6 now: its answers come back as IPv6, whatever went before over IPv4.
+        if !self.v4_flows.is_empty() {
+            if let Some(flow) = crate::alias::flow_v6_out(p) {
+                self.v4_flows.remove(&(dest, flow));
+            }
+        }
         let mut body = Vec::with_capacity(p.len() + 1);
         body.push(APP_IP);
         body.extend_from_slice(p);
@@ -2221,8 +2227,9 @@ impl Node {
         if self.v4_flows.len() > 4096 {
             self.v4_flows.retain(|_, t| t.elapsed() < Duration::from_secs(600));
         }
-        self.v4_flows.insert((node, flow), Instant::now());
+        // Sent first, then marked: the IPv6 path forgets IPv4 flows it carries itself.
         self.on_tun_packet(&v6);
+        self.v4_flows.insert((node, flow), Instant::now());
     }
 
     fn on_app(&mut self, sid: u32, key: (u32, u64), body: &[u8]) {
