@@ -20,3 +20,6 @@ A phone on a doubtful network wants its internet traffic to come out somewhere t
 ## Consequences
 - The exit sees the device's traffic as a router would; only the owner's devices can use it.
 - Not yet: IPv6 through the exit, exit nodes on Windows.
+
+## Addendum (2026-11-19): the exit answers names itself
+A network may let only its own servers answer DNS (a router blocking outside DNS): there the public resolvers asked through the exit never answered, and every name waited 2 s for the device's own network. Now the exit takes its clients' UDP DNS (port 53, to any server) and asks its own resolvers (`nameserver` in /etc/resolv.conf), answering as from the server asked. Names work wherever the exit itself resolves them; the device's network still doesn't see them.

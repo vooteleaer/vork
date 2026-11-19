@@ -542,6 +542,8 @@ pub struct Node {
     link_sent: HashMap<String, Instant>,
     /// Sessions opened for links in which we identified.
     link_identified: HashSet<u32>,
+    /// Answers to names exit clients asked, from this exit's own resolver: (device, packet).
+    exit_answers: Option<tokio::sync::mpsc::UnboundedSender<(Hash, Vec<u8>)>>,
     /// The group sent to a device: when, and which revision (ADR-0030).
     group_sent: HashMap<String, (Instant, u64)>,
     /// The group a device took: when, and which revision.
@@ -782,6 +784,7 @@ impl Node {
             link_codes: Vec::new(),
             link_sent: HashMap::new(),
             link_identified: HashSet::new(),
+            exit_answers: None,
             group_sent: HashMap::new(),
             group_heard: HashMap::new(),
             dns_seen: HashMap::new(),
@@ -991,6 +994,8 @@ impl Node {
             }
         }
         let mut tun = self.tun.clone();
+        let (exit_answers, mut exit_answers_rx) = tokio::sync::mpsc::unbounded_channel::<(Hash, Vec<u8>)>();
+        self.exit_answers = Some(exit_answers);
         // The web dashboard: its requests are control requests from the owner.
         let (web_tx, mut web_rx) = tokio::sync::mpsc::channel::<crate::control::Request>(16);
         if let Some(addr) = self.cfg.web {
@@ -1099,6 +1104,13 @@ impl Node {
                             self.on_tun_packet(&p);
                         }
                         Err(e) => debug(format!("interface: {e}")),
+                    }
+                }
+                Some((device, p)) = exit_answers_rx.recv() => {
+                    if let Some(sid) = self.ip_session(device) {
+                        let mut body = vec![APP_EXIT];
+                        body.extend_from_slice(&p);
+                        self.send_app(sid, &body);
                     }
                 }
                 Some(t) = tun_rx.recv() => {
@@ -2741,8 +2753,24 @@ impl Node {
             if !self.is_device(&who) {
                 return debug(format!("exit traffic from {}, not one of the owner's devices: dropped", short(&who)));
             }
-            // The internet only, unless this node lets its own networks be reached too.
             let dst = std::net::Ipv4Addr::new(p[16], p[17], p[18], p[19]);
+            // Names: asked of this machine's own resolver, which works where it is
+            // (a network may let only its own servers answer, as a router that
+            // blocks outside DNS does), and answered as from the server asked.
+            if let Some((sport, 53, msg)) = crate::exit::udp4_parts(p) {
+                let resolvers = crate::exit::system_resolvers();
+                if let (false, Some(back)) = (resolvers.is_empty(), self.exit_answers.clone()) {
+                    let client = std::net::Ipv4Addr::new(p[12], p[13], p[14], p[15]);
+                    let msg = msg.to_vec();
+                    tokio::spawn(async move {
+                        if let Some(m) = crate::dns::forward(resolvers, msg).await {
+                            let _ = back.send((who, crate::exit::udp4(dst, 53, client, sport, &m)));
+                        }
+                    });
+                    return;
+                }
+            }
+            // The internet only, unless this node lets its own networks be reached too.
             if !self.cfg.exit_lan && !crate::exit::internet(dst) {
                 return debug(format!("exit traffic to {dst} from {}: not the internet (exit_lan is off)", short(&who)));
             }

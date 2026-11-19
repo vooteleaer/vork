@@ -64,6 +64,21 @@ pub fn internet(a: Ipv4Addr) -> bool {
 /// servers may be private addresses the exit can't reach).
 pub const DNS: [Ipv4Addr; 2] = [Ipv4Addr::new(9, 9, 9, 9), Ipv4Addr::new(1, 1, 1, 1)];
 
+/// The resolvers this machine uses (`nameserver` in /etc/resolv.conf): an
+/// exit asks them its clients' names (ADR-0026).
+pub fn system_resolvers() -> Vec<std::net::SocketAddr> {
+    resolvers_in(&std::fs::read_to_string("/etc/resolv.conf").unwrap_or_default())
+}
+
+fn resolvers_in(text: &str) -> Vec<std::net::SocketAddr> {
+    text.lines()
+        .filter_map(|l| l.trim().strip_prefix("nameserver"))
+        .filter_map(|a| a.trim().parse::<std::net::IpAddr>().ok())
+        .map(|ip| std::net::SocketAddr::new(ip, 53))
+        .take(3)
+        .collect()
+}
+
 /// A UDP packet over IPv4, checksums made.
 pub fn udp4(src: Ipv4Addr, sport: u16, dst: Ipv4Addr, dport: u16, payload: &[u8]) -> Vec<u8> {
     let len = 8 + payload.len();
@@ -216,6 +231,12 @@ pub fn setup(_interface: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolvers_from_resolv_conf() {
+        let r = resolvers_in("# comment\nnameserver 100.100.100.100\nnameserver fd7a:115c:a1e0::53\nnameserver fe80::1%eth0\nsearch example.org\n");
+        assert_eq!(r, vec!["100.100.100.100:53".parse().unwrap(), "[fd7a:115c:a1e0::53]:53".parse().unwrap()]);
+    }
 
     #[test]
     fn udp_built_and_read() {
