@@ -1,10 +1,9 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
-    alias(libs.plugins.kotlin.compose)
 }
 
-// The version (vork docs/storage/versioning.md): the workspace's, a release's when
+// The version (ADR-0029): the node crate's (vork), a release's when
 // this commit is tagged with it, else a build towards it; the commit count is
 // the versionCode, so each build installs over the one before.
 // clients/android/ in the vork repository.
@@ -14,7 +13,7 @@ fun git(vararg args: String): String = try {
 } catch (e: Exception) {
     ""
 }
-val workspaceVersion = File(repo, "Cargo.toml").readLines().first { it.startsWith("version = ") }.substringAfter('"').substringBefore('"')
+val workspaceVersion = File(repo, "Cargo.toml").readLines().dropWhile { it.trim() != "[package]" }.first { it.startsWith("version = ") }.substringAfter('"').substringBefore('"')
 val commits = git("rev-list", "--count", "HEAD").toIntOrNull() ?: 1
 val released = git("describe", "--exact-match", "--tags", "HEAD") == "v$workspaceVersion"
 
@@ -32,14 +31,16 @@ android {
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
 
-    buildFeatures { compose = true }
+    // The window is the node's web dashboard (src/web/index.html), the same
+    // page the desktop app and a server's browser show.
+    sourceSets["main"].assets.srcDir(File(repo, "src/web"))
 
     buildTypes {
         // Signed with the debug key for now: for testers, not a store.
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName("debug")
         }
     }
@@ -58,11 +59,7 @@ android {
 
 dependencies {
     implementation(libs.androidx.core.ktx)
-    implementation(libs.androidx.activity.compose)
-    implementation(platform(libs.androidx.compose.bom))
-    implementation(libs.androidx.compose.ui)
-    implementation(libs.androidx.compose.material3)
-    implementation(libs.androidx.compose.material.icons)
+    implementation(libs.androidx.activity.ktx)
     // Scanning another device's pairing code inside the app: ZXing (open source,
     // Apache-2.0, decodes on the phone; no Play services, nothing leaves it).
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")

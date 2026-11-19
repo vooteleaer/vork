@@ -1,7 +1,9 @@
 //! The node's web dashboard, for a machine without a screen of its own (a
-//! server): the same as the Android network app (Overview, My devices with
-//! pairing codes, Settings), in a browser. `web = "0.0.0.0:8742"` in
-//! vork.toml turns it on.
+//! server), in a browser. `web = "0.0.0.0:8742"` in vork.toml turns it on.
+//! The same page (`web/index.html`) is the window of vork-net on the desktop
+//! (clients/net-desktop) and of the Android app, which carry its requests to
+//! their node over the control socket; on a narrow screen its pages are in a
+//! menu instead of the side.
 //!
 //! Every request carries the dashboard's token (from the link the node prints
 //! at start, kept by the browser), so being on the same network isn't enough

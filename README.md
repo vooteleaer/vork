@@ -66,7 +66,7 @@ vork status
 3. In that file, set `tun = "vork"`.
 4. Run `vork service install`. vØrk now starts with Windows.
 
-**Android:** the app in [`clients/android`](clients/android) runs vØrk as a VPN. It's built with `clients\android\build-apk.ps1` (needs the Android SDK and NDK). It can scan pairing codes and use an exit node.
+**Android:** the app in [`clients/android`](clients/android) runs vØrk as a VPN. It's built with `clients\android\build-apk.ps1` (needs the Android SDK and NDK). It shows the same dashboard as the desktop app (its pages in a menu at the top), can scan pairing codes and use an exit node.
 
 ### 2. Link your devices
 

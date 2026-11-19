@@ -22,17 +22,20 @@ class Node(context: Context) {
     val log = File(dir, "node.log")
 
     /** One request; the node's answer, or {"error": …} if it doesn't answer. */
-    fun ask(request: JSONObject): JSONObject = try {
+    fun ask(request: JSONObject): JSONObject =
+        askLine(request.toString())?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject().put("error", "the vØrk node isn't running")
+
+    /** One request line as it is (the dashboard's); the answer line, or null if the node doesn't answer. */
+    fun askLine(request: String): String? = try {
         LocalSocket().use { s ->
             s.connect(LocalSocketAddress(control.absolutePath, LocalSocketAddress.Namespace.FILESYSTEM))
             s.soTimeout = 5_000
-            s.outputStream.write((request.toString() + "\n").toByteArray())
+            s.outputStream.write((request.replace("\n", " ") + "\n").toByteArray())
             s.outputStream.flush()
-            val line = s.inputStream.bufferedReader().readLine() ?: return JSONObject().put("error", "no answer")
-            JSONObject(line)
+            s.inputStream.bufferedReader().readLine()
         }
     } catch (e: Exception) {
-        JSONObject().put("error", "the vØrk node isn't running")
+        null
     }
 
     fun status(): JSONObject = ask(JSONObject().put("cmd", "status"))
