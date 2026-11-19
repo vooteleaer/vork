@@ -43,6 +43,22 @@ impl Clients {
     }
 }
 
+/// Whether an exit forwards to `a` without `exit_lan`: the internet only, not
+/// the exit's own networks (private, shared, link-local, loopback, multicast,
+/// and the vØrk ranges themselves).
+pub fn internet(a: Ipv4Addr) -> bool {
+    let o = a.octets();
+    !(a.is_private()
+        || a.is_loopback()
+        || a.is_link_local()
+        || a.is_multicast()
+        || a.is_broadcast()
+        || a.is_unspecified()
+        || (o[0] == 100 && (o[1] & 0xc0) == 64) // 100.64.0.0/10 (carrier NAT, Tailscale)
+        || (o[0] == 198 && (o[1] & 0xfe) == 18) // 198.18.0.0/15 (vØrk's own)
+        || o[0] >= 240)
+}
+
 /// Public resolvers asked through the exit (Quad9, Cloudflare): the network
 /// the device is on doesn't see its names (the device's own network's
 /// servers may be private addresses the exit can't reach).
@@ -229,6 +245,16 @@ mod tests {
         assert!(udp_ok(&out), "UDP checksum");
         let back = readdress(&out, None, Some(Ipv4Addr::new(9, 9, 9, 9))).unwrap();
         assert!(udp_ok(&back));
+    }
+
+    #[test]
+    fn internet_only() {
+        for a in ["1.1.1.1", "203.0.113.7", "9.9.9.9"] {
+            assert!(internet(a.parse().unwrap()), "{a}");
+        }
+        for a in ["10.10.30.2", "192.168.1.1", "172.20.0.1", "100.100.100.100", "127.0.0.1", "169.254.1.1", "224.0.0.1", "198.18.95.122", "255.255.255.255"] {
+            assert!(!internet(a.parse().unwrap()), "{a}");
+        }
     }
 
     #[test]

@@ -40,6 +40,8 @@ pub struct FileConfig {
     pub allow: Option<Vec<String>>,
     /// Offer this node as an exit node to the owner's devices.
     pub exit: Option<bool>,
+    /// Let exit clients reach this machine's networks too (else the internet only).
+    pub exit_lan: Option<bool>,
     /// Send this device's internet traffic out through that node (its address).
     pub exit_via: Option<String>,
     pub gateway: Option<std::net::Ipv4Addr>,
@@ -189,6 +191,9 @@ allow = []
 # Offer this node as an exit node: the owner's devices may send their internet
 # traffic (IPv4) out through it (Linux, with the interface on).
 # exit = true
+# Exit clients reach the internet only; this lets them into this machine's
+# networks (its LAN, private ranges) too.
+# exit_lan = true
 # Send this node's internet traffic out through one of the owner's devices
 # (its address), or "auto": the fastest of them that offers itself.
 # exit_via = "auto"

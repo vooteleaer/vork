@@ -361,6 +361,8 @@ pub struct Config {
     pub dns_upstream: Vec<SocketAddr>,
     /// Offers itself as an exit node to the owner's devices (ADR-0026).
     pub exit: bool,
+    /// Exit clients may reach this machine's networks too (else the internet only).
+    pub exit_lan: bool,
     /// Openings in the walled garden for other nodes (ADR-0027).
     pub allow: Vec<String>,
     /// Its internet traffic goes out through this node.
@@ -2380,6 +2382,11 @@ impl Node {
             if !self.is_device(&who) {
                 return debug(format!("exit traffic from {}, not one of the owner's devices: dropped", short(&who)));
             }
+            // The internet only, unless this node lets its own networks be reached too.
+            let dst = std::net::Ipv4Addr::new(p[16], p[17], p[18], p[19]);
+            if !self.cfg.exit_lan && !crate::exit::internet(dst) {
+                return debug(format!("exit traffic to {dst} from {}: not the internet (exit_lan is off)", short(&who)));
+            }
             let Some(addr) = self.exit_clients.of(&who) else { return };
             if let Some(out) = crate::exit::readdress(p, Some(addr), None) {
                 tun.send(&out);
@@ -3504,6 +3511,7 @@ impl Node {
             "announce": self.cfg.announce,
             "port": self.cfg.listen.port(),
             "exit": self.cfg.exit,
+            "exit_lan": self.cfg.exit_lan,
             "exit_via": self.cfg.exit_via.map(hex::encode),
             "allow": self.firewall.rules_text(),
             "exit_auto": self.cfg.exit_auto,
@@ -3538,6 +3546,12 @@ impl Node {
                         let on = value.as_bool().ok_or("exit is true or false")?;
                         restart = on != self.cfg.exit; // the system's forwarding is set up at start
                         crate::settings::set_value(&text, "exit", &on.to_string())
+                    }
+                    "exit_lan" => {
+                        let on = value.as_bool().ok_or("exit_lan is true or false")?;
+                        self.cfg.exit_lan = on;
+                        log(if on { "exit clients may reach this machine's networks too" } else { "exit clients reach the internet only" });
+                        crate::settings::set_value(&text, "exit_lan", &on.to_string())
                     }
                     "exit_via" => {
                         let via = value.as_str().map(str::trim).unwrap_or_default();

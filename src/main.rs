@@ -303,6 +303,7 @@ pub fn settings(a: RunArgs) -> Result<Settings> {
             _ => anyhow::bail!("web_cert and web_key go together"),
         },
         exit: file.exit == Some(true),
+        exit_lan: file.exit_lan == Some(true),
         allow: {
             let a = file.allow.clone().unwrap_or_default();
             crate::firewall::Firewall::new(&a).map_err(|e| anyhow::anyhow!("allow: {e}"))?;

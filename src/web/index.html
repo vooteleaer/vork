@@ -148,6 +148,7 @@ function settings() {
     ${tog("direct", "Direct links with any node (shows them this node's address)", s.direct)}
     ${tog("announce", "Announce this node", s.announce)}
     ${tog("exit", "Offer as an exit node (your devices' internet traffic may go out through here)", s.exit)}
+    ${s.exit ? tog("exit_lan", "Exit clients may reach this machine's networks too (else the internet only)", s.exit_lan) : ""}
     <div class="dim">UDP port ${s.port} · settings in ${esc(s.file || "(no file)")}</div></div>`;
 }
 
