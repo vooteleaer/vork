@@ -40,7 +40,7 @@ Prns 0.3.8 passes app_data with each heard announce (`Diagnostic::AnnounceHeard`
 ## Implementation status (2026-10-23)
 - **Members' nodes:** done, as the operation `[node, bin 16]` (ADR-0017). Each sync round, a node whose library doesn't name its own node (and that may write) writes it, so libraries made before this get it too; every member's node is then a peer of the library, so each member syncs with all of them.
   - Live (three nodes on one machine, 5 checks): two members that joined through the creator learned each other's nodes; with the creator stopped, one's write reached the other directly, and the creator caught up when it was back.
-  - The four-node soak of 2026-10-22 had shown why: 49 of 84 rounds behind, almost all of it rtr-4's writes reaching the others late over its one path to cafa-cloud (368 link timeouts from cafa-cloud to rtr-4), although RTR-2 has a link of its own to rtr-4.
+  - The four-node soak of 2026-10-22 had shown why: 49 of 84 rounds behind, almost all of it rtr-4's writes reaching the others late over its one path to the server (368 link timeouts from the server to rtr-4), although RTR-2 has a link of its own to rtr-4.
 - **Public libraries (`retifs.public` announces):** not yet.
 
 ## Impact on the threat model

@@ -1165,13 +1165,13 @@ log = \"info\"
 
     #[test]
     fn node_status_json() {
-        let r = parse_status(r#"{"address":"5f7a9ac63dc07c1176bff951d6a2641d","uptime_s":42,"destinations":7,"relay":{"paths":0,"packets":12},"outside":["1.2.3.4:51820"],"neighbors":[{"address":"aa","endpoint":"10.10.30.2:51820","up":true,"lite":false},{"address":null,"endpoint":"10.0.0.9:51820","up":false,"lite":null}]}"#).unwrap();
+        let r = parse_status(r#"{"address":"0123456789abcdef0123456789abcdef","uptime_s":42,"destinations":7,"relay":{"paths":0,"packets":12},"outside":["1.2.3.4:51820"],"neighbors":[{"address":"aa","endpoint":"10.1.2.3:51820","up":true,"lite":false},{"address":null,"endpoint":"10.0.0.9:51820","up":false,"lite":null}]}"#).unwrap();
         assert!(r.running);
-        assert_eq!(r.address.as_deref(), Some("5f7a9ac63dc07c1176bff951d6a2641d"));
+        assert_eq!(r.address.as_deref(), Some("0123456789abcdef0123456789abcdef"));
         assert_eq!((r.destinations, r.relayed), (7, 12));
         assert_eq!(r.interfaces.len(), 2);
         assert!(r.interfaces[0].up && !r.interfaces[1].up);
-        assert_eq!(r.interfaces[0].name, "10.10.30.2:51820");
+        assert_eq!(r.interfaces[0].name, "10.1.2.3:51820");
         assert!(parse_status(r#"{"error":"unknown command"}"#).is_err());
     }
 }

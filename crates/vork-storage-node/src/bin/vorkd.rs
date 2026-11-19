@@ -6654,7 +6654,7 @@ async fn share_keeper(d: Arc<Daemon>) {
 /// Content kept here for a library is served to its members, like the
 /// library's commits and operations: a member whose only peer is another
 /// member gets content a third member wrote through it (the four-node soak:
-/// reads of RTR-2's files failed on rtr-4, whose only peer was cafa-cloud,
+/// reads of RTR-2's files failed on rtr-4, whose only peer was the server,
 /// which held them but wouldn't serve them). Requests still prove the
 /// content's seed, which only members have; the cache tier (reading
 /// history) stays unserved.

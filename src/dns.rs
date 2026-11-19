@@ -234,7 +234,7 @@ mod tests {
 
     #[test]
     fn labels_match_the_apps() {
-        assert_eq!(label("cafa-cloud"), "cafa-cloud");
+        assert_eq!(label("home-server"), "home-server");
         assert_eq!(label("Vootele's Pixel 8"), "vootele-s-pixel-8");
         assert_eq!(label("  M2101K6G "), "m2101k6g");
         assert_eq!(label("ÄÖ"), "");
@@ -242,11 +242,11 @@ mod tests {
 
     #[test]
     fn answers_aaaa() {
-        let p = query_packet("cafa-cloud.vork", AAAA);
+        let p = query_packet("home-server.vork", AAAA);
         let q = query_in(&p).unwrap();
         assert_eq!(q.port, 40000);
         let (name, qtype, end) = question(&q.msg).unwrap();
-        assert_eq!((name.as_str(), qtype), ("cafa-cloud.vork", AAAA));
+        assert_eq!((name.as_str(), qtype), ("home-server.vork", AAAA));
         let a: Ipv6Addr = "fd5f::1".parse().unwrap();
         let r = answer(&q.msg, end, qtype, NOERROR, Some(a.into()));
         assert_eq!(&r[..2], &[0xab, 0xcd]);

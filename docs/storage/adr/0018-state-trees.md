@@ -147,6 +147,6 @@ See the [threat model](../04-threat-model.md).
   - **Without one** (it joined before any was named, so its state was built from every commit and is whole): it makes its own first checkpoint at once. It doesn't name it in its chain, since a lazy member holds no grant.
   - **Why:** before this, every commit since joining stayed in memory and was replayed on each resume. The phone's `eesti-kohad` was 560 commits and 1.6 million operations, which was the bulk of a vorkd at 1.5 GB. With its own checkpoint (116,467 tombstones pruned on the way), it resumed in 2.6 s with its view kept, and the daemon started at about 700 MB.
 - **Checkpoints by operations too (2026-11-05):** a checkpoint is due after 64 commits or after 10,000 operations, whichever comes first.
-  - Before this, an import of thousands of records in a few commits never reached the commit count. cafa-cloud's `eesti-kohad` had 24,002 of its 38,824 records in its checkpoint and named no newer one, so every member replayed the rest on each start.
+  - Before this, an import of thousands of records in a few commits never reached the commit count. The server's `eesti-kohad` had 24,002 of its 38,824 records in its checkpoint and named no newer one, so every member replayed the rest on each start.
   - With the operation count, it checkpointed and named the new one within a minute of starting.
 - **Not yet:** verifying in the background when links are good.

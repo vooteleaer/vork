@@ -18,21 +18,21 @@ Milestone numbers are names, not order: M9 comes right after M1, because storage
 
 ## M0 Prototype — done
 
-Links with fresh-handshake liveness, signed announces, path labels swapped per hop, several paths per session with probing and failover, Lite profile, path requests, observed addresses, direct links, router port mapping, ping and bench. Tested on localhost and between a PC and cafa-cloud across a router (~450–500 Mbit/s, CPU-bound on the server).
+Links with fresh-handshake liveness, signed announces, path labels swapped per hop, several paths per session with probing and failover, Lite profile, path requests, observed addresses, direct links, router port mapping, ping and bench. Tested on localhost and between a PC and the server across a router (~450–500 Mbit/s, CPU-bound on the server).
 
 ## M1 Config, service, persistence — in progress
 
-- **Goal:** a node that runs 24/7 (cafa-cloud as a public backbone) and survives restarts.
+- **Goal:** a node that runs 24/7 (a home server as a public backbone) and survives restarts.
 - **Scope:** a config file (TOML: key path, listen address, bootstrap peers, flags); the announce sequence number as a stored counter instead of the clock (open question 3); remembered neighbors (reconnect after restart without bootstrap); a state directory for what the node chooses once and keeps (sequence counter, neighbors, later the IPv4 alias range and aliases); a systemd unit and a Windows service; log levels; `vork status` over a local control socket.
-- **Done when:** cafa-cloud runs vØrk as a service through a restart and a reboot; a PC reconnects without `--peer` after its first contact.
-- **Status:** implemented and tested locally: `vork init`, `vork.toml`, the state directory (key created on first run, sequence counter, remembered neighbors), reconnecting without bootstrap peers, `vork status` over a Unix socket / named pipe, log levels and a log file, `packaging/vork.service`, `vork service install|uninstall` on Windows. cafa-cloud runs it as a service since 2026-11-18 (`5f7a9ac6…`, UDP 51820): it reconnects to remembered neighbors after `systemctl restart`, and a PC reconnects to it without `--peer`. Left: a reboot of cafa-cloud, and a port forward of UDP 51820 to it so nodes outside the LAN reach it.
+- **Done when:** a server runs vØrk as a service through a restart and a reboot; a PC reconnects without `--peer` after its first contact.
+- **Status:** implemented and tested locally: `vork init`, `vork.toml`, the state directory (key created on first run, sequence counter, remembered neighbors), reconnecting without bootstrap peers, `vork status` over a Unix socket / named pipe, log levels and a log file, `packaging/vork.service`, `vork service install|uninstall` on Windows. The server runs it as a service since 2026-11-18 (UDP 51820): it reconnects to remembered neighbors after `systemctl restart`, and a PC reconnects to it without `--peer`. Left: a reboot of the server, and a port forward of UDP 51820 to it so nodes outside the LAN reach it.
 - **Depends on:** nothing.
 
 ## S1 ESP32 spike (parallel, early)
 
 - **Goal:** find out whether an ESP32 can be a Lite node with the end-to-end layer, before the wire format freezes.
 - **How:** ESP-IDF on an ESP32-S3. Outer layer: the stock ESPHome/esp_wireguard tunnel to a full node. Layer messages: a UDP socket on port 4799 in the tunnel. Inner layer: try (a) the WireGuard core of wireguard-lwip without its netif, sending its messages in `DATA`; (b) the fugo101/wireguard_lwip fork (16 peers, custom output). Ed25519 from libsodium.
-- **Done when:** a PC pings the ESP32 by its address through cafa-cloud, end to end encrypted; flash and RAM use measured.
+- **Done when:** a PC pings the ESP32 by its address through the server, end to end encrypted; flash and RAM use measured.
 - **Risks:** the inner layer may not fit the stock libraries; then the outcome is a change to the wire format (for example, a lighter inner layer for Lite nodes) decided before M12.
 
 ## M2 IPv6 sessions and TUN
@@ -70,8 +70,8 @@ Links with fresh-handshake liveness, signed announces, path labels swapped per h
 
 - **Goal:** the CPU stops being the limit on ordinary hardware.
 - **Scope:** batched socket calls (`sendmmsg`/`recvmmsg`, UDP GSO/GRO on Linux), buffer reuse without per-packet allocation, several threads (sharded by neighbor); the bench as a regression test.
-- **Done when:** at least 2× the M0 numbers on cafa-cloud and on the 2-core VM, measured with `scripts/bench-local.sh` and between machines.
-- **Storage (measured 2026-11-18, README):** 200 MiB PC ← cafa-cloud took 45 s over vØrk (4 links) against 55 s over Reticulum; 16 links halve it; the stream alone does ~200 Mbit/s. Next: more requests in flight by default, fewer copies between storage and the node (the local API carries every byte twice), and why cafa-cloud's node uses 1.4 cores at 75 Mbit/s.
+- **Done when:** at least 2× the M0 numbers on the server and on the 2-core VM, measured with `scripts/bench-local.sh` and between machines.
+- **Storage (measured 2026-11-18, README):** 200 MiB PC ← server took 45 s over vØrk (4 links) against 55 s over Reticulum; 16 links halve it; the stream alone does ~200 Mbit/s. Next: more requests in flight by default, fewer copies between storage and the node (the local API carries every byte twice), and why the server's node uses 1.4 cores at 75 Mbit/s.
 - **Depends on:** nothing (can run alongside).
 
 ## M7 Identities

@@ -8,7 +8,7 @@
 The user asked (2026-11-09): what happens when one of my devices is destroyed, and how do I get my data back?
 
 - **One device lost:** the others still hold every library's address and their own writer keys, and the content is kept by them and by holders (ADR-0011, ADR-0014). The lost device is revoked on another (`ns revoke`, which rotates the read key, ADR-0017), and a new one joins by invitation (ADR-0020). This works today.
-- **The only device holding `grant` lost:** nobody can admit or revoke anyone in that library again. Its other members still read and write. On 2026-11-09 most of the user's libraries had exactly one grant holder (`photos`: the Windows node only; `pere üritused`, `eesti-*`, `cafa-tech`, `testing-stuff`: one node each); only `vork-installers` had three.
+- **The only device holding `grant` lost:** nobody can admit or revoke anyone in that library again. Its other members still read and write. On 2026-11-09 most of the user's libraries had exactly one grant holder (`photos`: the Windows node only; `pere üritused`, `eesti-*`, `work-tech`, `testing-stuff`: one node each); only `vork-installers` had three.
 - **Every device holding the keys lost** (a fire, a theft of everything at home): holders keep only ciphertext and no keys, by design (ADR-0001). The data is gone.
 
 The [threat model](../04-threat-model.md) already speaks of a device key "revoked by the root", but there is no root and no recovery. This ADR proposes one.

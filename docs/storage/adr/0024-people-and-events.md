@@ -70,7 +70,7 @@ The library is the boundary of who sees what, so a calendar or an address book i
 
 | What | How | They get |
 |---|---|---|
-| a calendar, to work in it (a colleague joining the CAFA calendar) | an invitation | membership: read and write, until the grant is revoked |
+| a calendar, to work in it (a colleague joining a team calendar) | an invitation | membership: read and write, until the grant is revoked |
 | a calendar, to read | its link | all of it |
 | a calendar's free/busy | a share of its events without `title`, `note`, `location`, `attendee:*`, `uid` | when it's busy, nothing else |
 | one event (a client meeting) | a share of that record | it, kept up to date: they see it move |

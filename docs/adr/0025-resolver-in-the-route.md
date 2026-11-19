@@ -14,7 +14,7 @@ ADR-0018 gave the `.vork` domain. Two things were left: where the resolver liste
 - **Android:** the VPN makes `fd00::53` the phone's DNS server and the node **forwards everything else** to the network's own servers, which the app tells it (`dns_upstream`, again on every change of network; public resolvers only when the network names none). The app is excluded from its own VPN, so the node's traffic, these questions included, never loops back into it.
 
 ## Consequences
-- `ssh cafa-cloud.vork` works from the owner's own devices; a stranger announcing the same name gets nothing.
+- `ssh home-server.vork` works from the owner's own devices; a stranger announcing the same name gets nothing.
 - On Android, DNS for the whole phone goes through the node while the VPN is on: a node that stops answers nothing, so the VPN must come down with it. Large answers that need TCP aren't forwarded yet (clients use EDNS over UDP).
 - Petnames from a file, PTR, and IPv4 aliases (ADR-0021) are still to come.
 
