@@ -17,6 +17,7 @@ mod dns;
 mod alias;
 mod exit;
 mod firewall;
+mod update;
 mod web;
 mod wire;
 
@@ -94,6 +95,24 @@ enum Cmd {
         #[arg(long)]
         config: Option<PathBuf>,
     },
+    /// This binary's build number and target.
+    Version,
+    /// Look for a newer release now (the running node asks its release node).
+    Update {
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
+    /// Put a downloaded, checked update in place of this binary (the service's
+    /// start step on Linux, with the rights to replace it).
+    UpdateInstall {
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
+    /// Make release keys and signed releases (on the machine holding the key).
+    Release {
+        #[command(subcommand)]
+        action: ReleaseAction,
+    },
     /// The web dashboard's link (with its token): open it in a browser.
     WebLink {
         #[arg(long)]
@@ -134,6 +153,22 @@ enum Cmd {
     ServiceRun {
         #[arg(long)]
         config: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum ReleaseAction {
+    /// A new release key: its public half goes into nodes' `update_keys`.
+    Keygen { path: PathBuf },
+    /// A signed release in DIR from built binaries (TARGET=PATH, e.g. linux-x86_64=target/…/vork).
+    Make {
+        #[arg(long)]
+        key: PathBuf,
+        #[arg(long)]
+        dir: PathBuf,
+        #[arg(long, default_value = "")]
+        version: String,
+        files: Vec<String>,
     },
 }
 
@@ -302,6 +337,9 @@ pub fn settings(a: RunArgs) -> Result<Settings> {
             (None, None) => None,
             _ => anyhow::bail!("web_cert and web_key go together"),
         },
+        update_keys: file.update_keys.clone().unwrap_or_default().iter().map(|k| update::parse_key(k)).collect::<Result<_>>().context("update_keys")?,
+        update_from: file.update_from.as_deref().filter(|s| !s.is_empty()).map(|s| crate::links::parse(s).with_context(|| format!("update_from: {s} isn't an address"))).transpose()?,
+        update_dir: file.update_dir.clone(),
         exit: file.exit == Some(true),
         exit_lan: file.exit_lan == Some(true),
         allow: {
@@ -448,7 +486,7 @@ fn print_status(v: &serde_json::Value) {
 /// The network's own commands; everything else belongs to storage.
 const NETWORK_COMMANDS: &[&str] = &[
     "init", "keygen", "show", "run", "status", "service", "service-run", "help", "-h", "--help", "-V", "--version",
-    "link", "link-code", "requests", "allow", "dismiss", "unlink", "web-link",
+    "link", "link-code", "requests", "allow", "dismiss", "unlink", "web-link", "version", "update", "update-install", "release",
 ];
 
 /// Whether `vork ARGS` is a storage command. `status` is both: on its own
@@ -590,6 +628,35 @@ async fn network_main() -> Result<()> {
             };
             println!("Good for {mins} minutes, for {times}{}.", if approve { ", each one allowed by you (vork requests)" } else { "" });
         }
+        Cmd::Version => println!("vork build {} ({})", update::build(), update::target()),
+        Cmd::Update { config } => {
+            let r = ask_node(config, serde_json::json!({ "cmd": "update_check" })).await?;
+            println!("looking for a newer release than build {} (vork status shows what came of it)", r["build"]);
+        }
+        Cmd::UpdateInstall { config } => {
+            let s = settings(RunArgs { config, ..Default::default() })?;
+            let state = s.state.context("no state directory")?;
+            let exe = std::env::current_exe()?;
+            match update::install(&state, &s.cfg.update_keys, &exe)? {
+                Some(b) => println!("build {b} put in place of {} (the old one kept as .previous)", exe.display()),
+                None => println!("no update waiting"),
+            }
+        }
+        Cmd::Release { action } => match action {
+            ReleaseAction::Keygen { path } => {
+                let public = update::keygen(&path)?;
+                println!("release key written to {} (keep it safe; it signs what your nodes install)", path.display());
+                println!("its public half, for update_keys:\n{public}");
+            }
+            ReleaseAction::Make { key, dir, version, files } => {
+                let files: Vec<(String, PathBuf)> = files
+                    .iter()
+                    .map(|f| f.split_once('=').map(|(t, p)| (t.to_string(), PathBuf::from(p))).with_context(|| format!("{f}: TARGET=PATH")))
+                    .collect::<Result<_>>()?;
+                let m = update::make(&key, &dir, None, &version, &files)?;
+                println!("release build {} in {}: {}", m.build, dir.display(), m.files.keys().cloned().collect::<Vec<_>>().join(", "));
+            }
+        },
         Cmd::WebLink { config } => {
             let s = settings(RunArgs { config, ..Default::default() })?;
             let web = s.cfg.web.context("the dashboard is off: set web = \"0.0.0.0:8742\" in vork.toml and restart the node")?;

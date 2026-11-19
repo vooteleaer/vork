@@ -86,6 +86,15 @@ fn service_main(_args: Vec<OsString>) {
         _ => ServiceControlHandlerResult::NotImplemented,
     };
     let Ok(handle) = service_control_handler::register(NAME, handler) else { return };
+    // Started again when its process ends unexpectedly: a self-update ends it so
+    // (ADR-0028). Set here, as the service has the rights to.
+    {
+        use std::os::windows::process::CommandExt;
+        let _ = std::process::Command::new("sc.exe")
+            .args(["failure", NAME, "reset=", "86400", "actions=", "restart/5000/restart/10000/restart/60000"])
+            .creation_flags(0x0800_0000)
+            .output();
+    }
     let _ = handle.set_service_status(status(ServiceState::Running, ServiceControlAccept::STOP | ServiceControlAccept::SHUTDOWN));
     let result = (|| -> Result<()> {
         let mut s = crate::settings(crate::RunArgs { config: CONFIG.get().cloned(), ..Default::default() })?;

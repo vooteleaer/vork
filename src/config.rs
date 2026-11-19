@@ -38,6 +38,11 @@ pub struct FileConfig {
     pub web_key: Option<std::path::PathBuf>,
     /// Openings in the walled garden for nodes that aren't the owner's devices (ADR-0027).
     pub allow: Option<Vec<String>>,
+    /// Self-updating (ADR-0028): trusted release keys, where this node takes
+    /// releases from (a node's address), and the release it serves, if any.
+    pub update_keys: Option<Vec<String>>,
+    pub update_from: Option<String>,
+    pub update_dir: Option<std::path::PathBuf>,
     /// Offer this node as an exit node to the owner's devices.
     pub exit: Option<bool>,
     /// Let exit clients reach this machine's networks too (else the internet only).
@@ -187,6 +192,13 @@ map_port = true
 #   "any from <address>"     everything, for one node
 #   "icmp"                   ping
 allow = []
+
+# Self-updating: a newer build signed with one of these release keys is taken
+# from update_from (one of your nodes), checked, and put in place. A node with
+# update_dir serves the release in it to your devices (and takes it itself).
+# update_keys = ["<release key, 64 hex digits>"]
+# update_from = "<address of the node with the releases>"
+# update_dir = "/var/lib/vork/releases"
 
 # Offer this node as an exit node: the owner's devices may send their internet
 # traffic (IPv4) out through it (Linux, with the interface on).

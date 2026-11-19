@@ -70,6 +70,17 @@ const LINK_AGAIN: Duration = Duration::from_secs(20);
 /// A link code is good this long unless given otherwise.
 const LINK_CODE_TTL: Duration = Duration::from_secs(600);
 
+/// A self-update under way (ADR-0028).
+enum UpdateStep {
+    /// The manifest asked of `update_from`, in this session.
+    Asked(u32),
+    /// Downloading, in this session.
+    Getting(u32, crate::update::Download),
+}
+
+/// How often releases are looked for.
+const UPDATE_EVERY: Duration = Duration::from_secs(6 * 3600);
+
 /// A link this node handed out (ADR-0024).
 struct LinkCode {
     code: String,
@@ -359,6 +370,11 @@ pub struct Config {
     /// Where names outside `.vork` are asked (when this node is the system's
     /// resolver, as on Android): the network's own servers.
     pub dns_upstream: Vec<SocketAddr>,
+    /// Self-updating (ADR-0028): trusted release keys, the node releases come
+    /// from, the release this node serves.
+    pub update_keys: Vec<[u8; 32]>,
+    pub update_from: Option<Hash>,
+    pub update_dir: Option<std::path::PathBuf>,
     /// Offers itself as an exit node to the owner's devices (ADR-0026).
     pub exit: bool,
     /// Exit clients may reach this machine's networks too (else the internet only).
@@ -504,6 +520,10 @@ pub struct Node {
     firewall: crate::firewall::Firewall,
     /// Blocked traffic logged lately (once a minute per node and port).
     blocked_seen: HashMap<(Hash, String), Instant>,
+    /// Self-updating: what's under way, when it last moved, and when the next check is due.
+    update: Option<(UpdateStep, Instant)>,
+    update_next: Instant,
+    update_said: String,
 }
 
 /// Socket buffers big enough to absorb bursts (the Linux default, ~200 KB,
@@ -700,6 +720,9 @@ impl Node {
             limit_logged: HashMap::new(),
             firewall: crate::firewall::Firewall::new(&cfg_allow).unwrap_or_default(),
             blocked_seen: HashMap::new(),
+            update: None,
+            update_next: Instant::now() + Duration::from_secs(90),
+            update_said: String::new(),
         };
         for name in node.cfg.destinations.clone() {
             let me = node.me_arc.clone();
@@ -1089,6 +1112,7 @@ impl Node {
                     if last_links.elapsed() >= Duration::from_secs(5) {
                         last_links = Instant::now();
                         self.send_links();
+                        self.update_tick();
                         // A session to the exit node kept open, so whether it works is known before traffic needs it.
                         // (One this node opened: its paths are probed, so their state is known.)
                         // Choosing automatically: sessions to every candidate, measured the same way.
@@ -2257,6 +2281,143 @@ impl Node {
         self.sessions.get(&sid).is_some_and(|s| s.paths.iter().any(|k| self.ends.get(k).is_some_and(|e| e.last_seen.elapsed() < Duration::from_secs(10))))
     }
 
+    // ---- self-updating (ADR-0028) --------------------------------------------------
+
+    fn update_note(&mut self, what: String) {
+        log(format!("update: {what}"));
+        self.update_said = what;
+    }
+
+    /// Every few seconds: a stalled step given up; a check when due (the
+    /// release this node serves, or `update_from`'s).
+    fn update_tick(&mut self) {
+        if self.cfg.update_keys.is_empty() || crate::update::target() == "android" {
+            return;
+        }
+        if let Some((_, t)) = &self.update {
+            if t.elapsed() < Duration::from_secs(60) {
+                return;
+            }
+            self.update = None;
+            self.update_note("no answer from the release node; trying again later".into());
+            self.update_next = Instant::now() + Duration::from_secs(600);
+        }
+        if Instant::now() < self.update_next {
+            return;
+        }
+        self.update_next = Instant::now() + UPDATE_EVERY;
+        // Put in place before, yet this isn't it: not again (a loop otherwise).
+        if let Some(b) = self.state.dir().and_then(crate::update::failed_install) {
+            return self.update_note(format!(
+                "build {b} was put in place, but build {} is running: not trying again (see `vork version`, the .previous binary, and remove state/update/installed to retry)",
+                crate::update::build()
+            ));
+        }
+        // The release this node keeps for others: taken by itself too.
+        if let Some(dir) = self.cfg.update_dir.clone() {
+            if let Some((m, sig)) = crate::update::read_release(&dir) {
+                if let Some(man) = crate::update::verify(&m, &sig, &self.cfg.update_keys) {
+                    if man.build > crate::update::build() && man.files.contains_key(crate::update::target()) {
+                        let file = dir.join(crate::update::file_name(crate::update::target()));
+                        let staged = self.state.dir().ok_or_else(|| anyhow::anyhow!("no state directory")).and_then(|st| {
+                            let mut d = crate::update::Download::start(st, m.clone(), sig, &man)?;
+                            let bytes = std::fs::read(&file)?;
+                            if !d.add(&bytes)? {
+                                anyhow::bail!("the release's file is shorter than signed");
+                            }
+                            Ok(())
+                        });
+                        match staged {
+                            Ok(()) => return self.update_apply(man.build),
+                            Err(e) => self.update_note(format!("the release here: {e:#}")),
+                        }
+                    }
+                } else {
+                    self.update_note(format!("the release in {} isn't signed by a trusted key", dir.display()));
+                }
+            }
+        }
+        let Some(from) = self.cfg.update_from else { return };
+        let Some(sid) = self.session_to(from) else {
+            self.update_next = Instant::now() + Duration::from_secs(300);
+            return self.update_note("the release node isn't reachable now; trying again later".into());
+        };
+        if self.link_identified.insert(sid) {
+            let me = self.me_arc.clone();
+            self.identify(sid, &me);
+        }
+        self.request(sid, crate::update::PATH, br#"{"op":"manifest"}"#, None);
+        self.update = Some((UpdateStep::Asked(sid), Instant::now()));
+    }
+
+    /// The release node answered: a manifest (taken if newer and signed), or a piece.
+    fn on_update_answer(&mut self, sid: u32, status: u8, body: &[u8]) {
+        let Some((step, _)) = self.update.take() else { return };
+        if status != STATUS_OK {
+            return self.update_note(format!("the release node refused: {}", String::from_utf8_lossy(body)));
+        }
+        match step {
+            UpdateStep::Asked(s) if s == sid && body.len() > 64 => {
+                let sig: [u8; 64] = body[..64].try_into().unwrap();
+                let Some(man) = crate::update::verify(&body[64..], &sig, &self.cfg.update_keys) else {
+                    return self.update_note("the release isn't signed by a trusted key: ignored".into());
+                };
+                if man.build <= crate::update::build() {
+                    return self.update_note(format!("up to date (build {}, the release is {})", crate::update::build(), man.build));
+                }
+                if !man.files.contains_key(crate::update::target()) {
+                    return self.update_note(format!("release {} has nothing for {}", man.build, crate::update::target()));
+                }
+                let Some(state) = self.state.dir().map(|d| d.to_path_buf()) else { return };
+                match crate::update::Download::start(&state, body[64..].to_vec(), sig, &man) {
+                    Ok(d) => {
+                        self.update_note(format!("downloading build {} ({} {}, {} KB)", man.build, man.version, crate::update::target(), d.info.size / 1024));
+                        self.update_get(sid, d);
+                    }
+                    Err(e) => self.update_note(format!("{e:#}")),
+                }
+            }
+            UpdateStep::Getting(s, mut d) if s == sid => match d.add(body) {
+                Ok(true) => {
+                    let build = d.build;
+                    self.update_apply(build);
+                }
+                Ok(false) => self.update_get(sid, d),
+                Err(e) => self.update_note(format!("{e:#}")),
+            },
+            other => self.update = Some((other, Instant::now())),
+        }
+    }
+
+    fn update_get(&mut self, sid: u32, d: crate::update::Download) {
+        let body = json!({ "op": "get", "target": crate::update::target(), "offset": d.offset }).to_string();
+        self.request(sid, crate::update::PATH, body.as_bytes(), None);
+        self.update = Some((UpdateStep::Getting(sid, d), Instant::now()));
+    }
+
+    /// A checked update waits in the state directory: put in place, and the node
+    /// restarted by its service. Where this node can't write its own binary (the
+    /// Linux service's sandbox), the service's start step does it.
+    fn update_apply(&mut self, build: u32) {
+        let (Some(state), Ok(exe)) = (self.state.dir().map(|d| d.to_path_buf()), std::env::current_exe()) else { return };
+        let restart = |node: &mut Node, what: String| {
+            node.update_note(what);
+            node.remember_neighbors();
+            node.reach.save();
+            // A non-zero exit: systemd (Restart=on-failure) and Windows' recovery start it again.
+            std::process::exit(75);
+        };
+        match crate::update::install(&state, &self.cfg.update_keys, &exe) {
+            Ok(Some(b)) => restart(self, format!("build {b} put in place; restarting")),
+            Ok(None) => {}
+            Err(e) if std::env::var_os("VORK_UPDATE_HOOK").is_some() => {
+                debug(format!("installing here: {e:#}"));
+                restart(self, format!("build {build} downloaded and checked; restarting, the service puts it in place"));
+            }
+            Err(e) => self.update_note(format!("build {build} is ready but can't be put in place here ({e:#}): run `vork update-install` with the rights to replace {}", exe.display())),
+        }
+    }
+
     /// Says once a minute that a limit turned something away.
     fn limit_hit(&mut self, what: &'static str) {
         if self.limit_logged.get(what).is_none_or(|t| t.elapsed() >= Duration::from_secs(60)) {
@@ -2671,6 +2832,10 @@ impl Node {
                 let status = m[5];
                 let Some(s) = self.sessions.get_mut(&sid) else { return };
                 let Some((path, sent, for_client)) = s.waiting.remove(&id) else { return };
+                if path == crate::update::PATH && for_client.is_none() {
+                    let body = m[6..].to_vec();
+                    return self.on_update_answer(sid, status, &body);
+                }
                 // A link message arrived: off the outbox.
                 if path == LINK_PATH && for_client.is_none() {
                     if let Some(dest) = s.peer_hash {
@@ -2844,6 +3009,18 @@ impl Node {
         match path {
             "/vork/echo" => (STATUS_OK, body.to_vec()),
             "/vork/link" => self.on_link_message(_sid, body),
+            // Releases, for the owner's devices only (ADR-0028).
+            crate::update::PATH => {
+                let device = self.sessions.get(&_sid).and_then(|s| s.peer_identity).is_some_and(|w| self.is_device(&w));
+                match (&self.cfg.update_dir, device) {
+                    (Some(dir), true) => match crate::update::serve(dir, body) {
+                        Ok(b) => (STATUS_OK, b),
+                        Err(e) => (STATUS_REFUSED, e.into_bytes()),
+                    },
+                    (Some(_), false) => (STATUS_REFUSED, b"releases are for the owner's devices".to_vec()),
+                    (None, _) => (STATUS_NO_PATH, Vec::new()),
+                }
+            }
             "/vork/blob" if body.len() == 4 => {
                 let n = (u32::from_be_bytes(body.try_into().unwrap()) as usize).min(stream::MAX_MESSAGE - 64);
                 (STATUS_OK, (0..n).map(|i| (i % 251) as u8).collect())
@@ -3256,6 +3433,16 @@ impl Node {
         match Some(cmd) {
             Some("status") => self.status_json().to_string(),
             // Lets go of the interface (Android's VPN turned off): no restart needed.
+            // Look for a newer release now (ADR-0028).
+            Some("update_check") => {
+                if self.cfg.update_keys.is_empty() {
+                    return json!({ "error": "no update_keys: this node trusts no release key" }).to_string();
+                }
+                self.update = None;
+                self.update_next = Instant::now();
+                self.update_tick();
+                json!({ "ok": true, "build": crate::update::build() }).to_string()
+            }
             // The network's own DNS servers (the Android app tells them, and again on each network change).
             Some("dns_upstream") => {
                 let list: Vec<SocketAddr> = v["servers"]
@@ -3791,6 +3978,14 @@ impl Node {
                 "auto": self.cfg.exit_auto,
                 "rtt_ms": self.cfg.exit_via.and_then(|v| self.rtt_to(&v)).map(|t| t.as_millis() as u64),
             })),
+            "update": json!({
+                "build": crate::update::build(),
+                "target": crate::update::target(),
+                "from": self.cfg.update_from.map(hex::encode),
+                "serves": self.cfg.update_dir.as_ref().map(|d| d.display().to_string()),
+                "trusted_keys": self.cfg.update_keys.len(),
+                "last": self.update_said,
+            }),
             "dns": json!({
                 "server": crate::dns::ADDR.to_string(),
                 "name": format!("{}.{}", crate::dns::label(&self.cfg.name), crate::dns::DOMAIN),
