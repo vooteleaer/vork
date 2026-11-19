@@ -103,7 +103,9 @@ Each device also has a fixed IPv4 address in `198.18.0.0/16` (shown in the dashb
 
 ## The dashboard
 
-Any node can show a web dashboard. It's especially handy on a server without a screen. Add `web = "0.0.0.0:8742"` to `vork.toml`, restart, and run:
+On a **Windows or Linux desktop**, the dashboard is an app: `vork-net` (in [`clients/net-desktop`](clients/net-desktop)) opens it in a window of its own and keeps an icon in the tray. It talks to the node on the same machine directly, so there's nothing to set up. On Linux, a user other than root manages the node once its `vork.toml` names them: `operators = ["alice"]`.
+
+On a **server without a screen**, the node can serve the same dashboard over the network. Add `web = "0.0.0.0:8742"` to `vork.toml`, restart, and run:
 
 ```sh
 vork web-link

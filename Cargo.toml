@@ -2,8 +2,10 @@
 resolver = "2"
 members = [".", "crates/libvork", "crates/vork-api", "crates/vork-card", "crates/vork-cloudfiles", "crates/vork-core", "crates/vork-extract", "crates/vork-fuse", "crates/vork-gateway", "crates/vork-haikufs", "crates/vork-storage-net", "crates/vork-storage-node", "crates/vork-store", "crates/vork-tree", "clients/core", "clients/web", "clients/gtk", "clients/windows", "clients/haiku/capi"]
 # The GTK, Windows and Haiku front ends build only on their own systems: `cargo build -p vork-desktop-gtk` etc.
+# The network's desktop window (clients/net-desktop) is its own workspace: its GTK 3 / WebKitGTK
+# dependencies would hold the node's crates (toml) back to old versions.
 default-members = [".", "crates/libvork", "crates/vork-api", "crates/vork-card", "crates/vork-cloudfiles", "crates/vork-core", "crates/vork-extract", "crates/vork-fuse", "crates/vork-gateway", "crates/vork-haikufs", "crates/vork-storage-net", "crates/vork-storage-node", "crates/vork-store", "crates/vork-tree", "clients/core", "clients/web"]
-exclude = ["vendor", "clients/android/jni"]
+exclude = ["vendor", "clients/android/jni", "clients/net-desktop"]
 
 [workspace.package]
 version = "0.6.0"

@@ -372,6 +372,7 @@ pub fn settings(a: RunArgs) -> Result<Settings> {
         bench: parse_address(a.bench)?,
         bench_rate: a.bench_rate,
         control,
+        operators: file.operators.clone(),
         api,
     };
     Ok(Settings { key, state, cfg, log: a.log.or(file.log).unwrap_or_else(|| "info".into()), log_file: a.log_file.or(file.log_file) })

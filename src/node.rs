@@ -448,6 +448,8 @@ pub struct Config {
     pub bench_rate: u64,
     /// Where the control endpoint listens (`None`: no control endpoint).
     pub control: Option<String>,
+    /// Unix: local users (names or ids) who may manage the node, besides root and its own user.
+    pub operators: Vec<String>,
     /// The local API endpoint for applications (ADR-0020).
     pub api: Option<String>,
 }
@@ -890,7 +892,7 @@ impl Node {
             log(format!("dialing {dialed} remembered neighbors"));
         }
         let mut ctrl_rx = match &self.cfg.control {
-            Some(ep) => match crate::control::listen(ep) {
+            Some(ep) => match crate::control::listen(ep, &self.cfg.operators) {
                 Ok(rx) => {
                     log(format!("control endpoint {ep}"));
                     Some(rx)

@@ -13,14 +13,29 @@ use tokio::sync::{mpsc, oneshot};
 /// and where the answer goes.
 pub type Request = (String, bool, oneshot::Sender<String>);
 
-/// Whether the other end of a Unix socket is the node's own user or root:
-/// they may change settings; anyone else may only look.
+/// Whether the other end of a Unix socket is the node's own user, root or
+/// one of the operators: they may change settings; anyone else may only look.
 #[cfg(unix)]
-fn is_owner(conn: &tokio::net::UnixStream) -> bool {
+fn is_owner(conn: &tokio::net::UnixStream, operators: &[u32]) -> bool {
     match conn.peer_cred() {
-        Ok(c) => c.uid() == 0 || c.uid() == unsafe { libc::geteuid() },
+        Ok(c) => c.uid() == 0 || c.uid() == unsafe { libc::geteuid() } || operators.contains(&c.uid()),
         Err(_) => false,
     }
+}
+
+/// A user's id from a name (or a number), through the system's user database.
+#[cfg(unix)]
+fn uid_of(user: &str) -> Option<u32> {
+    if let Ok(n) = user.parse() {
+        return Some(n);
+    }
+    let name = std::ffi::CString::new(user).ok()?;
+    let mut pw: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut buf = vec![0 as libc::c_char; 16 * 1024];
+    let mut found: *mut libc::passwd = std::ptr::null_mut();
+    // Safe: every pointer is to a live local of the right size.
+    let r = unsafe { libc::getpwnam_r(name.as_ptr(), &mut pw, buf.as_mut_ptr(), buf.len(), &mut found) };
+    (r == 0 && !found.is_null()).then_some(pw.pw_uid)
 }
 
 async fn serve_conn<S: AsyncRead + AsyncWrite + Unpin>(conn: S, owner: bool, to_node: mpsc::Sender<Request>) {
@@ -41,8 +56,15 @@ async fn serve_conn<S: AsyncRead + AsyncWrite + Unpin>(conn: S, owner: bool, to_
 
 /// Starts listening; requests arrive on the returned channel.
 #[cfg(unix)]
-pub fn listen(endpoint: &str) -> Result<mpsc::Receiver<Request>> {
+pub fn listen(endpoint: &str, operators: &[String]) -> Result<mpsc::Receiver<Request>> {
     use std::os::unix::fs::PermissionsExt;
+    let mut uids = Vec::new();
+    for o in operators {
+        match uid_of(o) {
+            Some(u) => uids.push(u),
+            None => crate::node::log(format!("operators: no user {o} on this machine (left out)")),
+        }
+    }
     let path = std::path::Path::new(endpoint);
     // A socket left by an earlier run would make bind fail.
     if path.exists() && std::os::unix::net::UnixStream::connect(path).is_err() {
@@ -55,15 +77,16 @@ pub fn listen(endpoint: &str) -> Result<mpsc::Receiver<Request>> {
     let (tx, rx) = mpsc::channel(16);
     tokio::spawn(async move {
         while let Ok((conn, _)) = listener.accept().await {
-            let owner = is_owner(&conn);
+            let owner = is_owner(&conn, &uids);
             tokio::spawn(serve_conn(conn, owner, tx.clone()));
         }
     });
     Ok(rx)
 }
 
+/// On Windows the pipe's ACL decides (`create_pipe`): operators don't apply.
 #[cfg(windows)]
-pub fn listen(endpoint: &str) -> Result<mpsc::Receiver<Request>> {
+pub fn listen(endpoint: &str, _operators: &[String]) -> Result<mpsc::Receiver<Request>> {
     let name = endpoint.to_string();
     let mut server = create_pipe(&name, true).with_context(|| format!("control pipe {name}"))?;
     let (tx, rx) = mpsc::channel(16);
@@ -129,4 +152,14 @@ pub async fn ask(endpoint: &str, request: &str) -> Result<String> {
     use tokio::net::windows::named_pipe::ClientOptions;
     let conn = ClientOptions::new().open(endpoint).with_context(|| format!("no node answers at {endpoint} (is it running?)"))?;
     ask_conn(conn, request).await
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    #[test]
+    fn operators_by_name_or_id() {
+        assert_eq!(super::uid_of("root"), Some(0));
+        assert_eq!(super::uid_of("1000"), Some(1000));
+        assert_eq!(super::uid_of("no-such-user-here"), None);
+    }
 }

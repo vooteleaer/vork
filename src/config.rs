@@ -62,6 +62,10 @@ pub struct FileConfig {
     pub log: Option<String>,
     pub log_file: Option<PathBuf>,
     pub control: Option<String>,
+    /// Unix: other local users who may manage the node through its control
+    /// socket (user names or numeric ids), like its own user and root.
+    #[serde(default)]
+    pub operators: Vec<String>,
     /// The local API endpoint for applications.
     pub api: Option<String>,
 }
@@ -218,6 +222,11 @@ lan = true
 # Paths per session through different first hops, and how packets use them.
 paths = 2
 spread = "spray"
+
+# Linux: other users of this machine who may manage the node (the desktop
+# window, `vork link`...), besides root and the node's own user. Others may
+# only see its status.
+# operators = ["alice"]
 
 # warn | info | debug
 log = "info"

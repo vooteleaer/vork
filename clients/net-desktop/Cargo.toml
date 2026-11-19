@@ -1,0 +1,35 @@
+[package]
+name = "vork-net-desktop"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "vØrk's desktop window: the node's dashboard in the system web view, with a tray icon"
+
+# Its own workspace and lock file: the web view's GTK 3 dependencies hold
+# some shared crates back, and the node shouldn't follow them.
+# Build: cargo build --release --manifest-path clients/net-desktop/Cargo.toml
+[workspace]
+
+[profile.release]
+strip = true
+
+[[bin]]
+name = "vork-net"
+path = "src/main.rs"
+
+[features]
+# The window: off where there is no web view (Haiku: `--no-default-features`),
+# and the dashboard opens in the browser instead.
+default = ["window"]
+window = ["dep:tao", "dep:wry", "dep:tray-icon"]
+
+[dependencies]
+# The window and the event loop; the web view (WebView2 on Windows, WebKitGTK on Linux).
+tao = { version = "0.37", optional = true }
+wry = { version = "0.57", optional = true }
+tray-icon = { version = "0.26", optional = true }
+getrandom = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
