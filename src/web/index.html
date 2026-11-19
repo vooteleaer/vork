@@ -66,8 +66,10 @@ const dns = (nm, addr) => ((nm || "").toLowerCase().replace(/[^a-z0-9-]+/g, "-")
 const ipOf = (a) => "fd" + a.slice(0, 2) + ":" + a.slice(2, 30).match(/.{4}/g).join(":");
 async function copy(label, text) { try { await navigator.clipboard.writeText(text); say(label + " copied: " + text); } catch { say(text); } }
 
-function lines(ip, addr, nm) {
-  return [["IP", ip], ["DNS", dns(nm, addr)], ["Address", addr]].filter(([, v]) => v).map(([l, v]) =>
+// A device's IPv4 address, the same everywhere (ADR-0021), as the node derives it.
+function derived4(a) { let v = parseInt(a.slice(0, 4), 16); if (v < 256) v += 256; return `198.18.${v >> 8}.${v & 255}`; }
+function lines(ip, addr, nm, v4) {
+  return [["IPv4", v4], ["IPv6", ip], ["DNS", dns(nm, addr)], ["Address", addr]].filter(([, v]) => v).map(([l, v]) =>
     `<div class="row"><span class="label">${l}</span><span class="mono">${esc(v)}</span><button class="t" data-copy="${esc(v)}" data-label="${l}">Copy</button></div>`).join("");
 }
 function reach(n) { return (n.direct ? "direct" : `${n.hops} hop(s), relayed`) + (n.on_lan ? " · this network" : ""); }
@@ -80,7 +82,7 @@ function overview() {
   return `
   <div class="card"><h2>${esc(status.name)} (this node)</h2>
     <div class="dim">Running ${Math.floor((status.uptime_s || 0) / 60)} min · ${up} connected · ${(status.nodes || []).length} node(s) known</div>
-    ${lines(status.ip, status.address, status.name)}</div>
+    ${lines(status.ip, status.address, status.name, status.ipv4)}</div>
   <div class="card"><h2>Interface for programs</h2>
     <div class="dim">${iface ? `Programs here reach vØrk nodes at their fd… addresses (${esc(iface.name)}).` : "Off: set <code>tun = \"vork0\"</code> in vork.toml (Linux, as root) for programs on this machine to reach vØrk addresses."}</div></div>
   <div class="card"><h2>Reachability</h2>
@@ -115,7 +117,7 @@ function devices() {
   for (const a of devs) {
     const n = known[a];
     h += `<div class="card"><div class="row"><h2>${esc(n ? name(n) : a.slice(0, 8))}</h2><span class="pill">${n ? reach(n) : "away: not heard now"}</span></div>
-      ${lines(n ? n.ip : ipOf(a), a, n ? name(n) : a.slice(0, 8))}
+      ${lines(n ? n.ip : ipOf(a), a, n ? name(n) : a.slice(0, 8), (n && n.ipv4) || derived4(a))}
       <div class="row"><button class="t" data-unlink="${a}">Unlink</button></div></div>`;
   }
   return h;

@@ -594,7 +594,7 @@ fn timers(tunn: &mut Tunn) -> Option<Vec<u8>> {
 
 impl Node {
     pub async fn new(me: Identity, cfg: Config, state: State) -> anyhow::Result<Node> {
-        let aliases = crate::alias::Aliases::open(state.dir());
+        let aliases = crate::alias::Aliases::open(state.dir(), &me.hash());
         let std_sock = bind_socket(cfg.listen)?;
         let send_sock = std_sock.try_clone()?;
         let sock = Arc::new(UdpSocket::from_std(std_sock)?);
@@ -819,7 +819,7 @@ impl Node {
         drop(tun_tx);
         if let Some(name) = self.cfg.tun.clone().filter(|t| t != "fd") {
             let addr = crate::tun::overlay(&self.my_hash);
-            match crate::tun::Tun::open(&name, addr, crate::tun::MTU) {
+            match crate::tun::Tun::open(&name, addr, self.aliases.me, crate::tun::MTU) {
                 Ok(t) => {
                     log(format!("interface {} up: this node is {addr}", t.name));
                     crate::dns::register(&t.name);
@@ -1625,7 +1625,8 @@ impl Node {
             let rcode = if node.is_some() { NOERROR } else { NXDOMAIN };
             let found: Option<std::net::IpAddr> = node.and_then(|h| {
                 if qtype == A {
-                    if h == self.my_hash { Some(crate::alias::ME.into()) } else { self.aliases.of(&h).map(Into::into) }
+                    let device = h == self.my_hash || self.is_device(&h);
+                    self.aliases.of(&h, device).map(Into::into)
                 } else {
                     Some(crate::tun::overlay(&h).into())
                 }
@@ -1725,7 +1726,7 @@ impl Node {
         let Some(sid) = self.ip_session(via) else { return };
         for server in crate::exit::DNS {
             let mut body = vec![APP_EXIT];
-            body.extend_from_slice(&crate::exit::udp4(crate::alias::ME, port, server, 53, &q.msg));
+            body.extend_from_slice(&crate::exit::udp4(self.aliases.me, port, server, 53, &q.msg));
             self.send_app(sid, &body);
         }
         self.exit_dns.insert(port, (q, Instant::now()));
@@ -1794,6 +1795,7 @@ impl Node {
                     "address": hex::encode(dest),
                     "name": announced_name(&best.ann.app_data),
                     "ip": crate::tun::overlay(dest).to_string(),
+                    "ipv4": self.aliases.peek(dest, self.is_device(dest)).map(|a| a.to_string()),
                     "hops": best.hops,
                     "neighbor": neighbor,
                     "direct": direct || neighbor,
@@ -2108,7 +2110,7 @@ impl Node {
         self.ip_peer.insert(who, sid);
         // An answer in a conversation a program here began over IPv4: back as IPv4.
         if let Some(alias) = self.aliases.known(&who) {
-            if let Some((v4, flow)) = crate::alias::to_v4(p, alias, crate::alias::ME) {
+            if let Some((v4, flow)) = crate::alias::to_v4(p, alias, self.aliases.me) {
                 if let Some(t) = self.v4_flows.get_mut(&(who, flow)) {
                     *t = Instant::now();
                     return tun.send(&v4);
@@ -2140,7 +2142,8 @@ impl Node {
             return;
         }
         self.ip_peer.insert(who, sid);
-        if self.cfg.exit && p[12..16] == crate::alias::ME.octets() {
+        // A device sends from its own (derived) address; it's answered there.
+        if self.cfg.exit && p[12..16] == crate::alias::derive(&who).octets() {
             if !self.is_device(&who) {
                 return debug(format!("exit traffic from {}, not one of the owner's devices: dropped", short(&who)));
             }
@@ -2148,7 +2151,7 @@ impl Node {
             if let Some(out) = crate::exit::readdress(p, Some(addr), None) {
                 tun.send(&out);
             }
-        } else if self.cfg.exit_via == Some(who) && p[16..20] == crate::alias::ME.octets() {
+        } else if self.cfg.exit_via == Some(who) && p[16..20] == self.aliases.me.octets() {
             // An answer to a name this node asked through the exit: to whoever asked it (the first answer wins).
             if let Some((53, port, msg)) = crate::exit::udp4_parts(p) {
                 if crate::exit::DNS.iter().any(|d| p[12..16] == d.octets()) {
@@ -2168,11 +2171,11 @@ impl Node {
             return;
         }
         let dst = std::net::Ipv4Addr::new(p[16], p[17], p[18], p[19]);
-        if p[12..16] != crate::alias::ME.octets() {
+        if p[12..16] != self.aliases.me.octets() {
             // At an exit node: an answer from the internet for a device using it.
             if self.cfg.exit && crate::exit::in_range(dst) {
                 let Some(device) = self.exit_clients.node(dst) else { return };
-                let Some(back) = crate::exit::readdress(p, None, Some(crate::alias::ME)) else { return };
+                let Some(back) = crate::exit::readdress(p, None, Some(crate::alias::derive(&device))) else { return };
                 if let Some(sid) = self.ip_session(device) {
                     let mut body = vec![APP_EXIT];
                     body.extend_from_slice(&back);
@@ -2191,7 +2194,12 @@ impl Node {
             }
             return;
         }
-        let Some(node) = self.aliases.node(dst) else { return };
+        // A device's address used straight (copied from an app, no name asked): known by deriving.
+        let node = self.aliases.node(dst).or_else(|| {
+            let d = self.cfg.devices.iter().copied().find(|d| crate::alias::derive(d) == dst)?;
+            (self.aliases.of(&d, true) == Some(dst)).then_some(d)
+        });
+        let Some(node) = node else { return };
         let me = crate::tun::overlay(&self.my_hash);
         let Some((v6, flow)) = crate::alias::to_v6(p, me, crate::tun::overlay(&node)) else { return };
         if self.v4_flows.len() > 4096 {
@@ -3431,6 +3439,7 @@ impl Node {
             "nodes": self.known_nodes(),
             // The interface for ordinary programs (M2), if there is one: this node's address on it.
             "interface": self.tun.as_ref().map(|t| json!({ "name": t.name, "address": crate::tun::overlay(&self.my_hash).to_string() })),
+            "ipv4": self.aliases.me.to_string(),
             "exit": (self.cfg.exit_via.is_some() || self.cfg.exit_auto).then(|| json!({
                 "via": self.cfg.exit_via.map(hex::encode),
                 "up": self.exit_up(),

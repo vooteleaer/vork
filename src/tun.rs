@@ -64,8 +64,8 @@ mod linux {
 
     /// IPv4 aliases (ADR-0021): the range on the interface, unless a route
     /// here already covers it (then IPv6 only, said in the log).
-    fn ipv4_aliases(name: &str) {
-        let me = crate::alias::ME.to_string();
+    fn ipv4_aliases(name: &str, v4: std::net::Ipv4Addr) {
+        let me = v4.to_string();
         let range = format!("{}/{}", crate::alias::NET, crate::alias::PREFIX);
         let taken = std::process::Command::new("ip")
             .args(["-4", "route", "show", "match", &me])
@@ -104,7 +104,7 @@ mod linux {
 
     impl Tun {
         /// Opens interface `name` with `addr`/128 and `fd00::/8` routed to it.
-        pub fn open(name: &str, addr: Ipv6Addr, mtu: u16) -> anyhow::Result<Tun> {
+        pub fn open(name: &str, addr: Ipv6Addr, v4: std::net::Ipv4Addr, mtu: u16) -> anyhow::Result<Tun> {
             let raw = unsafe { libc::open(c"/dev/net/tun".as_ptr(), libc::O_RDWR | libc::O_NONBLOCK | libc::O_CLOEXEC) };
             if raw < 0 {
                 anyhow::bail!("/dev/net/tun: {}", io::Error::last_os_error());
@@ -122,7 +122,7 @@ mod linux {
             ip(&["link", "set", "dev", &name, "mtu", &mtu.to_string(), "up"])?;
             ip(&["-6", "addr", "replace", &format!("{addr}/128"), "dev", &name])?;
             ip(&["-6", "route", "replace", "fd00::/8", "dev", &name])?;
-            ipv4_aliases(&name);
+            ipv4_aliases(&name, v4);
             // Safe: the descriptor is ours alone and lives as long as the AsyncFd.
             let fd = unsafe { AsyncFd::register(fd) }.map_err(|e| anyhow::anyhow!("{e}"))?;
             Ok(Tun { fd, name })
@@ -202,7 +202,7 @@ mod windows_tun {
     }
 
     impl Tun {
-        pub fn open(name: &str, addr: Ipv6Addr, mtu: u16) -> anyhow::Result<Tun> {
+        pub fn open(name: &str, addr: Ipv6Addr, v4: std::net::Ipv4Addr, mtu: u16) -> anyhow::Result<Tun> {
             let dll = std::env::current_exe()?.with_file_name("wintun.dll");
             let w = unsafe { wintun::load_from_path(&dll) }
                 .map_err(|e| anyhow::anyhow!("{}: {e} (wintun.dll, from wintun.net, goes next to vork.exe)", dll.display()))?;
@@ -217,6 +217,9 @@ mod windows_tun {
             // Already there from an earlier run: fine.
             let _ = netsh(&["interface", "ipv6", "add", "address", &iface, &format!("address={addr}/128"), "store=active"]);
             let _ = netsh(&["interface", "ipv6", "add", "route", "prefix=fd00::/8", &iface, "store=active"]);
+            // IPv4 (ADR-0021): this node's address and the range.
+            let _ = netsh(&["interface", "ipv4", "add", "address", &iface, &format!("address={v4}"), "mask=255.255.255.255", "store=active"]);
+            let _ = netsh(&["interface", "ipv4", "add", "route", &format!("prefix={}/{}", crate::alias::NET, crate::alias::PREFIX), &iface, "store=active"]);
             let (tx, rx) = tokio::sync::mpsc::channel(1024);
             let s = session.clone();
             std::thread::Builder::new().name("vork-wintun".into()).spawn(move || {
@@ -254,7 +257,7 @@ pub struct Tun {
 
 #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
 impl Tun {
-    pub fn open(_name: &str, _addr: Ipv6Addr, _mtu: u16) -> anyhow::Result<Tun> {
+    pub fn open(_name: &str, _addr: Ipv6Addr, _v4: std::net::Ipv4Addr, _mtu: u16) -> anyhow::Result<Tun> {
         anyhow::bail!("no interface on this system yet")
     }
     pub async fn recv(&self, _buf: &mut [u8]) -> std::io::Result<usize> {

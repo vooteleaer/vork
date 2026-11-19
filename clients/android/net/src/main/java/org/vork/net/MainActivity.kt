@@ -272,11 +272,25 @@ fun copier(said: (String) -> Unit): (String, String) -> Unit {
     }
 }
 
-/** A node's IP, DNS name and vØrk address, each with Copy. */
+/**
+ * A device's IPv4 address, the same on every machine (ADR-0021): 198.18.x.y by
+ * the first two bytes of its address (198.18.0.x left out), as the node derives it.
+ */
+fun derivedIpv4(address: String): String {
+    if (address.length < 4) return ""
+    var v = address.substring(0, 4).toInt(16)
+    if (v < 256) v += 256
+    return "198.18.${v shr 8}.${v and 255}"
+}
+
+/** A string field, empty when missing or null. */
+fun JSONObject.text(key: String): String = if (isNull(key)) "" else optString(key)
+
+/** A node's IPv4 and IPv6 addresses, DNS name and vØrk address, each with Copy. */
 @Composable
-fun AddressLines(ip: String, address: String, name: String, copy: (String, String) -> Unit) {
+fun AddressLines(ip: String, address: String, name: String, copy: (String, String) -> Unit, ipv4: String = "") {
     val mono = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
-    for ((label, value) in listOf("IP" to ip, "DNS" to dnsName(name, address), "Address" to address)) {
+    for ((label, value) in listOf("IPv4" to ipv4, "IPv6" to ip, "DNS" to dnsName(name, address), "Address" to address)) {
         if (value.isEmpty()) continue
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(label, style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(56.dp))
@@ -295,7 +309,7 @@ fun NodeCard(n: JSONObject, copy: (String, String) -> Unit, action: (@Composable
                 Text(displayName(n), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                 Text(reach(n), style = MaterialTheme.typography.labelSmall)
             }
-            AddressLines(n.optString("ip"), n.optString("address"), displayName(n), copy)
+            AddressLines(n.optString("ip"), n.optString("address"), displayName(n), copy, n.text("ipv4"))
             action?.invoke()
         }
     }
@@ -368,7 +382,7 @@ fun Overview(node: Node, s: JSONObject, said: (String) -> Unit) {
                         Text("$name (this device)", style = MaterialTheme.typography.titleMedium)
                         val up = (0 until (s.optJSONArray("neighbors")?.length() ?: 0)).count { s.getJSONArray("neighbors").getJSONObject(it).optBoolean("up") }
                         Text("Running ${s.optLong("uptime_s") / 60} min · $up connected · ${nodes(s).size} node(s) known", style = small)
-                        AddressLines(s.optString("ip"), s.optString("address"), name, copy)
+                        AddressLines(s.optString("ip"), s.optString("address"), name, copy, s.text("ipv4"))
                     }
                     Row(Modifier.padding(top = 8.dp)) {
                         OutlinedButton(onClick = { NodeService.restart(context); said("Restarting the node") }) { Text("Restart") }
@@ -491,7 +505,7 @@ fun MyDevices(node: Node, s: JSONObject, said: (String) -> Unit) {
                         Text(address.take(8), style = MaterialTheme.typography.titleMedium)
                         Text("Away: not heard now", style = MaterialTheme.typography.bodySmall)
                         val ip = "fd" + address.take(2) + ":" + address.substring(2, 30).chunked(4).joinToString(":")
-                        AddressLines(ip, address, address.take(8), copy)
+                        AddressLines(ip, address, address.take(8), copy, derivedIpv4(address))
                         unlink()
                     }
                 }

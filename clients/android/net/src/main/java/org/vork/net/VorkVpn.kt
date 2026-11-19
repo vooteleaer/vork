@@ -90,7 +90,7 @@ class VorkVpn : VpnService() {
                             iface?.close()
                             iface = null
                         }
-                        val pfd = iface ?: establish(address, exit)?.also { iface = it; ifaceExit = exit }
+                        val pfd = iface ?: establish(address, n.optString("ipv4").ifEmpty { "198.18.0.1" }, exit)?.also { iface = it; ifaceExit = exit }
                         when {
                             pfd == null -> state = "Android didn't make the interface (is another VPN always on?)"
                             !n.isNull("interface") -> state = null
@@ -145,7 +145,7 @@ class VorkVpn : VpnService() {
         android.os.Handler(mainLooper).post { android.widget.Toast.makeText(applicationContext, "vØrk: $text", android.widget.Toast.LENGTH_SHORT).show() }
     }
 
-    private fun establish(address: String, exit: Boolean): ParcelFileDescriptor? {
+    private fun establish(address: String, ipv4: String, exit: Boolean): ParcelFileDescriptor? {
         // fd ‖ the node's address[0..15]
         val bytes = ByteArray(16)
         bytes[0] = 0xfd.toByte()
@@ -163,7 +163,7 @@ class VorkVpn : VpnService() {
             // IPv4 aliases for vØrk names (ADR-0021): Android asks only for
             // IPv4 addresses on a network it thinks has no IPv6, and the
             // node translates.
-            .addAddress("198.18.0.1", 32)
+            .addAddress(ipv4, 32)
             .addRoute("198.18.0.0", 15)
             // The node answers names (.vork itself, the rest from the network's servers).
             .addDnsServer(InetAddress.getByName("fd00::53"))

@@ -5,8 +5,13 @@
 //! IPv6 only; an alias never leaves this machine.
 //!
 //! The range is `198.18.0.0/15` (reserved for testing, practically never in
-//! use); this node is its first address. The table is kept in
-//! `<state>/aliases.json`, so a name keeps its alias across restarts.
+//! use). **The owner's devices have the same address everywhere**, as in
+//! Tailscale: derived from the node's address into `198.18.0.0/16` (each
+//! node's own interface carries its derived address). Other nodes get local
+//! aliases from `198.19.0.0`–`198.19.254.255`; `198.19.255.0/24` is the exit
+//! clients' (ADR-0026). Two devices deriving the same address (unlikely: about
+//! 0.3 % among 20) leave the second a local alias on that machine. The table
+//! is kept in `<state>/aliases.json`, so a name keeps its alias across restarts.
 
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -17,8 +22,18 @@ use crate::identity::Hash;
 /// The range: network and prefix length.
 pub const NET: Ipv4Addr = Ipv4Addr::new(198, 18, 0, 0);
 pub const PREFIX: u8 = 15;
-/// This node's own IPv4 address.
-pub const ME: Ipv4Addr = Ipv4Addr::new(198, 18, 0, 1);
+/// A node's own IPv4 address, the same on every machine: `198.18.0.0/16` by
+/// the first two bytes of its address (`198.18.0.x` left out).
+pub fn derive(node: &Hash) -> Ipv4Addr {
+    let v = u16::from_be_bytes([node[0], node[1]]);
+    let v = if v < 256 { v + 256 } else { v };
+    let [hi, lo] = v.to_be_bytes();
+    Ipv4Addr::new(198, 18, hi, lo)
+}
+
+fn derived_range(a: Ipv4Addr) -> bool {
+    a.octets()[..2] == [198, 18]
+}
 /// IPv4 packets become 20 bytes longer as IPv6: TCP segments are kept small
 /// enough that the IPv6 packet still fits the interface's MTU.
 const MSS: u16 = crate::tun::MTU - 40 - 20;
@@ -28,20 +43,27 @@ pub fn in_range(a: Ipv4Addr) -> bool {
 }
 
 pub struct Aliases {
+    /// This node's own address (derived).
+    pub me: Ipv4Addr,
     by_addr: HashMap<Ipv4Addr, Hash>,
     by_node: HashMap<Hash, Ipv4Addr>,
     file: Option<PathBuf>,
 }
 
 impl Aliases {
-    pub fn open(dir: Option<&std::path::Path>) -> Aliases {
+    pub fn open(dir: Option<&std::path::Path>, me: &Hash) -> Aliases {
         let file = dir.map(|d| d.join("aliases.json"));
-        let mut a = Aliases { by_addr: HashMap::new(), by_node: HashMap::new(), file };
+        let mine = derive(me);
+        let mut a = Aliases { me: mine, by_addr: HashMap::new(), by_node: HashMap::new(), file };
+        a.by_addr.insert(mine, *me);
+        a.by_node.insert(*me, mine);
         let saved: HashMap<String, String> =
             a.file.as_ref().and_then(|f| std::fs::read(f).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
         for (ip, node) in saved {
             let (Ok(ip), Ok(Ok(h))) = (ip.parse::<Ipv4Addr>(), hex::decode(&node).map(|b| Hash::try_from(b.as_slice()))) else { continue };
-            if in_range(ip) && ip != ME {
+            // Local aliases only: derived ones are worked out again (and older
+            // tables, from before devices had derived addresses, give way).
+            if in_range(ip) && !derived_range(ip) && !crate::exit::in_range(ip) && !a.by_node.contains_key(&h) {
                 a.by_addr.insert(ip, h);
                 a.by_node.insert(h, ip);
             }
@@ -49,12 +71,32 @@ impl Aliases {
         a
     }
 
-    /// The node's alias, given now if it has none.
-    pub fn of(&mut self, node: &Hash) -> Option<Ipv4Addr> {
+    /// The node's address: for one of the owner's devices its derived one
+    /// (unless another node has it here), else a local alias, given now if it
+    /// has none.
+    pub fn of(&mut self, node: &Hash, device: bool) -> Option<Ipv4Addr> {
         if let Some(a) = self.by_node.get(node) {
-            return Some(*a);
+            if !device || derived_range(*a) {
+                return Some(*a);
+            }
+            // A local alias from before it became a device: its derived one now, if free.
+            if self.by_addr.contains_key(&derive(node)) {
+                return Some(*a);
+            }
+            let old = *a;
+            self.by_addr.remove(&old);
+            self.by_node.remove(node);
         }
-        let first = u32::from(ME) + 1;
+        if device {
+            let d = derive(node);
+            if !self.by_addr.contains_key(&d) {
+                self.by_addr.insert(d, *node);
+                self.by_node.insert(*node, d);
+                return Some(d);
+            }
+            crate::node::log(format!("{d} is another node's here already: {} gets a local IPv4 alias", hex::encode(&node[..4])));
+        }
+        let first = u32::from(Ipv4Addr::new(198, 19, 0, 1));
         let end = u32::from(crate::exit::NET); // the range's last /24 is for exit clients (ADR-0026)
         let ip = (first..end).map(Ipv4Addr::from).find(|ip| !self.by_addr.contains_key(ip))?;
         self.by_addr.insert(ip, *node);
@@ -71,9 +113,18 @@ impl Aliases {
         self.by_node.get(node).copied()
     }
 
+    /// The address a node would get, without giving it one (for showing).
+    pub fn peek(&self, node: &Hash, device: bool) -> Option<Ipv4Addr> {
+        match self.by_node.get(node) {
+            Some(a) if !device || derived_range(*a) => Some(*a),
+            _ if device && !self.by_addr.contains_key(&derive(node)) => Some(derive(node)),
+            a => a.copied(),
+        }
+    }
+
     fn save(&self) {
         let Some(f) = &self.file else { return };
-        let m: HashMap<String, String> = self.by_addr.iter().map(|(ip, h)| (ip.to_string(), hex::encode(h))).collect();
+        let m: HashMap<String, String> = self.by_addr.iter().filter(|(ip, _)| !derived_range(**ip)).map(|(ip, h)| (ip.to_string(), hex::encode(h))).collect();
         if let Ok(b) = serde_json::to_vec_pretty(&m) {
             let tmp = f.with_extension("json.tmp");
             if std::fs::write(&tmp, b).is_ok() {
@@ -280,7 +331,7 @@ mod tests {
         back[40..42].copy_from_slice(&8742u16.to_be_bytes());
         back[42..44].copy_from_slice(&40000u16.to_be_bytes());
         checksum_v6(&mut back);
-        let (v4, flow) = to_v4(&back, Ipv4Addr::new(198, 18, 0, 2), ME).unwrap();
+        let (v4, flow) = to_v4(&back, Ipv4Addr::new(198, 18, 0, 2), Ipv4Addr::new(198, 18, 0, 1)).unwrap();
         assert_eq!(flow, (6, 40000, 8742));
         assert!(valid_v4(&v4));
         assert_eq!(&v4[12..16], &[198, 18, 0, 2]);
@@ -297,7 +348,7 @@ mod tests {
         assert!(valid_v6(&v6));
         let mut reply = v6.clone();
         reply[40] = 129;
-        let (v4, flow) = to_v4(&reply, Ipv4Addr::new(198, 18, 0, 2), ME).unwrap();
+        let (v4, flow) = to_v4(&reply, Ipv4Addr::new(198, 18, 0, 2), Ipv4Addr::new(198, 18, 0, 1)).unwrap();
         assert_eq!((v4[20], flow), (0, (58, 0x1234, 0)));
         assert!(valid_v4(&v4));
     }
@@ -306,13 +357,23 @@ mod tests {
     fn aliases_stay() {
         let dir = std::env::temp_dir().join(format!("vork-alias-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let mut a = Aliases::open(Some(&dir));
+        let me = [1u8; 16];
+        let mut a = Aliases::open(Some(&dir), &me);
+        assert_eq!(a.me, Ipv4Addr::new(198, 18, 1, 1));
         let n = [7u8; 16];
-        let ip = a.of(&n).unwrap();
-        assert_eq!(ip, Ipv4Addr::new(198, 18, 0, 2));
-        assert_eq!(a.of(&[8u8; 16]).unwrap(), Ipv4Addr::new(198, 18, 0, 3));
-        let b = Aliases::open(Some(&dir));
-        assert_eq!(b.node(ip), Some(n));
+        let ip = a.of(&n, false).unwrap();
+        assert_eq!(ip, Ipv4Addr::new(198, 19, 0, 1));
+        assert_eq!(a.of(&[8u8; 16], false).unwrap(), Ipv4Addr::new(198, 19, 0, 2));
+        // A device: its derived address, the same anywhere.
+        assert_eq!(a.of(&[9u8; 16], true).unwrap(), derive(&[9u8; 16]));
+        // One deriving the same as another device: a local alias instead.
+        let mut twin = [9u8; 16];
+        twin[15] = 0;
+        assert_eq!(a.of(&twin, true).unwrap(), Ipv4Addr::new(198, 19, 0, 3));
+        // Becoming a device moves a node from its local alias to its derived address.
+        assert_eq!(a.of(&n, true).unwrap(), derive(&n));
+        let b = Aliases::open(Some(&dir), &me);
+        assert_eq!(b.node(Ipv4Addr::new(198, 19, 0, 2)), Some([8u8; 16]));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
