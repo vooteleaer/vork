@@ -17,7 +17,7 @@ for ARCH in ${*:-amd64 arm64}; do
             set -e
             export DEBIAN_FRONTEND=noninteractive
             apt-get update -qq
-            apt-get install -y -qq curl ca-certificates build-essential pkg-config git dpkg-dev \
+            apt-get install -y -qq --no-install-recommends curl ca-certificates build-essential pkg-config git dpkg-dev \
                 libwebkit2gtk-4.1-dev libayatana-appindicator3-dev libxdo-dev >/dev/null
             curl -sSf https://sh.rustup.rs | sh -s -- -y -q --profile minimal >/dev/null
             . /root/.cargo/env
