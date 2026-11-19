@@ -13,6 +13,7 @@ mod settings;
 mod state;
 mod stream;
 mod tun;
+mod web;
 mod wire;
 
 use anyhow::{Context, Result, bail};
@@ -86,6 +87,11 @@ enum Cmd {
         /// Ask me for each device that uses it.
         #[arg(long)]
         approve: bool,
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
+    /// The web dashboard's link (with its token): open it in a browser.
+    WebLink {
         #[arg(long)]
         config: Option<PathBuf>,
     },
@@ -286,6 +292,7 @@ pub fn settings(a: RunArgs) -> Result<Settings> {
         lan: !(a.no_lan || file.lan == Some(false)),
         tun: file.tun.clone().filter(|t| !t.is_empty()),
         config_path,
+        web: file.web.as_deref().filter(|w| !w.is_empty()).map(|w| w.parse().with_context(|| format!("web: {w} isn't host:port"))).transpose()?,
         name: file.name.clone().filter(|n| !n.trim().is_empty()).unwrap_or_else(node::machine_name),
         gateway: a.gateway.or(file.gateway),
         paths: a.paths.or(file.paths).unwrap_or(2).max(1),
@@ -422,7 +429,7 @@ fn print_status(v: &serde_json::Value) {
 /// The network's own commands; everything else belongs to storage.
 const NETWORK_COMMANDS: &[&str] = &[
     "init", "keygen", "show", "run", "status", "service", "service-run", "help", "-h", "--help", "-V", "--version",
-    "link", "link-code", "requests", "allow", "dismiss", "unlink",
+    "link", "link-code", "requests", "allow", "dismiss", "unlink", "web-link",
 ];
 
 /// Whether `vork ARGS` is a storage command. `status` is both: on its own
@@ -557,6 +564,13 @@ async fn network_main() -> Result<()> {
                 Some(n) => format!("{n} devices"),
             };
             println!("Good for {mins} minutes, for {times}{}.", if approve { ", each one allowed by you (vork requests)" } else { "" });
+        }
+        Cmd::WebLink { config } => {
+            let s = settings(RunArgs { config, ..Default::default() })?;
+            let web = s.cfg.web.context("the dashboard is off: set web = \"0.0.0.0:8742\" in vork.toml and restart the node")?;
+            let token = std::fs::read_to_string(s.state.as_ref().context("no state directory")?.join("web.token")).context("no dashboard token yet: has the node run with web set?")?;
+            let host = if web.ip().is_unspecified() { node::machine_name() } else { web.ip().to_string() };
+            println!("http://{host}:{}/#t={}", web.port(), token.trim());
         }
         Cmd::Requests { config } => {
             let r = ask_node(config, serde_json::json!({ "cmd": "status" })).await?;

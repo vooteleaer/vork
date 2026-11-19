@@ -30,6 +30,8 @@ pub struct FileConfig {
     pub tun: Option<String>,
     /// This node's name, announced (default: the machine's name).
     pub name: Option<String>,
+    /// The web dashboard's address (`0.0.0.0:8742`): off when missing.
+    pub web: Option<String>,
     pub gateway: Option<std::net::Ipv4Addr>,
     pub paths: Option<usize>,
     pub spread: Option<String>,
@@ -156,6 +158,10 @@ map_port = true
 
 # This node's name as others see it (default: the machine's name).
 # name = "laptop"
+
+# A web dashboard (pairing codes, devices, settings) for a machine without a
+# screen: open the link `vork web-link` prints.
+# web = "0.0.0.0:8742"
 
 # Find other vØrk nodes on the local network by themselves (mDNS,
 # _vork._udp.local, which tells them this node's key and port).

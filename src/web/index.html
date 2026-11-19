@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vØrk</title>
+<style>
+  :root { --bg:#141218; --card:#211f26; --text:#e6e0e9; --dim:#a9a2b0; --accent:#d0bcff; --accent-text:#381e72; --line:#3a3640; --warn:#ffb4ab; }
+  @media (prefers-color-scheme: light) { :root { --bg:#fef7ff; --card:#f3edf7; --text:#1d1b20; --dim:#5e5a66; --accent:#6750a4; --accent-text:#fff; --line:#d7d0de; --warn:#b3261e; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { padding:20px 24px 8px; display:flex; align-items:baseline; gap:16px; flex-wrap:wrap; }
+  header h1 { margin:0; font-size:28px; font-weight:500; }
+  nav { display:flex; gap:4px; padding:0 20px; border-bottom:1px solid var(--line); }
+  nav button { background:none; border:0; color:var(--dim); padding:12px 16px; font:inherit; cursor:pointer; border-bottom:2px solid transparent; }
+  nav button.on { color:var(--text); border-bottom-color:var(--accent); }
+  main { max-width:760px; padding:16px 20px 48px; }
+  .card { background:var(--card); border-radius:16px; padding:18px 20px; margin:12px 0; }
+  .card h2 { margin:0 0 4px; font-size:18px; font-weight:500; }
+  .dim { color:var(--dim); font-size:13px; }
+  .row { display:flex; align-items:center; gap:10px; margin:6px 0; flex-wrap:wrap; }
+  .label { width:64px; font-size:12px; color:var(--dim); }
+  .mono { font-family:ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size:13px; flex:1; word-break:break-all; }
+  button.b { background:var(--accent); color:var(--accent-text); border:0; border-radius:20px; padding:8px 18px; font:inherit; cursor:pointer; }
+  button.o { background:none; color:var(--accent); border:1px solid var(--line); border-radius:20px; padding:7px 16px; font:inherit; cursor:pointer; }
+  button.t { background:none; color:var(--accent); border:0; padding:6px 10px; font:inherit; cursor:pointer; }
+  button:disabled { opacity:.4; cursor:default; }
+  input[type=text] { flex:1; min-width:200px; background:transparent; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:9px 12px; font:inherit; }
+  .switch { margin-left:auto; }
+  .note { min-height:20px; padding:6px 24px 0; font-size:13px; color:var(--dim); }
+  .ask { border:1px solid var(--accent); }
+  .err { color:var(--warn); }
+  canvas { background:#fff; border-radius:8px; display:block; margin:8px 0; }
+  .pill { font-size:12px; color:var(--dim); margin-left:auto; }
+</style>
+</head>
+<body>
+<header><h1>vØrk</h1><span id="who" class="dim"></span></header>
+<nav>
+  <button data-tab="overview" class="on">Overview</button>
+  <button data-tab="devices">My devices</button>
+  <button data-tab="settings">Settings</button>
+</nav>
+<div class="note" id="note"></div>
+<main id="main"></main>
+<script>
+"use strict";
+// The token comes with the link the node printed (#t=…), and stays in this browser.
+(function () {
+  const m = location.hash.match(/t=([0-9a-f]+)/);
+  if (m) { localStorage.setItem("vork-token", m[1]); history.replaceState(null, "", location.pathname); }
+})();
+const token = () => localStorage.getItem("vork-token") || "";
+let tab = "overview", status = {}, code = null, codeOpts = { valid: 600, many: false, approve: false };
+
+async function api(path, body) {
+  const r = await fetch(path, body ? { method: "POST", headers: { "X-Vork-Token": token(), "Content-Type": "application/json" }, body: JSON.stringify(body) }
+                                   : { headers: { "X-Vork-Token": token() } });
+  return r.json();
+}
+const cmd = (c) => api("/api/cmd", c);
+function say(t, bad) { const n = document.getElementById("note"); n.textContent = t; n.className = "note" + (bad ? " err" : ""); }
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const name = (n) => n.name || (n.address || "").slice(0, 8);
+const dns = (nm, addr) => ((nm || "").toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || addr.slice(0, 8)) + ".vork";
+const ipOf = (a) => "fd" + a.slice(0, 2) + ":" + a.slice(2, 30).match(/.{4}/g).join(":");
+async function copy(label, text) { try { await navigator.clipboard.writeText(text); say(label + " copied: " + text); } catch { say(text); } }
+
+function lines(ip, addr, nm) {
+  return [["IP", ip], ["DNS", dns(nm, addr)], ["Address", addr]].filter(([, v]) => v).map(([l, v]) =>
+    `<div class="row"><span class="label">${l}</span><span class="mono">${esc(v)}</span><button class="t" data-copy="${esc(v)}" data-label="${l}">Copy</button></div>`).join("");
+}
+function reach(n) { return (n.direct ? "direct" : `${n.hops} hop(s), relayed`) + (n.on_lan ? " · this network" : ""); }
+
+function overview() {
+  if (status.error) return `<div class="card"><h2>The vØrk node isn't answering</h2><div class="dim">${esc(status.error)}</div></div>`;
+  const up = (status.neighbors || []).filter((n) => n.up).length;
+  const by = (status.reach?.reached_by || []).length;
+  const iface = status.interface;
+  return `
+  <div class="card"><h2>${esc(status.name)} (this node)</h2>
+    <div class="dim">Running ${Math.floor((status.uptime_s || 0) / 60)} min · ${up} connected · ${(status.nodes || []).length} node(s) known</div>
+    ${lines(status.ip, status.address, status.name)}</div>
+  <div class="card"><h2>Interface for programs</h2>
+    <div class="dim">${iface ? `Programs here reach vØrk nodes at their fd… addresses (${esc(iface.name)}).` : "Off: set <code>tun = \"vork0\"</code> in vork.toml (Linux, as root) for programs on this machine to reach vØrk addresses."}</div></div>
+  <div class="card"><h2>Reachability</h2>
+    <div class="dim">${by ? `Others reach this node directly (${by} node(s) did).` : "No node has reached this one directly yet: it reaches out, and others relay for it."}</div>
+    ${(status.outside || []).length ? `<div class="dim">Seen from outside at ${esc(status.outside.join(", "))}</div>` : ""}</div>`;
+}
+
+function devices() {
+  const devs = status.settings?.devices || [];
+  const known = Object.fromEntries((status.nodes || []).map((n) => [n.address, n]));
+  const pending = status.links?.pending || [];
+  let h = `<div class="card"><h2>Pair a device</h2>
+    <div class="dim">Show a pairing code here and scan it with the vØrk app on the other device (or open its link there): they're each other's devices then.</div>`;
+  if (!code) {
+    h += `<div class="row">Valid for ${[["10 min", 600], ["1 day", 86400], ["3 days", 259200], ["7 days", 604800]].map(([l, s]) =>
+      `<button class="${codeOpts.valid === s ? "o" : "t"}" data-valid="${s}">${l}</button>`).join("")}</div>
+      <div class="row"><label><input type="checkbox" id="many" ${codeOpts.many ? "checked" : ""}> Any number of devices (else one)</label></div>
+      <div class="row"><label><input type="checkbox" id="approve" ${codeOpts.approve ? "checked" : ""}> Ask me for each device</label></div>
+      <div class="row"><button class="b" id="make">Show a code</button></div>`;
+  } else {
+    h += `<canvas id="qr" width="260" height="260"></canvas>
+      <div class="row"><span class="mono">${esc(code.uri)}</span><button class="t" data-copy="${esc(code.uri)}" data-label="Link">Copy</button></div>
+      <div class="dim">Valid ${code.valid_s >= 86400 ? code.valid_s / 86400 + " day(s)" : code.valid_s / 60 + " min"}, ${code.uses === null ? "for any number of devices" : "for one device"}${code.approve ? "; you allow each one" : ""}.</div>
+      <div class="row"><button class="o" id="done">Done</button></div>`;
+  }
+  h += `<div class="row"><input type="text" id="paste" placeholder="Or paste another device's link (vork-link:…)"><button class="b" id="link">Link</button></div></div>`;
+  if (pending.length) {
+    h += `<h3>Waiting for the other side (${pending.length})</h3>` + pending.map((p) =>
+      `<div class="row"><span>${esc(known[p.address] ? name(known[p.address]) : p.address.slice(0, 8))}</span><button class="t" style="margin-left:auto" data-unlink="${p.address}">Cancel</button></div>`).join("");
+  }
+  h += `<h3>Your devices (${devs.length})</h3>` + (devs.length ? "" : `<div class="dim">None yet.</div>`);
+  for (const a of devs) {
+    const n = known[a];
+    h += `<div class="card"><div class="row"><h2>${esc(n ? name(n) : a.slice(0, 8))}</h2><span class="pill">${n ? reach(n) : "away: not heard now"}</span></div>
+      ${lines(n ? n.ip : ipOf(a), a, n ? name(n) : a.slice(0, 8))}
+      <div class="row"><button class="t" data-unlink="${a}">Unlink</button></div></div>`;
+  }
+  return h;
+}
+
+function settings() {
+  const s = status.settings || {};
+  const tog = (key, label, on) => `<div class="row"><span>${label}</span><input class="switch" type="checkbox" data-set="${key}" ${on ? "checked" : ""}></div>`;
+  return `
+  <div class="card"><h2>Name</h2><div class="dim">How other nodes see this one.</div>
+    <div class="row"><input type="text" id="name" value="${esc(status.name)}"><button class="b" id="saveName">Save</button></div></div>
+  <div class="card"><h2>Connections</h2><div class="dim">Other nodes this one dials by address (host:port). One is enough to join; the rest is learned.</div>
+    ${(s.peers || []).map((p) => `<div class="row"><span class="mono">${esc(p)}</span><button class="t" data-peer-remove="${esc(p)}">Remove</button></div>`).join("")}
+    <div class="row"><input type="text" id="peer" placeholder="host:port"><button class="b" id="addPeer">Add</button></div></div>
+  <div class="card"><h2>Network</h2>
+    ${tog("lan", "Find nodes on this network (mDNS)", s.lan)}
+    ${tog("map_port", "Ask the router for a port (UPnP)", s.map_port)}
+    ${tog("direct", "Direct links with any node (shows them this node's address)", s.direct)}
+    ${tog("announce", "Announce this node", s.announce)}
+    <div class="dim">UDP port ${s.port} · settings in ${esc(s.file || "(no file)")}</div></div>`;
+}
+
+function requests() {
+  const r = (status.links?.requests || [])[0];
+  if (!r) return "";
+  return `<div class="card ask"><h2>${esc(r.name || r.address.slice(0, 8))} wants to be one of your devices</h2>
+    <div class="dim">${r.with_link ? "It came with a link you made. " : ""}Allowed, the two see each other in My devices and link directly. Address ${esc(r.address)}</div>
+    <div class="row"><button class="b" data-allow="${r.address}">Allow</button><button class="o" data-dismiss="${r.address}">Dismiss</button></div></div>`;
+}
+
+function draw() {
+  document.getElementById("who").textContent = status.name ? status.name + " · " + (status.address || "").slice(0, 8) : "";
+  const main = document.getElementById("main");
+  // Typing in a field isn't interrupted by the refresh.
+  if (main.contains(document.activeElement) && document.activeElement.tagName === "INPUT" && document.activeElement.type === "text") return;
+  main.innerHTML = requests() + (tab === "overview" ? overview() : tab === "devices" ? devices() : settings());
+  const c = document.getElementById("qr");
+  if (c && code) {
+    const rows = code.qr, n = rows.length, q = 4, cell = Math.floor(c.width / (n + 2 * q));
+    const g = c.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height); g.fillStyle = "#000";
+    const off = Math.floor((c.width - cell * (n + 2 * q)) / 2);
+    rows.forEach((row, y) => [...row].forEach((b, x) => { if (b === "1") g.fillRect(off + (x + q) * cell, off + (y + q) * cell, cell, cell); }));
+  }
+}
+
+async function refresh() {
+  if (!token()) { status = { error: "Open the dashboard with the link the node printed: `vork web-link` shows it." }; draw(); return; }
+  try { status = await api("/api/status"); } catch (e) { status = { error: "can't reach the node" }; }
+  draw();
+}
+
+async function done(r, ok) { if (r.error) say(r.error, true); else say(ok + (r.restart ? " (after the node restarts)" : "")); await refresh(); }
+
+document.addEventListener("click", async (e) => {
+  const t = e.target.closest("button, input[type=checkbox]");
+  if (!t) return;
+  const d = t.dataset;
+  if (d.tab) { tab = d.tab; document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("on", b === t)); code = null; draw(); }
+  else if (d.copy) copy(d.label, d.copy);
+  else if (d.valid) { codeOpts.valid = +d.valid; draw(); }
+  else if (t.id === "many") codeOpts.many = t.checked;
+  else if (t.id === "approve") codeOpts.approve = t.checked;
+  else if (t.id === "make") { const r = await cmd({ cmd: "link_code", valid_s: codeOpts.valid, uses: codeOpts.many ? 0 : 1, approve: codeOpts.approve }); if (r.error) say(r.error, true); else { code = r; draw(); } }
+  else if (t.id === "done") { code = null; draw(); }
+  else if (t.id === "link") {
+    const v = document.getElementById("paste").value.trim();
+    const m = v.match(/^(?:vork-link:|vork:link\/)?([0-9a-fA-F]{32})(?:\?(.*))?$/);
+    if (!m) return say("That isn't a vØrk link or address", true);
+    const c = new URLSearchParams(m[2] || "").get("c") || "";
+    document.getElementById("paste").value = "";
+    done(await cmd({ cmd: "link", address: m[1].toLowerCase(), code: c }), c ? "Linking…" : "Asked: linked once its owner allows it");
+  }
+  else if (d.unlink) done(await cmd({ cmd: "unlink", address: d.unlink }), "Unlinked (the other side is told)");
+  else if (d.allow) done(await cmd({ cmd: "link_allow", address: d.allow }), "Allowed: one of your devices now");
+  else if (d.dismiss) done(await cmd({ cmd: "link_dismiss", address: d.dismiss }), "Dismissed");
+  else if (t.id === "saveName") done(await cmd({ cmd: "set", key: "name", value: document.getElementById("name").value.trim() }), "Saved");
+  else if (t.id === "addPeer") { let v = document.getElementById("peer").value.trim(); if (!v) return; if (!v.includes(":")) v += ":51820"; done(await cmd({ cmd: "peer_add", addr: v }), "Connecting to " + v); }
+  else if (d.peerRemove) done(await cmd({ cmd: "peer_remove", addr: d.peerRemove }), "Removed");
+  else if (d.set) done(await cmd({ cmd: "set", key: d.set, value: t.checked }), "Saved");
+});
+
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>

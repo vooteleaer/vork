@@ -318,6 +318,8 @@ pub struct Config {
     pub name: String,
     /// The `vork.toml` it was started with: changed by control commands.
     pub config_path: Option<std::path::PathBuf>,
+    /// The web dashboard's address, if it's on.
+    pub web: Option<SocketAddr>,
     /// The router for PCP/NAT-PMP; guessed as x.y.z.1 if not given.
     pub gateway: Option<std::net::Ipv4Addr>,
     /// How many paths (through different first hops) a session opens.
@@ -788,6 +790,20 @@ impl Node {
             }
         }
         let mut tun = self.tun.clone();
+        // The web dashboard: its requests are control requests from the owner.
+        let (web_tx, mut web_rx) = tokio::sync::mpsc::channel::<crate::control::Request>(16);
+        if let Some(addr) = self.cfg.web {
+            let token = crate::web::token(self.state.dir());
+            match crate::web::serve(addr, token.clone(), web_tx).await {
+                Ok(()) => {
+                    let host = if addr.ip().is_unspecified() { machine_name() } else { addr.ip().to_string() };
+                    log(format!("dashboard at http://{host}:{}/#t={token}", addr.port()));
+                }
+                Err(e) => warn(format!("no dashboard on {addr}: {e:#}")),
+            }
+        } else {
+            drop(web_tx);
+        }
         let mut tun_buf = vec![0u8; 65536];
         let mut last_remember = Instant::now();
         let mut last_seek = Instant::now();
@@ -876,6 +892,9 @@ impl Node {
                 }
                 Some(ev) = async { match api_rx.as_mut() { Some(rx) => rx.recv().await, None => std::future::pending().await } } => {
                     self.on_api(ev);
+                }
+                Some((req, owner, reply)) = web_rx.recv() => {
+                    let _ = reply.send(self.on_control(&req, owner));
                 }
                 Some((req, owner, reply)) = async { match ctrl_rx.as_mut() { Some(rx) => rx.recv().await, None => std::future::pending().await } } => {
                     let _ = reply.send(self.on_control(&req, owner));
