@@ -1,35 +1,31 @@
-vork on Debian, Ubuntu and Raspberry Pi OS
-============================================
+vØrk on Debian and Ubuntu
+=========================
 
-This is a prototype. The formats still change and the crypto awaits an
-external review: keep nothing in it you can't lose.
+This is a prototype: the network format still changes between versions,
+and nothing has been audited.
 
 What runs
 ---------
-- vorkd, as a systemd user service in every user's session
-  (`systemctl --user status vorkd`). Its store is ~/.local/share/vork.
 - The vØrk node, as a system service (`systemctl status vork`,
   `vork status`). Its configuration is /etc/vork/vork.toml, its identity
-  and sockets /var/lib/vork. vorkd reaches it through
-  /var/lib/vork/api.sock and reconnects by itself when the node restarts.
-  Its connections are `peers` in vork.toml: another node's `host:port`
-  (its key is asked for on first contact) or `host:port@key`. The
-  vork-desktop utility adds them there and dials them at once.
+  and control socket /var/lib/vork. A new install turns on the interface
+  (`tun = "vork0"`), so programs reach vØrk addresses (198.18.x.x, fd...)
+  and .vork names.
+- vork-net, the window and tray icon: "vØrk" in the applications menu,
+  and in the tray at every login (/etc/xdg/autostart/vork-net.desktop).
+  It talks to the node through its control socket.
+
+Who may manage the node
+-----------------------
+root and the users in `operators` in /etc/vork/vork.toml; the user who
+installed the package is put there. Others see only the node's status.
+After changing the file: sudo systemctl restart vork.
 
 First steps
 -----------
-    vork ping                 the daemon and this node's address
-    vork heard                public libraries announced on the network
-    vork library join NAME ADDRESS --lazy
-    vork nodes                storage nodes heard
-    (every library is a folder in ~/vork/NAME: vorkd mounts them itself)
-    vork unmount NAME         takes one down until vorkd starts again
+    vork status               this node, its neighbors and sessions
+    vork link-code            a QR code and link to link another device
+    vork link 'vork-link:...' link this device to another
+    vork web-link             the dashboard for a browser (needs web = ...)
 
-Optional services (systemctl --user enable --now ...):
-    vork-gateway              libraries as websites at http://NAME.localhost:8740/
-    vork-mount@NAME           a library mounted by systemd instead (vorkd --no-mounts)
-    vork-extractd             attributes from files (see the unit for its token)
-
-Settings: ~/.local/share/vork/vork.toml (the daemon writes a commented
-one at first start). Headless machines: `sudo loginctl enable-linger USER`
-keeps the user services running without a login.
+More: https://github.com/vooteleaer/vork

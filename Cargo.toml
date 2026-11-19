@@ -20,7 +20,7 @@ cloud-filter = { path = "vendor/cloud-filter" }
 
 [package]
 name = "vork"
-version = "0.0.1"
+version = "0.1.0"
 edition.workspace = true
 description = "Phase-1 prototype: serverless identity-addressed network over WireGuard (boringtun)"
 license.workspace = true

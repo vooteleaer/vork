@@ -214,10 +214,20 @@ mod window {
     enum UserEvent {
         Menu(MenuEvent),
         Tray(TrayIconEvent),
+        /// Another start of vork-net asked for the window.
+        Show,
     }
 
     pub fn run(hidden: bool) {
         let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
+        let proxy = event_loop.create_proxy();
+        // One per user: a second start shows this one's window and ends
+        // (one started at login, `--hidden`, just ends).
+        if !single::claim(hidden, move || {
+            let _ = proxy.send_event(UserEvent::Show);
+        }) {
+            return;
+        }
         let proxy = event_loop.create_proxy();
         MenuEvent::set_event_handler(Some(move |e| {
             let _ = proxy.send_event(UserEvent::Menu(e));
@@ -312,10 +322,75 @@ mod window {
                     *flow = ControlFlow::Exit;
                 }
                 Event::UserEvent(UserEvent::Menu(e)) if e.id == open.id() => show(&window),
+                Event::UserEvent(UserEvent::Show) => show(&window),
                 Event::UserEvent(UserEvent::Tray(TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. })) => show(&window),
                 _ => {}
             }
         });
+    }
+
+    /// One vork-net per user.
+    mod single {
+        /// Whether this is the first: then `show` is called whenever another
+        /// start asks for the window. A later one asks (unless it starts
+        /// hidden) and gets false.
+        #[cfg(windows)]
+        pub fn claim(hidden: bool, show: impl Fn() + Send + 'static) -> bool {
+            use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
+            use windows_sys::Win32::System::Threading::{CreateEventW, INFINITE, SetEvent, WaitForSingleObject};
+            let name: Vec<u16> = "Local\\vork-net-show\0".encode_utf16().collect();
+            // Safe: the name is NUL-terminated; the handle lives as long as the process.
+            let event = unsafe { CreateEventW(std::ptr::null(), 0, 0, name.as_ptr()) };
+            if event.is_null() {
+                return true;
+            }
+            if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+                if !hidden {
+                    unsafe { SetEvent(event) };
+                }
+                return false;
+            }
+            let event = event as usize;
+            std::thread::spawn(move || {
+                loop {
+                    unsafe { WaitForSingleObject(event as _, INFINITE) };
+                    show();
+                }
+            });
+            true
+        }
+
+        #[cfg(unix)]
+        pub fn claim(hidden: bool, show: impl Fn() + Send + 'static) -> bool {
+            use std::os::unix::net::{UnixListener, UnixStream};
+            let dir = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir);
+            let path = dir.join(format!("vork-net-{}.sock", unsafe { libc_getuid() }));
+            use std::io::{Read, Write};
+            if let Ok(mut other) = UnixStream::connect(&path) {
+                // A byte is the request; one started hidden doesn't make it.
+                if !hidden {
+                    let _ = other.write_all(b"s");
+                }
+                return false;
+            }
+            let _ = std::fs::remove_file(&path);
+            let Ok(listener) = UnixListener::bind(&path) else { return true };
+            std::thread::spawn(move || {
+                for mut conn in listener.incoming().flatten() {
+                    let mut b = [0u8; 1];
+                    if conn.read(&mut b).is_ok_and(|n| n == 1) {
+                        show();
+                    }
+                }
+            });
+            true
+        }
+
+        #[cfg(unix)]
+        unsafe extern "C" {
+            #[link_name = "getuid"]
+            fn libc_getuid() -> u32;
+        }
     }
 
     fn show(window: &tao::window::Window) {

@@ -10,36 +10,47 @@ use windows::Win32::UI::Shell::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 static PAYLOAD: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/payload.zst"));
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The version the build script names (`0.1.0`, `0.1.0-dev.88`).
+const VERSION: &str = match option_env!("VORK_SETUP_VERSION") {
+    Some(v) => v,
+    None => env!("CARGO_PKG_VERSION"),
+};
 const RUN_KEY: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
 const UNINSTALL_KEY: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\vork");
-/// The `vork:` URL protocol, this user's.
-const LINK_KEY: PCWSTR = w!("Software\\Classes\\vork");
-/// Our own programs: stopped before files are replaced or removed.
-// vork.exe last of all: the node (and the command), after vorkd has stopped.
-const PROGRAMS: [&str; 6] = ["vork-desktop.exe", "vorkd.exe", "vork-cloudfiles.exe", "vork-photos.exe", "vork-map.exe", "vork.exe"];
-/// The Start menu's entries: (program, shortcut name, what it says), each
-/// made when the installer brings its program.
-const SHORTCUTS: [(&str, &str, &str); 3] = [
-    ("vork-desktop.exe", "vork", "vork: this device, its libraries and how they're kept"),
-    ("vork-photos.exe", "vork Photos", "Photos in your vork libraries"),
-    ("vork-map.exe", "vork Map", "Everything in your vork libraries that says where it is"),
-];
+const ENV_KEY: PCWSTR = w!("SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment");
+const FIREWALL_RULE: &str = "vØrk";
+const SERVICE: &str = "vork";
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 fn install_dir() -> PathBuf {
-    PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap_or_default()).join("Programs").join("vork")
+    PathBuf::from(std::env::var_os("ProgramFiles").unwrap_or_else(|| "C:\\Program Files".into())).join("vork")
 }
 
-fn shortcut_path(name: &str) -> PathBuf {
-    PathBuf::from(std::env::var_os("APPDATA").unwrap_or_default()).join(format!("Microsoft\\Windows\\Start Menu\\Programs\\{name}.lnk"))
+fn config_path() -> PathBuf {
+    PathBuf::from(std::env::var_os("ProgramData").unwrap_or_else(|| "C:\\ProgramData".into())).join("vork").join("vork.toml")
+}
+
+fn shortcut_path() -> PathBuf {
+    PathBuf::from(std::env::var_os("ProgramData").unwrap_or_else(|| "C:\\ProgramData".into())).join("Microsoft\\Windows\\Start Menu\\Programs\\vØrk.lnk")
 }
 
 fn ask(text: &str, flags: MESSAGEBOX_STYLE) -> MESSAGEBOX_RESULT {
-    unsafe { MessageBoxW(None, &HSTRING::from(text), w!("vork setup"), flags) }
+    unsafe { MessageBoxW(None, &HSTRING::from(text), w!("vØrk setup"), flags) }
 }
 
 pub fn run() {
+    // The node is a service and the interface needs an administrator: ask
+    // Windows to start this again elevated (the UAC prompt).
+    if !unsafe { IsUserAnAdmin() }.as_bool() {
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        if let Ok(me) = std::env::current_exe() {
+            let r = unsafe { ShellExecuteW(None, w!("runas"), &HSTRING::from(me.as_os_str()), &HSTRING::from(args.join(" ")), None, SW_SHOWNORMAL) };
+            if r.0 as isize <= 32 {
+                ask("vØrk needs an administrator to install (it runs as a Windows service and makes a network interface).", MB_OK | MB_ICONERROR);
+            }
+        }
+        return;
+    }
     if std::env::args().any(|a| a == "--uninstall") {
         uninstall();
     } else {
@@ -50,10 +61,11 @@ pub fn run() {
 fn install() {
     let dir = install_dir();
     let quiet = std::env::args().any(|a| a == "--quiet");
+    let upgrade = dir.join("vork.exe").exists();
     if !quiet
         && ask(
             &format!(
-                "Install vork {VERSION} for this user?\n\nIt goes to {} and starts with your login (in the notification area). The vØrk node comes with it and runs while you're logged in; Windows may ask once to let it through the firewall (UDP port 51820).\n\nvork is a prototype: its formats still change. Keep nothing in it you can't lose.",
+                "Install vØrk {VERSION}?\n\nThe vØrk node runs as a Windows service and starts with the computer; the vØrk window waits in the notification area. They go to {}.\n\nvØrk is a prototype: its network format still changes between versions.",
                 dir.display()
             ),
             MB_OKCANCEL | MB_ICONINFORMATION,
@@ -61,76 +73,78 @@ fn install() {
     {
         return;
     }
-    match install_files(&dir).and_then(|()| register(&dir)) {
+    match install_all(&dir) {
         Ok(()) => {
-            // Started now as at login, with its window.
-            let _ = Command::new(dir.join("vork-desktop.exe")).args(["--autostart", "--show"]).spawn();
+            // Started as the signed-in user, not as the administrator this runs as.
+            let _ = Command::new("explorer.exe").arg(dir.join("vork-net.exe")).spawn();
             if !quiet {
-                ask(
-                    "vork is installed and running: its icon is in the notification area.\n\nOn the Network tab, add a connection to another vØrk node (its address, host:port) to reach others beyond this network. The vork command works in a new terminal.",
-                    MB_OK | MB_ICONINFORMATION,
-                );
+                let text = if upgrade {
+                    format!("vØrk is updated to {VERSION} and running again.")
+                } else {
+                    "vØrk is installed and running. Its window is open, and its icon stays in the notification area.\n\nNext: link your other devices (Devices → Show a code), and `vork` works in a new terminal.".to_string()
+                };
+                ask(&text, MB_OK | MB_ICONINFORMATION);
             }
         }
         Err(e) => {
-            ask(&format!("vork couldn't be installed:\n\n{e}"), MB_OK | MB_ICONERROR);
+            ask(&format!("vØrk couldn't be installed:\n\n{e}"), MB_OK | MB_ICONERROR);
         }
     }
 }
 
-/// Stops our programs (by name), the vØrk node last. vorkd is asked to stop first, so it closes its store:
-/// killed, its index is checked at the next start (minutes on a large
-/// store). Killed only if it hasn't stopped within 35 s.
-fn stop_programs() {
-    let kill = |p: &str| {
-        let _ = Command::new("taskkill").args(["/IM", p, "/F"]).creation_flags_hidden().output();
-    };
-    // The utility first: it would start vorkd again.
-    kill("vork-desktop.exe");
-    let cli = install_dir().join("vork.exe");
-    if running("vorkd.exe") && cli.exists() {
-        // An older vork.exe has no `stop`: then it's killed as before.
-        if Command::new(&cli).arg("stop").creation_flags_hidden().output().is_ok_and(|o| o.status.success()) {
-            for _ in 0..70 {
-                if !running("vorkd.exe") {
-                    break;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(500));
-            }
-        }
+fn install_all(dir: &Path) -> Result<(), String> {
+    stop_programs();
+    install_files(dir)?;
+    configure(dir)?;
+    service(dir)?;
+    firewall(dir);
+    register(dir)
+}
+
+trait Hidden {
+    fn hidden(&mut self) -> &mut Self;
+}
+
+impl Hidden for Command {
+    fn hidden(&mut self) -> &mut Self {
+        use std::os::windows::process::CommandExt;
+        self.creation_flags(CREATE_NO_WINDOW)
     }
-    for p in PROGRAMS {
-        kill(p);
-    }
-    std::thread::sleep(std::time::Duration::from_millis(800));
 }
 
 /// Whether a program of this name runs.
 fn running(exe: &str) -> bool {
     Command::new("tasklist")
         .args(["/FI", &format!("IMAGENAME eq {exe}"), "/NH"])
-        .creation_flags_hidden()
+        .hidden()
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_ascii_lowercase().contains(&exe.to_ascii_lowercase()))
         .unwrap_or(false)
 }
 
-trait Hidden {
-    fn creation_flags_hidden(&mut self) -> &mut Self;
+fn service_exists() -> bool {
+    Command::new("sc.exe").args(["query", SERVICE]).hidden().output().is_ok_and(|o| o.status.success())
 }
 
-impl Hidden for Command {
-    fn creation_flags_hidden(&mut self) -> &mut Self {
-        use std::os::windows::process::CommandExt;
-        self.creation_flags(CREATE_NO_WINDOW)
+/// The window first (every user's), then the service, which saves its state
+/// as it stops; whatever is left of vork.exe after 15 s is ended.
+fn stop_programs() {
+    let _ = Command::new("taskkill").args(["/IM", "vork-net.exe", "/F"]).hidden().output();
+    if service_exists() {
+        let _ = Command::new("sc.exe").args(["stop", SERVICE]).hidden().output();
     }
+    for _ in 0..30 {
+        if !running("vork.exe") {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    let _ = Command::new("taskkill").args(["/IM", "vork.exe", "/F"]).hidden().output();
+    std::thread::sleep(std::time::Duration::from_millis(500));
 }
 
-/// Writes a program file, waiting for a stopped program to let go of it:
-/// `taskkill /F` returns before the process is gone, and the utility may
-/// start vorkd again meanwhile (an update failed with "being used by
-/// another process"). Our programs are stopped again between tries, for up
-/// to ten seconds.
+/// Writes a program file, waiting for a stopped program to let go of it
+/// (`taskkill /F` returns before the process is gone).
 fn write_when_free(target: &Path, bytes: &[u8]) -> Result<(), String> {
     const ERROR_SHARING_VIOLATION: i32 = 32;
     let mut tries = 0;
@@ -147,7 +161,6 @@ fn write_when_free(target: &Path, bytes: &[u8]) -> Result<(), String> {
 }
 
 fn install_files(dir: &Path) -> Result<(), String> {
-    stop_programs();
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let mut packed = Vec::new();
     zstd::Decoder::new(PAYLOAD).and_then(|mut d| d.read_to_end(&mut packed)).map_err(|e| format!("the installer is damaged: {e}"))?;
@@ -158,35 +171,79 @@ fn install_files(dir: &Path) -> Result<(), String> {
         at += 2 + n;
         let len = u64::from_le_bytes(packed[at..at + 8].try_into().unwrap()) as usize;
         at += 8;
-        let target = dir.join(&name);
-        write_when_free(&target, &packed[at..at + len])?;
+        write_when_free(&dir.join(&name), &packed[at..at + len])?;
         at += len;
     }
-    // The prnsd older installers brought (where it still runs, it stays
-    // until the next install).
-    let _ = std::fs::remove_file(dir.join("prnsd.exe"));
+    // A self-update's leftovers (ADR-0028): the binary it replaced.
+    let _ = std::fs::remove_file(dir.join("vork.exe.previous"));
     // The installer itself, to uninstall with.
     if let Ok(me) = std::env::current_exe() {
-        let _ = std::fs::copy(me, dir.join("vork-setup.exe"));
+        if me.parent() != Some(dir) {
+            let _ = std::fs::copy(me, dir.join("vork-setup.exe"));
+        }
     }
     Ok(())
 }
 
-unsafe fn set_string(key: HKEY, name: PCWSTR, value: &str) -> Result<(), String> {
+/// A new node: its configuration and identity in %ProgramData%\vork, with the
+/// interface on. An existing configuration is left as it is.
+fn configure(dir: &Path) -> Result<(), String> {
+    let config = config_path();
+    if config.exists() {
+        return Ok(());
+    }
+    let o = Command::new(dir.join("vork.exe")).arg("init").hidden().output().map_err(|e| format!("vork init: {e}"))?;
+    if !o.status.success() {
+        return Err(format!("vork init: {}", String::from_utf8_lossy(&o.stderr).trim()));
+    }
+    let text = std::fs::read_to_string(&config).map_err(|e| format!("{}: {e}", config.display()))?;
+    // Programs reach vØrk addresses and .vork names through the interface.
+    let text = text.replacen("# tun = \"vork0\"", "tun = \"vork\"", 1);
+    std::fs::write(&config, text).map_err(|e| format!("{}: {e}", config.display()))
+}
+
+fn service(dir: &Path) -> Result<(), String> {
+    if service_exists() {
+        let _ = Command::new("sc.exe").args(["start", SERVICE]).hidden().output();
+        return Ok(());
+    }
+    let o = Command::new(dir.join("vork.exe"))
+        .args(["service", "install", "--config"])
+        .arg(config_path())
+        .hidden()
+        .output()
+        .map_err(|e| format!("vork service install: {e}"))?;
+    if !o.status.success() {
+        return Err(format!("vork service install: {}", String::from_utf8_lossy(&o.stderr).trim()));
+    }
+    Ok(())
+}
+
+/// Lets the node's UDP in (any port: it may be told to listen elsewhere).
+fn firewall(dir: &Path) {
+    let _ = Command::new("netsh").args(["advfirewall", "firewall", "delete", "rule", &format!("name={FIREWALL_RULE}")]).hidden().output();
+    let _ = Command::new("netsh")
+        .args(["advfirewall", "firewall", "add", "rule", &format!("name={FIREWALL_RULE}"), "dir=in", "action=allow", "protocol=UDP", "enable=yes"])
+        .arg(format!("program={}", dir.join("vork.exe").display()))
+        .hidden()
+        .output();
+}
+
+unsafe fn set_string(key: HKEY, name: PCWSTR, value: &str, kind: REG_VALUE_TYPE) -> Result<(), String> {
     let wide: Vec<u16> = value.encode_utf16().chain(Some(0)).collect();
     let bytes = std::slice::from_raw_parts(wide.as_ptr() as *const u8, wide.len() * 2);
-    RegSetValueExW(key, name, 0, REG_SZ, Some(bytes)).ok().map_err(|e| e.to_string())
+    RegSetValueExW(key, name, 0, kind, Some(bytes)).ok().map_err(|e| e.to_string())
 }
 
 unsafe fn open_key(path: PCWSTR) -> Result<HKEY, String> {
     let mut key = HKEY::default();
-    RegCreateKeyExW(HKEY_CURRENT_USER, path, 0, None, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, None, &mut key, None).ok().map_err(|e| e.to_string())?;
+    RegCreateKeyExW(HKEY_LOCAL_MACHINE, path, 0, None, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, None, &mut key, None).ok().map_err(|e| e.to_string())?;
     Ok(key)
 }
 
-/// The user's PATH (unexpanded, as stored).
-unsafe fn user_path() -> String {
-    let Ok(key) = open_key(w!("Environment")) else { return String::new() };
+/// The machine's PATH (unexpanded, as stored).
+unsafe fn system_path() -> String {
+    let Ok(key) = open_key(ENV_KEY) else { return String::new() };
     let mut size = 0u32;
     let mut kind = REG_VALUE_TYPE::default();
     let _ = RegQueryValueExW(key, w!("Path"), None, Some(&mut kind), None, Some(&mut size));
@@ -199,11 +256,9 @@ unsafe fn user_path() -> String {
     String::from_utf16_lossy(&buf).trim_end_matches('\0').to_string()
 }
 
-unsafe fn set_user_path(value: &str) -> Result<(), String> {
-    let key = open_key(w!("Environment"))?;
-    let wide: Vec<u16> = value.encode_utf16().chain(Some(0)).collect();
-    let bytes = std::slice::from_raw_parts(wide.as_ptr() as *const u8, wide.len() * 2);
-    let r = RegSetValueExW(key, w!("Path"), 0, REG_EXPAND_SZ, Some(bytes)).ok().map_err(|e| e.to_string());
+unsafe fn set_system_path(value: &str) -> Result<(), String> {
+    let key = open_key(ENV_KEY)?;
+    let r = set_string(key, w!("Path"), value, REG_EXPAND_SZ);
     let _ = RegCloseKey(key);
     // Running programs (Explorer) learn the new PATH.
     let mut result = 0usize;
@@ -214,50 +269,31 @@ unsafe fn set_user_path(value: &str) -> Result<(), String> {
 fn register(dir: &Path) -> Result<(), String> {
     let d = dir.display().to_string();
     unsafe {
+        // The window, in the tray, at every user's login.
         let run = open_key(RUN_KEY)?;
-        set_string(run, w!("vork"), &format!("\"{d}\\vork-desktop.exe\" --autostart"))?;
+        set_string(run, w!("vork"), &format!("\"{d}\\vork-net.exe\" --hidden"), REG_SZ)?;
         let _ = RegCloseKey(run);
 
-        let path = user_path();
+        let path = system_path();
         if !path.split(';').any(|p| p.eq_ignore_ascii_case(&d)) {
             let new = if path.trim().is_empty() { d.clone() } else { format!("{};{d}", path.trim_end_matches(';')) };
-            set_user_path(&new)?;
+            set_system_path(&new)?;
         }
 
         let un = open_key(UNINSTALL_KEY)?;
-        set_string(un, w!("DisplayName"), "vork")?;
-        set_string(un, w!("DisplayVersion"), VERSION)?;
-        set_string(un, w!("Publisher"), "vork")?;
-        set_string(un, w!("InstallLocation"), &d)?;
-        set_string(un, w!("DisplayIcon"), &format!("{d}\\vork-desktop.exe"))?;
-        set_string(un, w!("UninstallString"), &format!("\"{d}\\vork-setup.exe\" --uninstall"))?;
-        set_string(un, w!("URLInfoAbout"), "https://github.com/vooteleaer/retifs")?;
+        set_string(un, w!("DisplayName"), "vØrk", REG_SZ)?;
+        set_string(un, w!("DisplayVersion"), VERSION, REG_SZ)?;
+        set_string(un, w!("Publisher"), "vØrk", REG_SZ)?;
+        set_string(un, w!("InstallLocation"), &d, REG_SZ)?;
+        set_string(un, w!("DisplayIcon"), &format!("{d}\\vork-net.exe"), REG_SZ)?;
+        set_string(un, w!("UninstallString"), &format!("\"{d}\\vork-setup.exe\" --uninstall"), REG_SZ)?;
+        set_string(un, w!("URLInfoAbout"), "https://github.com/vooteleaer/vork", REG_SZ)?;
         let one = 1u32.to_le_bytes();
         let _ = RegSetValueExW(un, w!("NoModify"), 0, REG_DWORD, Some(&one));
         let _ = RegSetValueExW(un, w!("NoRepair"), 0, REG_DWORD, Some(&one));
         let _ = RegCloseKey(un);
 
-        for (program, name, about) in SHORTCUTS {
-            let target = dir.join(program);
-            if target.exists() {
-                shortcut(&target, &shortcut_path(name), about)?;
-            }
-        }
-
-        // vØrk storage: links (invitations, libraries) open in the utility, which
-        // asks before joining anything.
-        if dir.join("vork-desktop.exe").exists() {
-            let scheme = open_key(LINK_KEY)?;
-            set_string(scheme, PCWSTR::null(), "URL:vork link")?;
-            set_string(scheme, w!("URL Protocol"), "")?;
-            let _ = RegCloseKey(scheme);
-            let open = open_key(w!("Software\\Classes\\vork\\shell\\open\\command"))?;
-            set_string(open, PCWSTR::null(), &format!("\"{d}\\vork-desktop.exe\" --open \"%1\""))?;
-            let _ = RegCloseKey(open);
-            let icon = open_key(w!("Software\\Classes\\vork\\DefaultIcon"))?;
-            set_string(icon, PCWSTR::null(), &format!("\"{d}\\vork-desktop.exe\",0"))?;
-            let _ = RegCloseKey(icon);
-        }
+        shortcut(&dir.join("vork-net.exe"), &shortcut_path(), "vØrk: your devices, the network, the firewall")?;
     }
     Ok(())
 }
@@ -281,30 +317,32 @@ unsafe fn shortcut(target: &Path, at: &Path, about: &str) -> Result<(), String> 
 fn uninstall() {
     let dir = install_dir();
     if ask(
-        "Uninstall vork?\n\nIts programs are removed. Your data stays: the store and the node's settings and identity in %LOCALAPPDATA%\\vork (delete them yourself if you no longer want them).",
+        "Uninstall vØrk?\n\nThe service and the programs are removed. This node's identity and settings stay in %ProgramData%\\vork (delete the folder yourself to forget them).",
         MB_OKCANCEL | MB_ICONQUESTION,
     ) != IDOK
     {
         return;
     }
+    let _ = Command::new("taskkill").args(["/IM", "vork-net.exe", "/F"]).hidden().output();
+    if service_exists() {
+        let _ = Command::new(dir.join("vork.exe")).args(["service", "uninstall"]).hidden().output();
+    }
     stop_programs();
+    let _ = Command::new("netsh").args(["advfirewall", "firewall", "delete", "rule", &format!("name={FIREWALL_RULE}")]).hidden().output();
     let d = dir.display().to_string();
     unsafe {
         if let Ok(run) = open_key(RUN_KEY) {
             let _ = RegDeleteValueW(run, w!("vork"));
             let _ = RegCloseKey(run);
         }
-        let path = user_path();
+        let path = system_path();
         let kept: Vec<&str> = path.split(';').filter(|p| !p.is_empty() && !p.eq_ignore_ascii_case(&d)).collect();
         if kept.len() != path.split(';').filter(|p| !p.is_empty()).count() {
-            let _ = set_user_path(&kept.join(";"));
+            let _ = set_system_path(&kept.join(";"));
         }
-        let _ = RegDeleteTreeW(HKEY_CURRENT_USER, UNINSTALL_KEY);
-        let _ = RegDeleteTreeW(HKEY_CURRENT_USER, LINK_KEY);
+        let _ = RegDeleteTreeW(HKEY_LOCAL_MACHINE, UNINSTALL_KEY);
     }
-    for (_, name, _) in SHORTCUTS {
-        let _ = std::fs::remove_file(shortcut_path(name));
-    }
+    let _ = std::fs::remove_file(shortcut_path());
     // Every file but the running uninstaller, which a hidden shell removes
     // with the folder once this has exited.
     if let Ok(entries) = std::fs::read_dir(&dir) {
@@ -314,6 +352,6 @@ fn uninstall() {
             }
         }
     }
-    let _ = Command::new("cmd").args(["/C", &format!("ping -n 3 127.0.0.1 >nul & rmdir /S /Q \"{d}\"")]).creation_flags_hidden().spawn();
-    ask("vork is uninstalled. Your data is still there.", MB_OK | MB_ICONINFORMATION);
+    let _ = Command::new("cmd").args(["/C", &format!("ping -n 3 127.0.0.1 >nul & rmdir /S /Q \"{d}\"")]).hidden().spawn();
+    ask("vØrk is uninstalled. This node's identity is still in %ProgramData%\\vork.", MB_OK | MB_ICONINFORMATION);
 }

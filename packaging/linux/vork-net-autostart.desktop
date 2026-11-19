@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=vØrk
+Comment=vØrk's icon in the tray
+Exec=vork-net --hidden
+Icon=vork
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

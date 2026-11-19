@@ -1,15 +1,18 @@
-//! vork-setup.exe: installs vØrk (the node and storage) for the current user, no administrator
-//! needed, and uninstalls it (`--uninstall`, from Apps & features).
+//! vork-setup.exe: installs vØrk the network for the whole computer, and
+//! uninstalls it (`--uninstall`, from Apps & features). Storage isn't part of it.
 //!
-//! - The programs go to `%LOCALAPPDATA%\Programs\vork`: vorkd, the
-//!   vØrk storage command, the Cloud Files provider and vork-desktop, the
-//!   utility in the notification area, and the vØrk node (`vork`).
-//! - vork-desktop starts at login (`--autostart`) and starts the node, then
-//!   vorkd on it; nothing runs as a service.
-//! - The folder is put on the user's PATH (for `vork`), a Start menu
-//!   shortcut is made, and Apps & features lists it.
-//! - Uninstalling removes all that and leaves the user's data: the store in
-//!   `%LOCALAPPDATA%\vork` (the node's settings and identity in `node\`).
+//! - It asks for an administrator (UAC): the node runs as a Windows service
+//!   and makes a network interface (wintun).
+//! - The programs go to `%ProgramFiles%\vork`: the node (`vork.exe`),
+//!   `wintun.dll` next to it, and the window with its tray icon (`vork-net.exe`).
+//! - A new node gets its configuration and identity in `%ProgramData%\vork`,
+//!   with the interface on; an existing one is kept as it is.
+//! - The node is the `vork` service (started at boot), let through the
+//!   firewall; vork-net starts in the tray at every login; the folder is on
+//!   the PATH (for `vork`); the Start menu and Apps & features list it.
+//! - An upgrade stops the window and the service, replaces the programs and
+//!   starts them again.
+//! - Uninstalling removes all that and keeps `%ProgramData%\vork`.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 #[cfg(windows)]

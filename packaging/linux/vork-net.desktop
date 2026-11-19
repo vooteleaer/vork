@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=vØrk
+GenericName=Private network
+Comment=Your devices, the network and the firewall of this vØrk node
+Exec=vork-net
+Icon=vork
+Terminal=false
+Categories=Network;
+Keywords=vpn;network;wireguard;vork;
+StartupWMClass=vork-net
