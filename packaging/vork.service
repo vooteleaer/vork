@@ -20,6 +20,8 @@ ExecStart=/usr/local/bin/vork run --config /etc/vork/vork.toml
 Restart=on-failure
 RestartSec=3
 KillSignal=SIGINT
+# A node that does not stop on SIGINT in time is killed (state is saved as it goes).
+TimeoutStopSec=15
 StateDirectory=vork
 # Readable by local users: their programs reach the node through api.sock and
 # control.sock here; the key itself is 0600.
