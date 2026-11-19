@@ -170,8 +170,9 @@ map_port = true
 # Offer this node as an exit node: the owner's devices may send their internet
 # traffic (IPv4) out through it (Linux, with the interface on).
 # exit = true
-# Send this node's internet traffic out through one of the owner's devices.
-# exit_via = "5f7a9ac63dc07c1176bff951d6a2641d"
+# Send this node's internet traffic out through one of the owner's devices
+# (its address), or "auto": the fastest of them that offers itself.
+# exit_via = "auto"
 
 # Find other vØrk nodes on the local network by themselves (mDNS,
 # _vork._udp.local, which tells them this node's key and port).

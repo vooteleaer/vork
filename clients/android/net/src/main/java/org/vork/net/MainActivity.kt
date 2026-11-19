@@ -332,11 +332,24 @@ fun Overview(node: Node, s: JSONObject, said: (String) -> Unit) {
                     }
                     if (!on) VorkVpn.state?.let { Text(it, style = small) }
                     val via = s.optJSONObject("settings")?.optString("exit_via").orEmpty()
+                    // Automatic exit node: the fastest of your devices offering it (ADR-0026).
+                    val auto = s.optJSONObject("settings")?.optBoolean("exit_auto") == true
+                    val scope = rememberCoroutineScope()
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Exit node: automatic", style = MaterialTheme.typography.titleSmall)
+                            Text("Internet through the fastest of your devices that offer it; directly when none answers.", style = small)
+                        }
+                        Switch(checked = auto, onCheckedChange = { want ->
+                            scope.launch { said(io { node.set("exit_via", if (want) "auto" else "") }.optString("error").ifEmpty { if (want) "The exit node is chosen automatically" else "Internet goes out directly" }) }
+                        })
+                    }
+                    if (on && auto && via.isEmpty()) Text("None of your exit nodes answers: internet goes out directly", style = small)
                     if (on && via.isNotEmpty()) {
                         val name = nodes(s).firstOrNull { it.optString("address") == via }?.let { displayName(it) } ?: via.take(8)
                         val up = s.optJSONObject("exit")?.optBoolean("up") == true
                         Text(
-                            if (up) "Internet goes out through $name (exit node; IPv4 and names, IPv6 held back)"
+                            if (up) "Internet goes out through $name" + (s.optJSONObject("exit")?.optLong("rtt_ms", -1)?.takeIf { it >= 0 }?.let { ", $it ms" } ?: "") + " (exit node; IPv4 and names, IPv6 held back)"
                             else "Exit node $name doesn't answer: internet goes out directly until it does",
                             style = small,
                         )

@@ -339,6 +339,8 @@ pub struct Config {
     pub exit: bool,
     /// Its internet traffic goes out through this node.
     pub exit_via: Option<Hash>,
+    /// The exit chosen by this node: the fastest of the owner's devices offering it.
+    pub exit_auto: bool,
     /// The router for PCP/NAT-PMP; guessed as x.y.z.1 if not given.
     pub gateway: Option<std::net::Ipv4Addr>,
     /// How many paths (through different first hops) a session opens.
@@ -1007,11 +1009,18 @@ impl Node {
                         self.send_links();
                         // A session to the exit node kept open, so whether it works is known before traffic needs it.
                         // (One this node opened: its paths are probed, so their state is known.)
-                        if let Some(sid) = self.cfg.exit_via.and_then(|via| self.session_to(via)) {
-                            if self.ip_identified.insert(sid) {
-                                let me = self.me_arc.clone();
-                                self.identify(sid, &me);
+                        // Choosing automatically: sessions to every candidate, measured the same way.
+                        let watch: Vec<Hash> = if self.cfg.exit_auto { self.exit_candidates() } else { self.cfg.exit_via.into_iter().collect() };
+                        for via in watch {
+                            if let Some(sid) = self.session_to(via) {
+                                if self.ip_identified.insert(sid) {
+                                    let me = self.me_arc.clone();
+                                    self.identify(sid, &me);
+                                }
                             }
+                        }
+                        if self.cfg.exit_auto {
+                            self.choose_exit();
                         }
                     }
                     self.exit_dns_late();
@@ -1650,6 +1659,46 @@ impl Node {
             };
             tun.send(&reply(&q, &msg));
         });
+    }
+
+    /// The owner's devices that offer themselves as exit nodes.
+    fn exit_candidates(&self) -> Vec<Hash> {
+        self.routes
+            .iter()
+            .filter(|(d, _)| self.is_device(d))
+            .filter(|(_, by)| {
+                by.values().any(|r| r.ann.name_hash == wire::NO_NAME && serde_json::from_slice::<serde_json::Value>(&r.ann.app_data).ok().and_then(|v| v["exit"].as_bool()) == Some(true))
+            })
+            .map(|(d, _)| *d)
+            .collect()
+    }
+
+    /// The round trip to a node over its best answering path (None: none answers).
+    fn rtt_to(&self, node: &Hash) -> Option<Duration> {
+        let sid = self.session_by_dest.get(node)?;
+        let s = self.sessions.get(sid)?;
+        s.paths.iter().filter_map(|k| self.ends.get(k)).filter(|e| e.acked && e.last_seen.elapsed() < Duration::from_secs(10)).filter_map(|e| e.srtt).min()
+    }
+
+    /// The fastest answering exit, kept unless another is clearly faster
+    /// (30 % and 10 ms) or it stops answering, so traffic doesn't flap.
+    fn choose_exit(&mut self) {
+        let mut timed: Vec<(Hash, Duration)> = self.exit_candidates().into_iter().filter_map(|c| Some((c, self.rtt_to(&c)?))).collect();
+        timed.sort_by_key(|(_, t)| *t);
+        let best = timed.first().copied();
+        let now = self.cfg.exit_via.and_then(|c| timed.iter().find(|(h, _)| *h == c).copied());
+        let pick = match (now, best) {
+            (Some((c, t)), Some((b, bt))) if b != c && bt * 10 < t * 7 && t - bt > Duration::from_millis(10) => Some(b),
+            (Some((c, _)), _) => Some(c),
+            (None, b) => b.map(|(h, _)| h),
+        };
+        if pick != self.cfg.exit_via {
+            match pick {
+                Some(p) => log(format!("exit node chosen: {} ({} ms)", short(&p), timed.iter().find(|(h, _)| *h == p).map_or(0, |(_, t)| t.as_millis()))),
+                None => log("no exit node answers: internet goes out directly"),
+            }
+            self.cfg.exit_via = pick;
+        }
     }
 
     /// Whether the chosen exit node can be used now: a session to it with a
@@ -3156,6 +3205,7 @@ impl Node {
             "port": self.cfg.listen.port(),
             "exit": self.cfg.exit,
             "exit_via": self.cfg.exit_via.map(hex::encode),
+            "exit_auto": self.cfg.exit_auto,
         })
     }
 
@@ -3190,7 +3240,13 @@ impl Node {
                     }
                     "exit_via" => {
                         let via = value.as_str().map(str::trim).unwrap_or_default();
-                        if via.is_empty() {
+                        self.cfg.exit_auto = via == "auto";
+                        if via == "auto" {
+                            self.cfg.exit_via = None;
+                            log("the exit node is chosen automatically: the fastest of your devices offering it");
+                            self.choose_exit();
+                            crate::settings::set_value(&text, "exit_via", "\"auto\"")
+                        } else if via.is_empty() {
                             self.cfg.exit_via = None;
                             log("internet traffic goes out directly again");
                             crate::settings::set_value(&text, "exit_via", "\"\"")
@@ -3375,7 +3431,12 @@ impl Node {
             "nodes": self.known_nodes(),
             // The interface for ordinary programs (M2), if there is one: this node's address on it.
             "interface": self.tun.as_ref().map(|t| json!({ "name": t.name, "address": crate::tun::overlay(&self.my_hash).to_string() })),
-            "exit": self.cfg.exit_via.map(|v| json!({ "via": hex::encode(v), "up": self.exit_up() })),
+            "exit": (self.cfg.exit_via.is_some() || self.cfg.exit_auto).then(|| json!({
+                "via": self.cfg.exit_via.map(hex::encode),
+                "up": self.exit_up(),
+                "auto": self.cfg.exit_auto,
+                "rtt_ms": self.cfg.exit_via.and_then(|v| self.rtt_to(&v)).map(|t| t.as_millis() as u64),
+            })),
             "dns": json!({
                 "server": crate::dns::ADDR.to_string(),
                 "name": format!("{}.{}", crate::dns::label(&self.cfg.name), crate::dns::DOMAIN),
