@@ -75,4 +75,5 @@ Any node may be hostile: neighbors, relays, the far end of a path that isn't the
 | Sniff the web dashboard's key on the LAN | HTTPS: a certificate the node makes and keeps (trust on first use, its SHA-256 shown by `vork web-link` to compare), or one given (`web_cert`, `web_key`: Let's Encrypt's, say); plain HTTP is redirected | implemented (a reload when a given certificate is renewed is to come: restart the node meanwhile) |
 | Another user of a Windows PC changes the node | the control pipe lets interactive users in with full rights (a personal PC's trade-off) | accepted; an operator setting planned |
 | A compromised device | a full member until unlinked | open: short-lived delegations (ADR-0013) |
-| Tampered binaries | built and copied by hand | **open**: signed releases before strangers' nodes join |
+| Tampered binaries, a malicious update | releases signed with the owner's release key (ADR-0028); a node takes only a newer build signed by a key in `update_keys`, with the signed hash, from the owner's own nodes; the old binary kept | implemented (a project key for others' nodes to come) |
+| The release key stolen | whoever holds it runs code on every node that trusts it | keep it off servers; rotation by changing `update_keys` |

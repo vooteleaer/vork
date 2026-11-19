@@ -16,6 +16,10 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
+# A downloaded, checked update is put in place before each start, outside the
+# sandbox (ADR-0028); its failure doesn't stop the node from starting.
+ExecStartPre=-+/usr/local/bin/vork update-install --config /etc/vork/vork.toml
+Environment=VORK_UPDATE_HOOK=1
 ExecStart=/usr/local/bin/vork run --config /etc/vork/vork.toml
 Restart=on-failure
 RestartSec=3
