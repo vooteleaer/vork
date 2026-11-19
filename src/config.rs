@@ -32,6 +32,10 @@ pub struct FileConfig {
     pub name: Option<String>,
     /// The web dashboard's address (`0.0.0.0:8742`): off when missing.
     pub web: Option<String>,
+    /// Offer this node as an exit node to the owner's devices.
+    pub exit: Option<bool>,
+    /// Send this device's internet traffic out through that node (its address).
+    pub exit_via: Option<String>,
     pub gateway: Option<std::net::Ipv4Addr>,
     pub paths: Option<usize>,
     pub spread: Option<String>,
@@ -162,6 +166,12 @@ map_port = true
 # A web dashboard (pairing codes, devices, settings) for a machine without a
 # screen: open the link `vork web-link` prints.
 # web = "0.0.0.0:8742"
+
+# Offer this node as an exit node: the owner's devices may send their internet
+# traffic (IPv4) out through it (Linux, with the interface on).
+# exit = true
+# Send this node's internet traffic out through one of the owner's devices.
+# exit_via = "5f7a9ac63dc07c1176bff951d6a2641d"
 
 # Find other vØrk nodes on the local network by themselves (mDNS,
 # _vork._udp.local, which tells them this node's key and port).

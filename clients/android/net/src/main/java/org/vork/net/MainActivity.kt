@@ -331,6 +331,11 @@ fun Overview(node: Node, s: JSONObject, said: (String) -> Unit) {
                         })
                     }
                     if (!on) VorkVpn.state?.let { Text(it, style = small) }
+                    val via = s.optJSONObject("settings")?.optString("exit_via").orEmpty()
+                    if (on && via.isNotEmpty()) {
+                        val name = nodes(s).firstOrNull { it.optString("address") == via }?.let { displayName(it) } ?: via.take(8)
+                        Text("Internet goes out through $name (exit node; IPv4, IPv6 held back)", style = small)
+                    }
                 }
             }
         }
@@ -444,8 +449,21 @@ fun MyDevices(node: Node, s: JSONObject, said: (String) -> Unit) {
         if (devices.isEmpty()) item { Text("None yet.", style = MaterialTheme.typography.bodySmall) }
         items(devices) { address ->
             val n = known[address]
+            val exitVia = s.optJSONObject("settings")?.optString("exit_via").orEmpty()
             val unlink: @Composable () -> Unit = {
-                TextButton(onClick = { scope.launch { said(io { node.unlink(address) }.optString("error").ifEmpty { "Unlinked (the other device is told)" }) } }) { Text("Unlink") }
+                Row {
+                    // An exit node (ADR-0026): this phone's internet traffic goes out through it.
+                    if (n?.optBoolean("exit") == true || exitVia == address) {
+                        val using = exitVia == address
+                        TextButton(onClick = {
+                            scope.launch {
+                                val r = io { node.set("exit_via", if (using) "" else address) }
+                                said(r.optString("error").ifEmpty { if (using) "Internet goes out directly again" else "Internet goes out through ${n?.let { displayName(it) } ?: address.take(8)}" })
+                            }
+                        }) { Text(if (using) "Stop exit node" else "Use as exit node") }
+                    }
+                    TextButton(onClick = { scope.launch { said(io { node.unlink(address) }.optString("error").ifEmpty { "Unlinked (the other device is told)" }) } }) { Text("Unlink") }
+                }
             }
             if (n != null) {
                 NodeCard(n, copy, unlink)

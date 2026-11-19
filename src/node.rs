@@ -81,6 +81,8 @@ struct LinkCode {
 const APP_IP: u8 = 5;
 /// A direct-link offer: the node's link key, then its candidate addresses.
 const APP_DIRECT: u8 = 6;
+/// An IPv4 packet to or from the internet through an exit node (ADR-0026).
+const APP_EXIT: u8 = 7;
 // Messages on the stream.
 const MSG_REQUEST: u8 = 1;
 const MSG_RESPONSE: u8 = 2;
@@ -333,6 +335,10 @@ pub struct Config {
     /// Where names outside `.vork` are asked (when this node is the system's
     /// resolver, as on Android): the network's own servers.
     pub dns_upstream: Vec<SocketAddr>,
+    /// Offers itself as an exit node to the owner's devices (ADR-0026).
+    pub exit: bool,
+    /// Its internet traffic goes out through this node.
+    pub exit_via: Option<Hash>,
     /// The router for PCP/NAT-PMP; guessed as x.y.z.1 if not given.
     pub gateway: Option<std::net::Ipv4Addr>,
     /// How many paths (through different first hops) a session opens.
@@ -448,6 +454,8 @@ pub struct Node {
     /// here began over IPv4, whose answers go back translated.
     aliases: crate::alias::Aliases,
     v4_flows: HashMap<(Hash, crate::alias::Flow), Instant>,
+    /// The devices using this node as their exit.
+    exit_clients: crate::exit::Clients,
 }
 
 /// Socket buffers big enough to absorb bursts (the Linux default, ~200 KB,
@@ -633,6 +641,7 @@ impl Node {
             dns_seen: HashMap::new(),
             aliases,
             v4_flows: HashMap::new(),
+            exit_clients: Default::default(),
         };
         for name in node.cfg.destinations.clone() {
             let me = node.me_arc.clone();
@@ -808,6 +817,12 @@ impl Node {
                 Ok(t) => {
                     log(format!("interface {} up: this node is {addr}", t.name));
                     crate::dns::register(&t.name);
+                    if self.cfg.exit {
+                        match crate::exit::setup(&t.name) {
+                            Ok(()) => log(format!("exit node: the owner's devices may send their internet traffic out through here ({}/{})", crate::exit::NET, crate::exit::PREFIX)),
+                            Err(e) => warn(format!("exit node off: {e}")),
+                        }
+                    }
                     self.tun = Some(Arc::new(t));
                 }
                 Err(e) => warn(format!("no interface: {e:#}")),
@@ -1248,7 +1263,7 @@ impl Node {
 
     fn own_announce(&mut self) -> Announce {
         let me = self.me_arc.clone();
-        let data = json!({ "name": self.cfg.name }).to_string().into_bytes();
+        let data = if self.cfg.exit { json!({ "name": self.cfg.name, "exit": true }) } else { json!({ "name": self.cfg.name }) }.to_string().into_bytes();
         self.sign_announce(&me, wire::NO_NAME, data)
     }
 
@@ -1673,6 +1688,7 @@ impl Node {
                     "lite": best.ann.flags & FLAG_RELAY == 0,
                     "device": self.cfg.devices.contains(dest),
                     "on_lan": self.lan_seen.get(&best.ann.x_pub).is_some_and(|t| t.elapsed() < ROUTE_TTL),
+                    "exit": serde_json::from_slice::<serde_json::Value>(&best.ann.app_data).ok().and_then(|v| v["exit"].as_bool()).unwrap_or(false),
                 }))
             })
             .collect();
@@ -1959,12 +1975,7 @@ impl Node {
             }
             return;
         };
-        let came_in = self.ip_peer.get(&dest).copied().filter(|s| self.sessions.contains_key(s));
-        let Some(sid) = came_in.or_else(|| self.session_to(dest)) else { return };
-        if came_in.is_none() && self.ip_identified.insert(sid) {
-            let me = self.me_arc.clone();
-            self.identify(sid, &me);
-        }
+        let Some(sid) = self.ip_session(dest) else { return };
         let mut body = Vec::with_capacity(p.len() + 1);
         body.push(APP_IP);
         body.extend_from_slice(p);
@@ -1995,12 +2006,70 @@ impl Node {
         tun.send(p);
     }
 
+    /// The session IP to a node goes in: the one it came in on, or one opened
+    /// (and identified in, so the far end knows who sends).
+    fn ip_session(&mut self, dest: Hash) -> Option<u32> {
+        let came_in = self.ip_peer.get(&dest).copied().filter(|s| self.sessions.contains_key(s));
+        let sid = came_in.or_else(|| self.session_to(dest))?;
+        if came_in.is_none() && self.ip_identified.insert(sid) {
+            let me = self.me_arc.clone();
+            self.identify(sid, &me);
+        }
+        Some(sid)
+    }
+
+    /// Internet traffic through an exit node (ADR-0026). At the exit: from one
+    /// of the owner's devices, out with its own address. At the device: from
+    /// the exit it chose, onto the interface.
+    fn on_exit_packet(&mut self, sid: u32, p: &[u8]) {
+        let Some(tun) = self.tun.clone() else { return };
+        let Some(who) = self.sessions.get(&sid).and_then(|s| s.peer_identity) else { return };
+        if p.len() < 20 || p[0] >> 4 != 4 {
+            return;
+        }
+        self.ip_peer.insert(who, sid);
+        if self.cfg.exit && p[12..16] == crate::alias::ME.octets() {
+            if !self.is_device(&who) {
+                return debug(format!("exit traffic from {}, not one of the owner's devices: dropped", short(&who)));
+            }
+            let Some(addr) = self.exit_clients.of(&who) else { return };
+            if let Some(out) = crate::exit::readdress(p, Some(addr), None) {
+                tun.send(&out);
+            }
+        } else if self.cfg.exit_via == Some(who) && p[16..20] == crate::alias::ME.octets() {
+            tun.send(p);
+        }
+    }
+
     /// An IPv4 packet from a program here: to an alias, it goes on as IPv6.
     fn on_tun_v4(&mut self, p: &[u8]) {
-        if p.len() < 20 || p[12..16] != crate::alias::ME.octets() {
+        if p.len() < 20 {
             return;
         }
         let dst = std::net::Ipv4Addr::new(p[16], p[17], p[18], p[19]);
+        if p[12..16] != crate::alias::ME.octets() {
+            // At an exit node: an answer from the internet for a device using it.
+            if self.cfg.exit && crate::exit::in_range(dst) {
+                let Some(device) = self.exit_clients.node(dst) else { return };
+                let Some(back) = crate::exit::readdress(p, None, Some(crate::alias::ME)) else { return };
+                if let Some(sid) = self.ip_session(device) {
+                    let mut body = vec![APP_EXIT];
+                    body.extend_from_slice(&back);
+                    self.send_app(sid, &body);
+                }
+            }
+            return;
+        }
+        if !crate::alias::in_range(dst) || crate::exit::in_range(dst) {
+            // To the internet: through the exit node, if one is chosen.
+            let Some(via) = self.cfg.exit_via else { return };
+            if let Some(sid) = self.ip_session(via) {
+                let mut body = vec![APP_EXIT];
+                body.extend_from_slice(p);
+                self.send_app(sid, &body);
+            }
+            return;
+        }
         let Some(node) = self.aliases.node(dst) else { return };
         let me = crate::tun::overlay(&self.my_hash);
         let Some((v6, flow)) = crate::alias::to_v6(p, me, crate::tun::overlay(&node)) else { return };
@@ -2041,6 +2110,7 @@ impl Node {
                 }
             }
             Some(&APP_IP) => self.on_ip(sid, &body[1..]),
+            Some(&APP_EXIT) => self.on_exit_packet(sid, &body[1..]),
             // The old offer without the node's key: dialing the session's key
             // instead (a one-off) disturbed the link already up. Ignored.
             Some(3) => debug("an old direct-link offer: ignored"),
@@ -3012,6 +3082,8 @@ impl Node {
             "map_port": self.cfg.map_port,
             "announce": self.cfg.announce,
             "port": self.cfg.listen.port(),
+            "exit": self.cfg.exit,
+            "exit_via": self.cfg.exit_via.map(hex::encode),
         })
     }
 
@@ -3038,6 +3110,27 @@ impl Node {
                         let on = value.as_bool().ok_or("direct is true or false")?;
                         self.cfg.direct = on;
                         crate::settings::set_value(&text, "direct", &on.to_string())
+                    }
+                    "exit" => {
+                        let on = value.as_bool().ok_or("exit is true or false")?;
+                        restart = on != self.cfg.exit; // the system's forwarding is set up at start
+                        crate::settings::set_value(&text, "exit", &on.to_string())
+                    }
+                    "exit_via" => {
+                        let via = value.as_str().map(str::trim).unwrap_or_default();
+                        if via.is_empty() {
+                            self.cfg.exit_via = None;
+                            log("internet traffic goes out directly again");
+                            crate::settings::set_value(&text, "exit_via", "\"\"")
+                        } else {
+                            let h = crate::links::parse(via).ok_or("exit_via is an address (32 hex digits)")?;
+                            if !self.is_device(&h) {
+                                return Err("an exit node must be one of your devices".into());
+                            }
+                            self.cfg.exit_via = Some(h);
+                            log(format!("internet traffic goes out through {}", short(&h)));
+                            crate::settings::set_value(&text, "exit_via", &format!("\"{}\"", hex::encode(h)))
+                        }
                     }
                     "lan" | "map_port" | "announce" => {
                         let on = value.as_bool().ok_or(format!("{key} is true or false"))?;

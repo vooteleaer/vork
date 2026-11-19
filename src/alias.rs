@@ -55,7 +55,7 @@ impl Aliases {
             return Some(*a);
         }
         let first = u32::from(ME) + 1;
-        let end = u32::from(NET) + (1u32 << (32 - PREFIX)) - 1; // the broadcast-looking last one left out
+        let end = u32::from(crate::exit::NET); // the range's last /24 is for exit clients (ADR-0026)
         let ip = (first..end).map(Ipv4Addr::from).find(|ip| !self.by_addr.contains_key(ip))?;
         self.by_addr.insert(ip, *node);
         self.by_node.insert(*node, ip);

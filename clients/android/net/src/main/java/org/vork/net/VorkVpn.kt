@@ -27,6 +27,8 @@ import java.net.InetAddress
  */
 class VorkVpn : VpnService() {
     private var iface: ParcelFileDescriptor? = null
+    /** Whether the interface was made for an exit node (all traffic) or not. */
+    private var ifaceExit = false
     @Volatile private var running = false
     private var keeper: Thread? = null
 
@@ -72,7 +74,14 @@ class VorkVpn : VpnService() {
                 when {
                     n.has("error") || address.length != 32 -> state = "waiting for the vØrk node"
                     else -> {
-                        val pfd = iface ?: establish(address)?.also { iface = it }
+                        // An exit node chosen or dropped: the interface is made again with the other routes.
+                        val exit = n.optJSONObject("settings")?.optString("exit_via").orEmpty().isNotEmpty()
+                        if (iface != null && exit != ifaceExit) {
+                            node.interfaceOff()
+                            iface?.close()
+                            iface = null
+                        }
+                        val pfd = iface ?: establish(address, exit)?.also { iface = it; ifaceExit = exit }
                         when {
                             pfd == null -> state = "Android didn't make the interface (is another VPN always on?)"
                             !n.isNull("interface") -> state = null
@@ -127,12 +136,18 @@ class VorkVpn : VpnService() {
         android.os.Handler(mainLooper).post { android.widget.Toast.makeText(applicationContext, "vØrk: $text", android.widget.Toast.LENGTH_SHORT).show() }
     }
 
-    private fun establish(address: String): ParcelFileDescriptor? {
+    private fun establish(address: String, exit: Boolean): ParcelFileDescriptor? {
         // fd ‖ the node's address[0..15]
         val bytes = ByteArray(16)
         bytes[0] = 0xfd.toByte()
         for (i in 0 until 15) bytes[i + 1] = address.substring(i * 2, i * 2 + 2).toInt(16).toByte()
-        return Builder()
+        val b = Builder()
+        if (exit) {
+            // Through an exit node (ADR-0026): all traffic comes in. IPv4 goes on
+            // to the exit; IPv6 outside vØrk is held back, so nothing goes around it.
+            b.addRoute("0.0.0.0", 0).addRoute("::", 0)
+        }
+        return b
             .setSession("vØrk")
             .addAddress(InetAddress.getByAddress(bytes), 128)
             .addRoute("fd00::", 8)

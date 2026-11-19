@@ -15,6 +15,7 @@ mod stream;
 mod tun;
 mod dns;
 mod alias;
+mod exit;
 mod web;
 mod wire;
 
@@ -295,6 +296,8 @@ pub fn settings(a: RunArgs) -> Result<Settings> {
         tun: file.tun.clone().filter(|t| !t.is_empty()),
         config_path,
         dns_upstream: Vec::new(),
+        exit: file.exit == Some(true),
+        exit_via: file.exit_via.as_deref().filter(|s| !s.is_empty()).map(|s| crate::links::parse(s).with_context(|| format!("exit_via: {s} isn't an address"))).transpose()?,
         web: file.web.as_deref().filter(|w| !w.is_empty()).map(|w| w.parse().with_context(|| format!("web: {w} isn't host:port"))).transpose()?,
         name: file.name.clone().filter(|n| !n.trim().is_empty()).unwrap_or_else(node::machine_name),
         gateway: a.gateway.or(file.gateway),
