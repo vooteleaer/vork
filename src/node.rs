@@ -72,10 +72,10 @@ const LINK_CODE_TTL: Duration = Duration::from_secs(600);
 
 /// A self-update under way (ADR-0028).
 enum UpdateStep {
-    /// The manifest asked of `update_from`, in this session.
-    Asked(u32),
-    /// Downloading, in this session.
-    Getting(u32, crate::update::Download),
+    /// The manifest asked of `update_from`: in this session, by this request.
+    Asked(u32, u32),
+    /// Downloading: in this session, the piece asked by this request.
+    Getting(u32, u32, crate::update::Download),
 }
 
 /// How often releases are looked for.
@@ -2346,18 +2346,24 @@ impl Node {
             let me = self.me_arc.clone();
             self.identify(sid, &me);
         }
-        self.request(sid, crate::update::PATH, br#"{"op":"manifest"}"#, None);
-        self.update = Some((UpdateStep::Asked(sid), Instant::now()));
+        let Some(req) = self.request(sid, crate::update::PATH, br#"{"op":"manifest"}"#, None) else { return };
+        self.update = Some((UpdateStep::Asked(sid, req), Instant::now()));
     }
 
     /// The release node answered: a manifest (taken if newer and signed), or a piece.
-    fn on_update_answer(&mut self, sid: u32, status: u8, body: &[u8]) {
+    fn on_update_answer(&mut self, sid: u32, req: u32, status: u8, body: &[u8]) {
+        // Only the answer to the request asked last: an earlier one's (a check
+        // asked again, a retry) mustn't be taken for a piece.
+        let current = matches!(&self.update, Some((UpdateStep::Asked(s, r), _)) | Some((UpdateStep::Getting(s, r, _), _)) if *s == sid && *r == req);
+        if !current {
+            return debug(format!("update: an answer to an earlier request ({req}): ignored"));
+        }
         let Some((step, _)) = self.update.take() else { return };
         if status != STATUS_OK {
             return self.update_note(format!("the release node refused: {}", String::from_utf8_lossy(body)));
         }
         match step {
-            UpdateStep::Asked(s) if s == sid && body.len() > 64 => {
+            UpdateStep::Asked(_, _) if body.len() > 64 => {
                 let sig: [u8; 64] = body[..64].try_into().unwrap();
                 let Some(man) = crate::update::verify(&body[64..], &sig, &self.cfg.update_keys) else {
                     return self.update_note("the release isn't signed by a trusted key: ignored".into());
@@ -2377,7 +2383,7 @@ impl Node {
                     Err(e) => self.update_note(format!("{e:#}")),
                 }
             }
-            UpdateStep::Getting(s, mut d) if s == sid => match d.add(body) {
+            UpdateStep::Getting(_, _, mut d) => match d.add(body) {
                 Ok(true) => {
                     let build = d.build;
                     self.update_apply(build);
@@ -2391,8 +2397,8 @@ impl Node {
 
     fn update_get(&mut self, sid: u32, d: crate::update::Download) {
         let body = json!({ "op": "get", "target": crate::update::target(), "offset": d.offset }).to_string();
-        self.request(sid, crate::update::PATH, body.as_bytes(), None);
-        self.update = Some((UpdateStep::Getting(sid, d), Instant::now()));
+        let Some(req) = self.request(sid, crate::update::PATH, body.as_bytes(), None) else { return };
+        self.update = Some((UpdateStep::Getting(sid, req, d), Instant::now()));
     }
 
     /// A checked update waits in the state directory: put in place, and the node
@@ -2834,7 +2840,7 @@ impl Node {
                 let Some((path, sent, for_client)) = s.waiting.remove(&id) else { return };
                 if path == crate::update::PATH && for_client.is_none() {
                     let body = m[6..].to_vec();
-                    return self.on_update_answer(sid, status, &body);
+                    return self.on_update_answer(sid, id, status, &body);
                 }
                 // A link message arrived: off the outbox.
                 if path == LINK_PATH && for_client.is_none() {
