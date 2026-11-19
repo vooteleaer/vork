@@ -163,6 +163,10 @@ impl Firewall {
         if proto == 58 && (1..=4).contains(&icmp) {
             return Ok(());
         }
+        // Neighbor discovery and router messages (133–137) mean nothing over vØrk: dropped quietly.
+        if proto == 58 && (133..=137).contains(&icmp) {
+            return Err(String::new());
+        }
         let echo = proto == 58 && icmp == 128;
         if self.rules.iter().any(|r| r.matches(from, proto, dport, echo)) {
             return Ok(());
@@ -170,7 +174,7 @@ impl Firewall {
         Err(match proto {
             6 => format!("tcp/{dport}"),
             17 => format!("udp/{dport}"),
-            58 if echo => "icmp (ping)".to_string(),
+            58 if echo => "icmp".to_string(),
             58 => format!("icmp type {icmp}"),
             n => format!("protocol {n}"),
         })

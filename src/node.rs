@@ -2150,12 +2150,17 @@ impl Node {
         // The walled garden: the owner's devices reach everything, others what `allow` opens.
         if let Err(what) = self.firewall.check_in(&who, self.is_device(&who), p) {
             let key = (who, what.clone());
-            if self.blocked_seen.get(&key).is_none_or(|t| t.elapsed() > Duration::from_secs(60)) {
+            if !what.is_empty() && self.blocked_seen.get(&key).is_none_or(|t| t.elapsed() > Duration::from_secs(60)) {
                 if self.blocked_seen.len() > 512 {
                     self.blocked_seen.clear();
                 }
                 self.blocked_seen.insert(key, Instant::now());
-                log(format!("blocked {what} from {} (not one of your devices; to let it in: allow = [\"{what} from {}\"])", short(&who), hex::encode(&who[..4])));
+                let hint = if what.starts_with("icmp type") || what.starts_with("protocol") {
+                    String::new()
+                } else {
+                    format!("; to let it in: allow = [\"{what} from {}\"]", hex::encode(&who[..4]))
+                };
+                log(format!("blocked {what} from {} (not one of your devices{hint})", short(&who)));
             }
             return;
         }
