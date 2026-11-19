@@ -198,6 +198,15 @@ async fn handle<S: AsyncRead + AsyncWrite + Unpin>(mut conn: S, token: &str, to_
             let answer = ask(&to_node, r#"{"cmd":"status"}"#.to_string()).await;
             respond(&mut conn, 200, "application/json", answer.as_bytes()).await
         }
+        ("GET", "/api/metrics") | ("GET", "/api/log") if !authorized => respond(&mut conn, 401, "application/json", b"{}").await,
+        ("GET", "/api/metrics") => {
+            let answer = ask(&to_node, r#"{"cmd":"metrics"}"#.to_string()).await;
+            respond(&mut conn, 200, "application/json", answer.as_bytes()).await
+        }
+        ("GET", "/api/log") => {
+            let answer = ask(&to_node, r#"{"cmd":"log"}"#.to_string()).await;
+            respond(&mut conn, 200, "application/json", answer.as_bytes()).await
+        }
         ("POST", "/api/cmd") => {
             let Ok(v) = serde_json::from_slice::<serde_json::Value>(&body) else {
                 return respond(&mut conn, 400, "application/json", br#"{"error":"bad request"}"#).await;

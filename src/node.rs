@@ -70,6 +70,40 @@ const LINK_AGAIN: Duration = Duration::from_secs(20);
 /// A link code is good this long unless given otherwise.
 const LINK_CODE_TTL: Duration = Duration::from_secs(600);
 
+/// Counters for the dashboard: totals since start (Cell: counted where the node
+/// only reads itself, as in send_raw), and a sample every 5 s for an hour.
+#[derive(Default)]
+struct Metrics {
+    rx_bytes: std::cell::Cell<u64>,
+    tx_bytes: std::cell::Cell<u64>,
+    rx_packets: std::cell::Cell<u64>,
+    tx_packets: std::cell::Cell<u64>,
+    relayed_bytes: u64,
+    /// From programs here into vØrk, and from vØrk to programs here.
+    tun_out: u64,
+    tun_in: u64,
+    history: std::collections::VecDeque<Sample>,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct Sample {
+    t: u64,
+    rx: u64,
+    tx: u64,
+    relayed: u64,
+    tun_in: u64,
+    tun_out: u64,
+    neighbors: usize,
+    sessions: usize,
+    nodes: usize,
+}
+
+const SAMPLES: usize = 720;
+
+fn add(c: &std::cell::Cell<u64>, n: usize) {
+    c.set(c.get().wrapping_add(n as u64));
+}
+
 /// A self-update under way (ADR-0028).
 enum UpdateStep {
     /// The manifest asked of `update_from`: in this session, by this request.
@@ -203,6 +237,9 @@ pub enum Spread {
 }
 
 struct Neighbor {
+    /// Bytes to and from it (the outer WireGuard packets).
+    rx_bytes: u64,
+    tx_bytes: u64,
     tunn: Tunn,
     x_pub: [u8; 32],
     addr: Option<SocketAddr>,
@@ -246,6 +283,9 @@ struct PathEnd {
 struct Session {
     /// Last sent or received on (idle ones close, SESSION_IDLE).
     active: Instant,
+    /// Bytes of its messages, each way.
+    rx_bytes: u64,
+    tx_bytes: u64,
     tunn: Tunn,
     peer_x: [u8; 32],
     /// The destination we opened this session to (None: the far end opened it).
@@ -318,6 +358,8 @@ impl Session {
             direct_considered: false,
             direct_key: None,
             active: Instant::now(),
+            rx_bytes: 0,
+            tx_bytes: 0,
         }
     }
 }
@@ -520,6 +562,10 @@ pub struct Node {
     firewall: crate::firewall::Firewall,
     /// Blocked traffic logged lately (once a minute per node and port).
     blocked_seen: HashMap<(Hash, String), Instant>,
+    /// Counters and their history (the dashboard).
+    metrics: Metrics,
+    /// The latest blocked attempts: when, from whom, what.
+    blocked_recent: std::collections::VecDeque<(u64, Hash, String)>,
     /// Self-updating: what's under way, when it last moved, and when the next check is due.
     update: Option<(UpdateStep, Instant)>,
     update_next: Instant,
@@ -585,11 +631,27 @@ pub fn set_logging(level: &str, file: Option<&std::path::Path>) -> anyhow::Resul
     Ok(())
 }
 
+/// The latest log lines (info and warnings), for the dashboard: unix time, level, text.
+static RECENT: std::sync::Mutex<std::collections::VecDeque<(u64, u8, String)>> = std::sync::Mutex::new(std::collections::VecDeque::new());
+const RECENT_LINES: usize = 500;
+
+pub fn recent_log() -> Vec<(u64, u8, String)> {
+    RECENT.lock().map(|r| r.iter().cloned().collect()).unwrap_or_default()
+}
+
 fn emit(level: u8, msg: &str) {
     if level > LOG_LEVEL.load(Ordering::Relaxed) {
         return;
     }
     let t = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+    if level <= 1 {
+        if let Ok(mut r) = RECENT.lock() {
+            if r.len() >= RECENT_LINES {
+                r.pop_front();
+            }
+            r.push_back((t.as_secs(), level, msg.to_string()));
+        }
+    }
     let line = format!("[{}.{:03}] {}", t.as_secs() % 100_000, t.subsec_millis(), msg);
     match LOG_FILE.lock().unwrap().as_mut() {
         Some(f) => {
@@ -720,6 +782,8 @@ impl Node {
             limit_logged: HashMap::new(),
             firewall: crate::firewall::Firewall::new(&cfg_allow).unwrap_or_default(),
             blocked_seen: HashMap::new(),
+            metrics: Metrics::default(),
+            blocked_recent: std::collections::VecDeque::new(),
             update: None,
             update_next: Instant::now() + Duration::from_secs(90),
             update_said: String::new(),
@@ -756,6 +820,8 @@ impl Node {
         self.neighbors.insert(
             id,
             Neighbor {
+                rx_bytes: 0,
+                tx_bytes: 0,
                 tunn,
                 x_pub,
                 addr,
@@ -1014,6 +1080,7 @@ impl Node {
                     match r {
                         Ok(n) => {
                             let p = tun_buf[..n].to_vec();
+                            self.metrics.tun_out += p.len() as u64;
                             self.on_tun_packet(&p);
                         }
                         Err(e) => debug(format!("interface: {e}")),
@@ -1130,6 +1197,9 @@ impl Node {
                         }
                     }
                     self.exit_dns_late();
+                    if self.metrics.history.back().is_none_or(|s| unix_now() >= s.t + 5) {
+                        self.sample();
+                    }
                     if last_share.elapsed() >= SHARE_EVERY {
                         last_share = Instant::now();
                         for id in self.up_neighbors() {
@@ -1153,6 +1223,8 @@ impl Node {
     // ---- outer layer: neighbors ------------------------------------------------
 
     fn send_raw(&self, addr: SocketAddr, p: &[u8]) {
+        add(&self.metrics.tx_bytes, p.len());
+        add(&self.metrics.tx_packets, 1);
         if let Err(e) = self.send_sock.send_to(p, addr) {
             // Shown (at most every 10 s): a node that can't send is otherwise silent.
             static LAST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -1187,6 +1259,7 @@ impl Node {
         let Some(n) = self.neighbors.get_mut(&id) else { return };
         let Some(addr) = n.addr else { return };
         if let Some(p) = encap(&mut n.tunn, &framed) {
+            n.tx_bytes += p.len() as u64;
             self.send_raw(addr, &p);
         }
     }
@@ -1196,6 +1269,8 @@ impl Node {
     }
 
     fn on_datagram(&mut self, addr: SocketAddr, data: &[u8]) {
+        add(&self.metrics.rx_bytes, data.len());
+        add(&self.metrics.rx_packets, 1);
         if data.starts_with(KEY_ASK) || data.starts_with(KEY_TELL) {
             return self.on_key_query(addr, data);
         }
@@ -1241,6 +1316,7 @@ impl Node {
         };
         let outs = {
             let n = self.neighbors.get_mut(&id).unwrap();
+            n.rx_bytes += data.len() as u64;
             decap(&mut n.tunn, Some(addr.ip()), data)
         };
         let mut authenticated = false;
@@ -1641,6 +1717,7 @@ impl Node {
     fn on_data(&mut self, from: u32, label: u64, inner: Vec<u8>) {
         if let Some((to, out)) = self.switched(from, label) {
             self.relayed += 1;
+            self.metrics.relayed_bytes += inner.len() as u64;
             return self.send_msg(to, &Msg::Data { label: out, inner });
         }
         if let Some(e) = self.ends.get_mut(&(from, label)) {
@@ -2111,6 +2188,7 @@ impl Node {
     fn send_app(&mut self, sid: u32, body: &[u8]) {
         let Some(s) = self.sessions.get_mut(&sid) else { return };
         s.active = Instant::now();
+        s.tx_bytes += body.len() as u64;
         if let Some(other) = s.looped {
             return self.on_app(other, (0, 0), body);
         }
@@ -2249,6 +2327,12 @@ impl Node {
         self.ip_peer.insert(who, sid);
         // The walled garden: the owner's devices reach everything, others what `allow` opens.
         if let Err(what) = self.firewall.check_in(&who, self.is_device(&who), p) {
+            if !what.is_empty() {
+                if self.blocked_recent.len() >= 100 {
+                    self.blocked_recent.pop_front();
+                }
+                self.blocked_recent.push_back((unix_now(), who, what.clone()));
+            }
             let key = (who, what.clone());
             if !what.is_empty() && self.blocked_seen.get(&key).is_none_or(|t| t.elapsed() > Duration::from_secs(60)) {
                 if self.blocked_seen.len() > 512 {
@@ -2269,16 +2353,95 @@ impl Node {
             if let Some((v4, flow)) = crate::alias::to_v4(p, alias, self.aliases.me) {
                 if let Some(t) = self.v4_flows.get_mut(&(who, flow)) {
                     *t = Instant::now();
+                    self.metrics.tun_in += v4.len() as u64;
                     return tun.send(&v4);
                 }
             }
         }
+        self.metrics.tun_in += p.len() as u64;
         tun.send(p);
     }
 
     /// A session something was heard on within 10 s (its paths are probed every second).
     fn session_alive(&self, sid: u32) -> bool {
         self.sessions.get(&sid).is_some_and(|s| s.paths.iter().any(|k| self.ends.get(k).is_some_and(|e| e.last_seen.elapsed() < Duration::from_secs(10))))
+    }
+
+    // ---- metrics (the dashboard) ----------------------------------------------------
+
+    fn sample(&mut self) {
+        let m = &self.metrics;
+        let s = Sample {
+            t: unix_now(),
+            rx: m.rx_bytes.get(),
+            tx: m.tx_bytes.get(),
+            relayed: m.relayed_bytes,
+            tun_in: m.tun_in,
+            tun_out: m.tun_out,
+            neighbors: self.neighbors.values().filter(|n| n.up).count(),
+            sessions: self.sessions.len(),
+            nodes: self.routes.len(),
+        };
+        let h = &mut self.metrics.history;
+        if h.len() >= SAMPLES {
+            h.pop_front();
+        }
+        h.push_back(s);
+    }
+
+    fn metrics_json(&self) -> serde_json::Value {
+        let m = &self.metrics;
+        let neighbors: Vec<serde_json::Value> = self
+            .neighbors
+            .values()
+            .map(|n| {
+                json!({
+                    "address": n.hash.map(hex::encode),
+                    "name": n.hash.and_then(|h| self.routes.get(&h)).and_then(|by| by.values().find(|r| r.ann.name_hash == wire::NO_NAME)).and_then(|r| announced_name(&r.ann.app_data)),
+                    "endpoint": n.addr.map(|a| a.to_string()),
+                    "up": n.up,
+                    "device": n.hash.is_some_and(|h| self.is_device(&h)),
+                    "rx": n.rx_bytes,
+                    "tx": n.tx_bytes,
+                    "last_rx_s": n.last_rx.map(|t| t.elapsed().as_secs()),
+                })
+            })
+            .collect();
+        let sessions: Vec<serde_json::Value> = self
+            .sessions
+            .iter()
+            .filter(|(_, s)| s.looped.is_none())
+            .map(|(sid, s)| {
+                let who = s.peer_identity.or(s.peer_hash);
+                let rtt = s.paths.iter().filter_map(|k| self.ends.get(k)).filter_map(|e| e.srtt).min();
+                json!({
+                    "peer": who.map(hex::encode),
+                    "device": who.is_some_and(|h| self.is_device(&h)),
+                    "opened_here": s.peer_hash.is_some(),
+                    "direct": s.paths.iter().any(|k| self.is_direct(*sid, *k)),
+                    "paths": s.paths.len(),
+                    "rtt_ms": rtt.map(|d| d.as_secs_f64() * 1000.0),
+                    "rx": s.rx_bytes,
+                    "tx": s.tx_bytes,
+                    "idle_s": s.active.elapsed().as_secs(),
+                })
+            })
+            .collect();
+        let blocked: Vec<serde_json::Value> = self.blocked_recent.iter().rev().map(|(t, w, what)| json!({ "t": t, "from": hex::encode(w), "what": what })).collect();
+        json!({
+            "now": unix_now(),
+            "uptime_s": self.started.elapsed().as_secs(),
+            "totals": {
+                "rx": m.rx_bytes.get(), "tx": m.tx_bytes.get(),
+                "rx_packets": m.rx_packets.get(), "tx_packets": m.tx_packets.get(),
+                "relayed": m.relayed_bytes, "relayed_packets": self.relayed,
+                "tun_in": m.tun_in, "tun_out": m.tun_out,
+            },
+            "history": m.history,
+            "neighbors": neighbors,
+            "sessions": sessions,
+            "blocked": blocked,
+        })
     }
 
     // ---- self-updating (ADR-0028) --------------------------------------------------
@@ -2299,8 +2462,8 @@ impl Node {
                 return;
             }
             self.update = None;
-            self.update_note("no answer from the release node; trying again later".into());
-            self.update_next = Instant::now() + Duration::from_secs(600);
+            self.update_note("no answer from the release node; trying again in a minute".into());
+            self.update_next = Instant::now() + Duration::from_secs(60);
         }
         if Instant::now() < self.update_next {
             return;
@@ -2620,6 +2783,7 @@ impl Node {
     fn on_app(&mut self, sid: u32, key: (u32, u64), body: &[u8]) {
         if let Some(s) = self.sessions.get_mut(&sid) {
             s.active = Instant::now();
+            s.rx_bytes += body.len() as u64;
         }
         // The session works: offer a direct link, once, if this peer may have
         // one (considered again when it identifies).
@@ -3439,6 +3603,12 @@ impl Node {
         match Some(cmd) {
             Some("status") => self.status_json().to_string(),
             // Lets go of the interface (Android's VPN turned off): no restart needed.
+            // Counters, their last hour, and the parts behind them (the dashboard).
+            Some("metrics") => self.metrics_json().to_string(),
+            Some("log") => {
+                let lines: Vec<serde_json::Value> = recent_log().into_iter().map(|(t, l, m)| json!({ "t": t, "warn": l == 0, "msg": m })).collect();
+                json!({ "lines": lines }).to_string()
+            }
             // Look for a newer release now (ADR-0028).
             Some("update_check") => {
                 if self.cfg.update_keys.is_empty() {
