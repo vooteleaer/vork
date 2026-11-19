@@ -14,7 +14,8 @@ param(
     [string]$ServerDir = "/var/lib/vork/releases"
 )
 $ErrorActionPreference = "Stop"
-$vork = if ($Windows) { $Windows } else { "vork.exe" }
+# The vork that signs: the Windows binary being released, or the one on PATH.
+$vork = if ($Windows) { (Resolve-Path $Windows).Path } else { "vork.exe" }
 $dir = Join-Path $env:TEMP "vork-release"
 Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue
 $files = @()
