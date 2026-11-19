@@ -536,15 +536,16 @@ async fn network_main() -> Result<()> {
         }
         Cmd::Link { address, code, config } => {
             // A QR code's text: vork:link/ADDRESS?c=CODE&n=NAME
-            let (address, code) = match address.strip_prefix("vork-link:").or_else(|| address.strip_prefix("vork:link/")) {
+            let (address, code, addrs) = match address.strip_prefix("vork-link:").or_else(|| address.strip_prefix("vork:link/")) {
                 Some(rest) => {
                     let (a, q) = rest.split_once('?').unwrap_or((rest, ""));
                     let c = q.split('&').find_map(|kv| kv.strip_prefix("c=")).map(str::to_string);
-                    (a.to_string(), code.or(c))
+                    let addrs: Vec<String> = q.split('&').find_map(|kv| kv.strip_prefix("a=")).map(|l| l.split(',').map(str::to_string).collect()).unwrap_or_default();
+                    (a.to_string(), code.or(c), addrs)
                 }
-                None => (address, code),
+                None => (address, code, Vec::new()),
             };
-            let r = ask_node(config, serde_json::json!({ "cmd": "link", "address": address, "code": code.unwrap_or_default() })).await?;
+            let r = ask_node(config, serde_json::json!({ "cmd": "link", "address": address, "code": code.unwrap_or_default(), "addrs": addrs })).await?;
             if r["already"].as_bool() == Some(true) {
                 println!("already one of your devices");
             } else {

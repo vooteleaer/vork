@@ -17,3 +17,6 @@ A node's `devices` are the owner's other devices: they get direct links (ADR-001
 - A node can't make itself someone's device; a leaked code works only until it expires or is used.
 - The owner's network is the set of mutual links; whether linking is transitive (a device of my device is mine) is still open.
 - Storage's keyring is another list of the owner's devices; joining the two is next.
+
+## Addendum (2026-11-19): links carry where to dial
+A link (and its QR code) also carries `a=HOST:PORT,…`: the addresses other nodes proved they reach this node at from outside (ADR-0023), the router's mapping, and its LAN address, at most four. The scanning node asks them for the key right away, so two nodes with no node in common connect from the scan alone; the code still decides whether they link.

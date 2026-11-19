@@ -43,7 +43,8 @@ class Node(context: Context) {
     fun addDevice(address: String): JSONObject = ask(JSONObject().put("cmd", "device_add").put("address", address))
     fun removeDevice(address: String): JSONObject = ask(JSONObject().put("cmd", "device_remove").put("address", address))
     // Linking devices (vØrk ADR-0024): asked, allowed or dismissed by the other side's owner.
-    fun link(address: String, code: String = ""): JSONObject = ask(JSONObject().put("cmd", "link").put("address", address).put("code", code))
+    fun link(address: String, code: String = "", addrs: List<String> = emptyList()): JSONObject =
+        ask(JSONObject().put("cmd", "link").put("address", address).put("code", code).put("addrs", org.json.JSONArray(addrs)))
     fun allow(address: String): JSONObject = ask(JSONObject().put("cmd", "link_allow").put("address", address))
     fun dismiss(address: String): JSONObject = ask(JSONObject().put("cmd", "link_dismiss").put("address", address))
     fun unlink(address: String): JSONObject = ask(JSONObject().put("cmd", "unlink").put("address", address))

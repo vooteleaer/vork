@@ -116,7 +116,7 @@ class MainActivity : ComponentActivity() {
         val (address, c, name) = link
         val node = Node(this)
         Thread {
-            val r = node.link(address, c)
+            val r = node.link(address, c, link.addrs)
             runOnUiThread { toast(r.optString("error").ifEmpty { "Pairing with ${name.ifEmpty { address.take(8) }}…" }) }
         }.start()
     }
@@ -190,13 +190,13 @@ fun App(node: Node) {
         val parsed = parseLink(uri)
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { LinkOpened.uri = null },
-            title = { Text("Link with ${parsed?.third?.ifEmpty { null } ?: parsed?.first?.take(8) ?: "?"}?") },
+            title = { Text("Link with ${parsed?.name?.ifEmpty { null } ?: parsed?.address?.take(8) ?: "?"}?") },
             text = { Text(if (parsed == null) "This link isn't a vØrk device link." else "It becomes one of your devices, and this phone one of its: they see each other in My devices and link directly.") },
             confirmButton = {
                 TextButton(enabled = parsed != null, onClick = {
                     LinkOpened.uri = null
-                    val (address, code, _) = parsed!!
-                    scope.launch { said(io { node.link(address, code) }.optString("error").ifEmpty { "Linking…" }) }
+                    val p = parsed!!
+                    scope.launch { said(io { node.link(p.address, p.code, p.addrs) }.optString("error").ifEmpty { "Linking…" }) }
                 }) { Text("Link") }
             },
             dismissButton = { TextButton(onClick = { LinkOpened.uri = null }) { Text("Cancel") } },
@@ -378,14 +378,17 @@ object LinkOpened {
     var uri by mutableStateOf<String?>(null)
 }
 
-/** `vork-link:ADDRESS?c=CODE&n=NAME`, or a bare address: (address, code, name). */
-fun parseLink(text: String): Triple<String, String, String>? {
+/** A pairing link: the other node, its one-time code, its name, and where it can be dialed. */
+data class PairLink(val address: String, val code: String, val name: String, val addrs: List<String>)
+
+/** `vork-link:ADDRESS?c=CODE&n=NAME&a=HOST:PORT,…`, or a bare address. */
+fun parseLink(text: String): PairLink? {
     val t = text.trim()
     val body = t.removePrefix("vork-link:").removePrefix("vork:link/")
     val address = body.substringBefore('?').lowercase()
     if (address.length != 32 || !address.all { it in "0123456789abcdef" }) return null
     val query = body.substringAfter('?', "").split('&').mapNotNull { kv -> kv.split('=', limit = 2).takeIf { it.size == 2 }?.let { it[0] to java.net.URLDecoder.decode(it[1], "UTF-8") } }.toMap()
-    return Triple(address, query["c"] ?: "", query["n"] ?: "")
+    return PairLink(address, query["c"] ?: "", query["n"] ?: "", query["a"].orEmpty().split(',').filter { it.isNotBlank() })
 }
 
 @Composable
@@ -416,8 +419,9 @@ fun MyDevices(node: Node, s: JSONObject, said: (String) -> Unit) {
                         Spacer(Modifier.width(8.dp))
                         Button(enabled = parseLink(adding) != null, onClick = {
                             val (address, code, _) = parseLink(adding)!!
+                            val addrs = parseLink(adding)!!.addrs
                             scope.launch {
-                                val r = io { node.link(address, code) }
+                                val r = io { node.link(address, code, addrs) }
                                 said(r.optString("error").ifEmpty { if (code.isEmpty()) "Asked: linked once its owner allows it" else "Linking…" })
                                 adding = ""
                             }

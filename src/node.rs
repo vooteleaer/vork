@@ -2462,6 +2462,32 @@ impl Node {
         c
     }
 
+    /// Addresses for a link code: those other nodes proved they reach this
+    /// one at (from outside), the router's mapping, and its LAN address.
+    fn link_hints(&self) -> Vec<SocketAddr> {
+        let week = 7 * 86400;
+        let mut h: Vec<SocketAddr> = self.reach.about_me.values().filter(|(_, t)| unix_now().saturating_sub(*t) < week).map(|(a, _)| *a).collect();
+        h.extend(self.mapped);
+        let port = self.socket_port();
+        let lan = std::net::UdpSocket::bind("0.0.0.0:0")
+            .and_then(|s| s.connect("192.0.2.1:9").and_then(|_| s.local_addr()))
+            .ok()
+            .map(|a| a.ip())
+            .filter(|ip| !ip.is_unspecified() && !ip.is_loopback());
+        if let (Some(ip), Some(port)) = (lan, port) {
+            h.push(SocketAddr::new(ip, port));
+        }
+        let mut seen = HashSet::new();
+        h.retain(|a| seen.insert(*a));
+        h.truncate(4);
+        h
+    }
+
+    /// The port this node listens on.
+    fn socket_port(&self) -> Option<u16> {
+        self.send_sock.local_addr().ok().map(|a| a.port()).filter(|p| *p != 0)
+    }
+
     fn send_punch(&mut self, sid: u32) {
         let cands = self.candidates();
         if cands.is_empty() {
@@ -2818,7 +2844,13 @@ impl Node {
             self.link_codes.push(LinkCode { code: code.clone(), until: Instant::now() + valid, uses, approve });
             let me = hex::encode(self.my_hash);
             let name: String = self.cfg.name.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-._~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect();
-            let uri = format!("vork-link:{me}?c={code}&n={name}");
+            // Where it can be dialed, so a scan alone connects (no address typed in).
+            let hints = self.link_hints();
+            let mut uri = format!("vork-link:{me}?c={code}&n={name}");
+            if !hints.is_empty() {
+                uri.push_str("&a=");
+                uri.push_str(&hints.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(","));
+            }
             // The QR code as rows of 0/1, for apps that draw it themselves.
             let qr: Vec<String> = qrcode::QrCode::new(uri.as_bytes())
                 .map(|q| {
@@ -2836,6 +2868,12 @@ impl Node {
         match cmd {
             "link" => {
                 let code = v.get("code").and_then(|c| c.as_str()).unwrap_or_default().to_string();
+                // Addresses the link came with: asked right away, so the two connect without other nodes.
+                for a in v.get("addrs").and_then(|a| a.as_array()).into_iter().flatten().filter_map(|a| a.as_str()?.parse::<SocketAddr>().ok()) {
+                    if !self.neighbors.values().any(|n| n.addr == Some(a)) && !self.asking.contains_key(&a) {
+                        self.ask_key(a);
+                    }
+                }
                 if self.is_device(&hash) {
                     return Ok(json!({ "ok": true, "already": true }));
                 }

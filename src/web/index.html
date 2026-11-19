@@ -184,9 +184,11 @@ document.addEventListener("click", async (e) => {
     const v = document.getElementById("paste").value.trim();
     const m = v.match(/^(?:vork-link:|vork:link\/)?([0-9a-fA-F]{32})(?:\?(.*))?$/);
     if (!m) return say("That isn't a vØrk link or address", true);
-    const c = new URLSearchParams(m[2] || "").get("c") || "";
+    const q = new URLSearchParams(m[2] || "");
+    const c = q.get("c") || "";
+    const addrs = (q.get("a") || "").split(",").filter(Boolean);
     document.getElementById("paste").value = "";
-    done(await cmd({ cmd: "link", address: m[1].toLowerCase(), code: c }), c ? "Linking…" : "Asked: linked once its owner allows it");
+    done(await cmd({ cmd: "link", address: m[1].toLowerCase(), code: c, addrs }), c ? "Linking…" : "Asked: linked once its owner allows it");
   }
   else if (d.unlink) done(await cmd({ cmd: "unlink", address: d.unlink }), "Unlinked (the other side is told)");
   else if (d.allow) done(await cmd({ cmd: "link_allow", address: d.allow }), "Allowed: one of your devices now");
