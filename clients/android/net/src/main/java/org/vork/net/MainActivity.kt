@@ -334,7 +334,12 @@ fun Overview(node: Node, s: JSONObject, said: (String) -> Unit) {
                     val via = s.optJSONObject("settings")?.optString("exit_via").orEmpty()
                     if (on && via.isNotEmpty()) {
                         val name = nodes(s).firstOrNull { it.optString("address") == via }?.let { displayName(it) } ?: via.take(8)
-                        Text("Internet goes out through $name (exit node; IPv4, IPv6 held back)", style = small)
+                        val up = s.optJSONObject("exit")?.optBoolean("up") == true
+                        Text(
+                            if (up) "Internet goes out through $name (exit node; IPv4 and names, IPv6 held back)"
+                            else "Exit node $name doesn't answer: internet goes out directly until it does",
+                            style = small,
+                        )
                     }
                 }
             }

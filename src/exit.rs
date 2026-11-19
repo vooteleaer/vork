@@ -43,6 +43,61 @@ impl Clients {
     }
 }
 
+/// Public resolvers asked through the exit (Quad9, Cloudflare): the network
+/// the device is on doesn't see its names (the device's own network's
+/// servers may be private addresses the exit can't reach).
+pub const DNS: [Ipv4Addr; 2] = [Ipv4Addr::new(9, 9, 9, 9), Ipv4Addr::new(1, 1, 1, 1)];
+
+/// A UDP packet over IPv4, checksums made.
+pub fn udp4(src: Ipv4Addr, sport: u16, dst: Ipv4Addr, dport: u16, payload: &[u8]) -> Vec<u8> {
+    let len = 8 + payload.len();
+    let total = 20 + len;
+    let mut p = Vec::with_capacity(total);
+    p.extend_from_slice(&[0x45, 0]);
+    p.extend_from_slice(&(total as u16).to_be_bytes());
+    p.extend_from_slice(&[0, 0, 0x40, 0, 64, 17, 0, 0]);
+    p.extend_from_slice(&src.octets());
+    p.extend_from_slice(&dst.octets());
+    let h = !fold(sum16(&p[..20]));
+    p[10..12].copy_from_slice(&h.to_be_bytes());
+    p.extend_from_slice(&sport.to_be_bytes());
+    p.extend_from_slice(&dport.to_be_bytes());
+    p.extend_from_slice(&(len as u16).to_be_bytes());
+    p.extend_from_slice(&[0, 0]);
+    p.extend_from_slice(payload);
+    let mut c = !fold(sum16(&p[12..20]) + len as u32 + 17 + sum16(&p[20..]));
+    if c == 0 {
+        c = 0xffff;
+    }
+    p[26..28].copy_from_slice(&c.to_be_bytes());
+    p
+}
+
+/// A UDP packet's source port, destination port and payload (IPv4).
+pub fn udp4_parts(p: &[u8]) -> Option<(u16, u16, &[u8])> {
+    if p.len() < 28 || p[0] >> 4 != 4 || p[9] != 17 {
+        return None;
+    }
+    let ihl = (p[0] & 15) as usize * 4;
+    let total = (u16::from_be_bytes([p[2], p[3]]) as usize).min(p.len());
+    let u = p.get(ihl..total)?;
+    if u.len() < 8 {
+        return None;
+    }
+    Some((u16::from_be_bytes([u[0], u[1]]), u16::from_be_bytes([u[2], u[3]]), &u[8..]))
+}
+
+fn sum16(b: &[u8]) -> u32 {
+    b.chunks(2).map(|c| u16::from_be_bytes([c[0], *c.get(1).unwrap_or(&0)]) as u32).sum()
+}
+
+fn fold(mut s: u32) -> u16 {
+    while s >> 16 != 0 {
+        s = (s & 0xffff) + (s >> 16);
+    }
+    s as u16
+}
+
 /// The packet with its source (`src`) or destination (`dst`) address changed,
 /// checksums made right. None: not an IPv4 packet this handles.
 pub fn readdress(p: &[u8], src: Option<Ipv4Addr>, dst: Option<Ipv4Addr>) -> Option<Vec<u8>> {
@@ -146,15 +201,14 @@ pub fn setup(_interface: &str) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    fn sum16(b: &[u8]) -> u32 {
-        b.chunks(2).map(|c| u16::from_be_bytes([c[0], *c.get(1).unwrap_or(&0)]) as u32).sum()
+    #[test]
+    fn udp_built_and_read() {
+        let p = udp4(Ipv4Addr::new(198, 18, 0, 1), 40000, DNS[0], 53, b"query");
+        assert!(udp_ok(&p));
+        assert_eq!(fold(sum16(&p[..20])), 0xffff);
+        assert_eq!(udp4_parts(&p), Some((40000, 53, &b"query"[..])));
     }
-    fn fold(mut s: u32) -> u16 {
-        while s >> 16 != 0 {
-            s = (s & 0xffff) + (s >> 16);
-        }
-        s as u16
-    }
+
     fn udp_ok(p: &[u8]) -> bool {
         let len = p.len() - 20;
         fold(sum16(&p[12..20]) + len as u32 + 17 + sum16(&p[20..])) == 0xffff

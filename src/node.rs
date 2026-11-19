@@ -456,6 +456,9 @@ pub struct Node {
     v4_flows: HashMap<(Hash, crate::alias::Flow), Instant>,
     /// The devices using this node as their exit.
     exit_clients: crate::exit::Clients,
+    /// Names asked through the exit, by the port they went from: who asked,
+    /// when, and the network's servers to ask instead if no answer comes.
+    exit_dns: HashMap<u16, (crate::dns::Query, Instant)>,
 }
 
 /// Socket buffers big enough to absorb bursts (the Linux default, ~200 KB,
@@ -642,6 +645,7 @@ impl Node {
             aliases,
             v4_flows: HashMap::new(),
             exit_clients: Default::default(),
+            exit_dns: HashMap::new(),
         };
         for name in node.cfg.destinations.clone() {
             let me = node.me_arc.clone();
@@ -1001,7 +1005,16 @@ impl Node {
                     if last_links.elapsed() >= Duration::from_secs(5) {
                         last_links = Instant::now();
                         self.send_links();
+                        // A session to the exit node kept open, so whether it works is known before traffic needs it.
+                        // (One this node opened: its paths are probed, so their state is known.)
+                        if let Some(sid) = self.cfg.exit_via.and_then(|via| self.session_to(via)) {
+                            if self.ip_identified.insert(sid) {
+                                let me = self.me_arc.clone();
+                                self.identify(sid, &me);
+                            }
+                        }
                     }
+                    self.exit_dns_late();
                     if last_share.elapsed() >= SHARE_EVERY {
                         last_share = Instant::now();
                         for id in self.up_neighbors() {
@@ -1623,6 +1636,9 @@ impl Node {
             }
             return tun.send(&reply(&q, &answer(&q.msg, end, qtype, rcode, found)));
         }
+        if self.exit_up() {
+            return self.dns_via_exit(q);
+        }
         let upstream = self.cfg.dns_upstream.clone();
         if upstream.is_empty() {
             return tun.send(&reply(&q, &answer(&q.msg, end, qtype, REFUSED, None)));
@@ -1634,6 +1650,53 @@ impl Node {
             };
             tun.send(&reply(&q, &msg));
         });
+    }
+
+    /// Whether the chosen exit node can be used now: a session to it with a
+    /// path that answers.
+    fn exit_up(&self) -> bool {
+        let Some(via) = self.cfg.exit_via else { return false };
+        // Either side may have opened the session: the opener's paths count once
+        // answered, the far end's while their probes keep coming.
+        [self.session_by_dest.get(&via), self.ip_peer.get(&via)].into_iter().flatten().filter_map(|sid| self.sessions.get(sid)).any(|s| {
+            s.paths.iter().any(|k| self.ends.get(k).is_some_and(|e| (e.acked || !e.origin) && e.last_seen.elapsed() < Duration::from_secs(10)))
+        })
+    }
+
+    /// A name outside `.vork` asked of public resolvers through the exit
+    /// (ADR-0026), so the network the device is on doesn't see it.
+    fn dns_via_exit(&mut self, q: crate::dns::Query) {
+        let Some(via) = self.cfg.exit_via else { return };
+        let port = loop {
+            let p = 20000 + (rand_u64() % 40000) as u16;
+            if !self.exit_dns.contains_key(&p) {
+                break p;
+            }
+        };
+        let Some(sid) = self.ip_session(via) else { return };
+        for server in crate::exit::DNS {
+            let mut body = vec![APP_EXIT];
+            body.extend_from_slice(&crate::exit::udp4(crate::alias::ME, port, server, 53, &q.msg));
+            self.send_app(sid, &body);
+        }
+        self.exit_dns.insert(port, (q, Instant::now()));
+    }
+
+    /// Names the exit didn't answer in 2 s: asked of the network's servers.
+    fn exit_dns_late(&mut self) {
+        let late: Vec<u16> = self.exit_dns.iter().filter(|(_, (_, t))| t.elapsed() > Duration::from_secs(2)).map(|(p, _)| *p).collect();
+        for p in late {
+            let Some((q, _)) = self.exit_dns.remove(&p) else { continue };
+            let (Some(tun), upstream) = (self.tun.clone(), self.cfg.dns_upstream.clone()) else { continue };
+            if upstream.is_empty() {
+                continue;
+            }
+            tokio::spawn(async move {
+                if let Some(m) = crate::dns::forward(upstream, q.msg.clone()).await {
+                    tun.send(&crate::dns::reply(&q, &m));
+                }
+            });
+        }
     }
 
     /// The address a `.vork` label names: this node or one of the owner's
@@ -2037,6 +2100,15 @@ impl Node {
                 tun.send(&out);
             }
         } else if self.cfg.exit_via == Some(who) && p[16..20] == crate::alias::ME.octets() {
+            // An answer to a name this node asked through the exit: to whoever asked it (the first answer wins).
+            if let Some((53, port, msg)) = crate::exit::udp4_parts(p) {
+                if crate::exit::DNS.iter().any(|d| p[12..16] == d.octets()) {
+                    if let Some((q, _)) = self.exit_dns.remove(&port) {
+                        tun.send(&crate::dns::reply(&q, msg));
+                    }
+                    return;
+                }
+            }
             tun.send(p);
         }
     }
@@ -3303,6 +3375,7 @@ impl Node {
             "nodes": self.known_nodes(),
             // The interface for ordinary programs (M2), if there is one: this node's address on it.
             "interface": self.tun.as_ref().map(|t| json!({ "name": t.name, "address": crate::tun::overlay(&self.my_hash).to_string() })),
+            "exit": self.cfg.exit_via.map(|v| json!({ "via": hex::encode(v), "up": self.exit_up() })),
             "dns": json!({
                 "server": crate::dns::ADDR.to_string(),
                 "name": format!("{}.{}", crate::dns::label(&self.cfg.name), crate::dns::DOMAIN),

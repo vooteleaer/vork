@@ -29,6 +29,8 @@ class VorkVpn : VpnService() {
     private var iface: ParcelFileDescriptor? = null
     /** Whether the interface was made for an exit node (all traffic) or not. */
     private var ifaceExit = false
+    /** Since when the chosen exit node hasn't answered (null: it does, or none chosen). */
+    private var exitDownSince: Long? = null
     @Volatile private var running = false
     private var keeper: Thread? = null
 
@@ -75,8 +77,15 @@ class VorkVpn : VpnService() {
                     n.has("error") || address.length != 32 -> state = "waiting for the vØrk node"
                     else -> {
                         // An exit node chosen or dropped: the interface is made again with the other routes.
-                        val exit = n.optJSONObject("settings")?.optString("exit_via").orEmpty().isNotEmpty()
+                        // One that stops answering for 10 s is left until it answers again: the
+                        // phone's internet goes out directly meanwhile instead of stopping.
+                        val chosen = n.optJSONObject("settings")?.optString("exit_via").orEmpty().isNotEmpty()
+                        val up = n.optJSONObject("exit")?.optBoolean("up") == true
+                        val now = System.currentTimeMillis()
+                        exitDownSince = if (!chosen || up) null else exitDownSince ?: now
+                        val exit = chosen && (exitDownSince == null || now - exitDownSince!! < 10_000)
                         if (iface != null && exit != ifaceExit) {
+                            if (chosen) say(if (exit) "the exit node answers again: internet goes out through it" else "the exit node doesn't answer: internet goes out directly until it does")
                             node.interfaceOff()
                             iface?.close()
                             iface = null
