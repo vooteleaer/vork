@@ -136,6 +136,11 @@ class VorkVpn : VpnService() {
             .setSession("vØrk")
             .addAddress(InetAddress.getByAddress(bytes), 128)
             .addRoute("fd00::", 8)
+            // IPv4 aliases for vØrk names (ADR-0021): Android asks only for
+            // IPv4 addresses on a network it thinks has no IPv6, and the
+            // node translates.
+            .addAddress("198.18.0.1", 32)
+            .addRoute("198.18.0.0", 15)
             // The node answers names (.vork itself, the rest from the network's servers).
             .addDnsServer(InetAddress.getByName("fd00::53"))
             // The node's own traffic (to other nodes, and those DNS questions) stays outside.

@@ -444,6 +444,10 @@ pub struct Node {
     link_identified: HashSet<u32>,
     /// Names asked lately (logged once a minute each).
     dns_seen: HashMap<(String, u16), Instant>,
+    /// IPv4 aliases for nodes (ADR-0021), and the conversations programs
+    /// here began over IPv4, whose answers go back translated.
+    aliases: crate::alias::Aliases,
+    v4_flows: HashMap<(Hash, crate::alias::Flow), Instant>,
 }
 
 /// Socket buffers big enough to absorb bursts (the Linux default, ~200 KB,
@@ -577,6 +581,7 @@ fn timers(tunn: &mut Tunn) -> Option<Vec<u8>> {
 
 impl Node {
     pub async fn new(me: Identity, cfg: Config, state: State) -> anyhow::Result<Node> {
+        let aliases = crate::alias::Aliases::open(state.dir());
         let std_sock = bind_socket(cfg.listen)?;
         let send_sock = std_sock.try_clone()?;
         let sock = Arc::new(UdpSocket::from_std(std_sock)?);
@@ -626,6 +631,8 @@ impl Node {
             link_sent: HashMap::new(),
             link_identified: HashSet::new(),
             dns_seen: HashMap::new(),
+            aliases,
+            v4_flows: HashMap::new(),
         };
         for name in node.cfg.destinations.clone() {
             let me = node.me_arc.clone();
@@ -1577,8 +1584,15 @@ impl Node {
         let ours = name == DOMAIN || name.ends_with(".vork");
         if ours {
             let label = name.strip_suffix(DOMAIN).unwrap_or("").trim_end_matches('.');
-            let found = self.resolve(label);
-            let rcode = if found.is_some() { NOERROR } else { NXDOMAIN };
+            let node = self.resolve(label);
+            let rcode = if node.is_some() { NOERROR } else { NXDOMAIN };
+            let found: Option<std::net::IpAddr> = node.and_then(|h| {
+                if qtype == A {
+                    if h == self.my_hash { Some(crate::alias::ME.into()) } else { self.aliases.of(&h).map(Into::into) }
+                } else {
+                    Some(crate::tun::overlay(&h).into())
+                }
+            });
             let key = (name.clone(), qtype);
             if self.dns_seen.get(&key).is_none_or(|t| t.elapsed() > Duration::from_secs(60)) {
                 if self.dns_seen.len() > 256 {
@@ -1586,10 +1600,10 @@ impl Node {
                 }
                 self.dns_seen.insert(key, Instant::now());
                 let kind = match qtype { 28 => "AAAA".to_string(), 1 => "A".to_string(), 65 => "HTTPS".to_string(), t => format!("type {t}") };
-                log(format!("name asked: {name} {kind} → {}", match found {
-                    Some(a) if qtype == 28 => a.to_string(),
-                    Some(_) => "no records of that type (vØrk names are IPv6)".to_string(),
-                    None => "no such name".to_string(),
+                log(format!("name asked: {name} {kind} → {}", match (node, found) {
+                    (None, _) => "no such name".to_string(),
+                    (Some(_), Some(a)) if qtype == AAAA || qtype == A => a.to_string(),
+                    _ => "no records of that type".to_string(),
                 }));
             }
             return tun.send(&reply(&q, &answer(&q.msg, end, qtype, rcode, found)));
@@ -1610,22 +1624,22 @@ impl Node {
     /// The address a `.vork` label names: this node or one of the owner's
     /// devices by name (others could claim any name), or any node by its
     /// address (in full, or 8+ digits that only one known node starts with).
-    fn resolve(&self, label: &str) -> Option<std::net::Ipv6Addr> {
+    fn resolve(&self, label: &str) -> Option<Hash> {
         if label.is_empty() || label.contains('.') {
             return None;
         }
         if label == crate::dns::label(&self.cfg.name) {
-            return Some(crate::tun::overlay(&self.my_hash));
+            return Some(self.my_hash);
         }
         if label.len() >= 8 && label.len() <= 32 && label.bytes().all(|b| b.is_ascii_hexdigit()) {
             if let Ok(h) = hex::decode(label) {
                 if let Ok(full) = <Hash>::try_from(h.as_slice()) {
-                    return Some(crate::tun::overlay(&full));
+                    return Some(full);
                 }
             }
             let mut hits = self.routes.keys().chain(std::iter::once(&self.my_hash)).filter(|d| hex::encode(d).starts_with(label));
             if let (Some(one), None) = (hits.next(), hits.next()) {
-                return Some(crate::tun::overlay(one));
+                return Some(*one);
             }
             return None;
         }
@@ -1636,7 +1650,7 @@ impl Node {
         };
         self.routes.iter().filter(|(d, _)| device(d)).find_map(|(d, by)| {
             let r = by.values().filter(|r| r.ann.name_hash == wire::NO_NAME).min_by_key(|r| r.hops)?;
-            (crate::dns::label(&announced_name(&r.ann.app_data)?) == label).then(|| crate::tun::overlay(d))
+            (crate::dns::label(&announced_name(&r.ann.app_data)?) == label).then_some(*d)
         })
     }
 
@@ -1918,12 +1932,18 @@ impl Node {
     /// destination names, over a session to it (opened, and identified in,
     /// on the first packet).
     fn on_tun_packet(&mut self, p: &[u8]) {
+        if p.first().is_some_and(|b| b >> 4 == 4) {
+            return self.on_tun_v4(p);
+        }
         let Some((src, dst)) = crate::tun::v6_ends(p) else { return };
         if src != crate::tun::overlay(&self.my_hash).octets() {
             return; // only this node's own address goes out
         }
         if let Some(q) = crate::dns::query_in(p) {
             return self.on_dns(q);
+        }
+        if dst == crate::dns::ADDR.octets() {
+            return; // not plain DNS (TLS on 853, TCP): the resolver doesn't do those
         }
         let Some(prefix) = crate::tun::prefix_of(&dst) else { return };
         let dest = self
@@ -1963,7 +1983,32 @@ impl Node {
             return debug(format!("IP with source {} from {}: dropped", std::net::Ipv6Addr::from(src), short(&who)));
         }
         self.ip_peer.insert(who, sid);
+        // An answer in a conversation a program here began over IPv4: back as IPv4.
+        if let Some(alias) = self.aliases.known(&who) {
+            if let Some((v4, flow)) = crate::alias::to_v4(p, alias, crate::alias::ME) {
+                if let Some(t) = self.v4_flows.get_mut(&(who, flow)) {
+                    *t = Instant::now();
+                    return tun.send(&v4);
+                }
+            }
+        }
         tun.send(p);
+    }
+
+    /// An IPv4 packet from a program here: to an alias, it goes on as IPv6.
+    fn on_tun_v4(&mut self, p: &[u8]) {
+        if p.len() < 20 || p[12..16] != crate::alias::ME.octets() {
+            return;
+        }
+        let dst = std::net::Ipv4Addr::new(p[16], p[17], p[18], p[19]);
+        let Some(node) = self.aliases.node(dst) else { return };
+        let me = crate::tun::overlay(&self.my_hash);
+        let Some((v6, flow)) = crate::alias::to_v6(p, me, crate::tun::overlay(&node)) else { return };
+        if self.v4_flows.len() > 4096 {
+            self.v4_flows.retain(|_, t| t.elapsed() < Duration::from_secs(600));
+        }
+        self.v4_flows.insert((node, flow), Instant::now());
+        self.on_tun_packet(&v6);
     }
 
     fn on_app(&mut self, sid: u32, key: (u32, u64), body: &[u8]) {

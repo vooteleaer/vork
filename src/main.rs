@@ -14,6 +14,7 @@ mod state;
 mod stream;
 mod tun;
 mod dns;
+mod alias;
 mod web;
 mod wire;
 

@@ -17,3 +17,6 @@ ADR-0018 gave the `.vork` domain. Two things were left: where the resolver liste
 - `ssh cafa-cloud.vork` works from the owner's own devices; a stranger announcing the same name gets nothing.
 - On Android, DNS for the whole phone goes through the node while the VPN is on: a node that stops answers nothing, so the VPN must come down with it. Large answers that need TCP aren't forwarded yet (clients use EDNS over UDP).
 - Petnames from a file, PTR, and IPv4 aliases (ADR-0021) are still to come.
+
+## Addendum: IPv4 aliases now (ADR-0021)
+On the first phone test the browser asked only for `A` (and `HTTPS`), never `AAAA`: Android and Chrome don't ask for IPv6 addresses on a network whose only IPv6 route is `fd00::/8`. So `A` queries are answered now with ADR-0021's local aliases from `198.18.0.0/15` (this node is `198.18.0.1`; the table in `<state>/aliases.json`), the range is on the interface (the Android VPN; on Linux unless a route already covers it), and the node translates: IPv4 from a program here to an alias becomes IPv6 to that node (TCP's MSS lowered by 20 so the result fits the MTU; ICMP echo as ICMPv6 echo; fragments and other protocols dropped), and answers in those conversations come back as IPv4. Conversations begun by the far end stay IPv6. Choosing among candidate ranges and translating ICMP errors are still to come.

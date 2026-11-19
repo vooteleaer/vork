@@ -21,7 +21,8 @@ pub const NOERROR: u8 = 0;
 pub const SERVFAIL: u8 = 2;
 pub const NXDOMAIN: u8 = 3;
 pub const REFUSED: u8 = 5;
-const AAAA: u16 = 28;
+pub const AAAA: u16 = 28;
+pub const A: u16 = 1;
 
 /// A node's name as a DNS label: lower case, runs of anything but letters,
 /// digits and `-` made one `-`, at most 40 characters (as the apps show it).
@@ -89,10 +90,15 @@ pub fn question(msg: &[u8]) -> Option<(String, u16, usize)> {
     Some((name, qtype, i + 4))
 }
 
-/// The answer to `msg`: `rcode`, and the address when there is one and it was
-/// asked for (AAAA). Only the question is kept from the query.
-pub fn answer(msg: &[u8], end: usize, qtype: u16, rcode: u8, addr: Option<Ipv6Addr>) -> Vec<u8> {
-    let give = rcode == NOERROR && qtype == AAAA && addr.is_some();
+/// The answer to `msg`: `rcode`, and the address when there is one of the
+/// kind asked for (AAAA, or A). Only the question is kept from the query.
+pub fn answer(msg: &[u8], end: usize, qtype: u16, rcode: u8, addr: Option<std::net::IpAddr>) -> Vec<u8> {
+    let give = rcode == NOERROR
+        && match addr {
+            Some(std::net::IpAddr::V6(_)) => qtype == AAAA,
+            Some(std::net::IpAddr::V4(_)) => qtype == A,
+            None => false,
+        };
     let mut out = Vec::with_capacity(end + 28);
     out.extend_from_slice(&msg[..2]);
     out.push(0x84 | (msg[2] & 0x79)); // response, authoritative, opcode and RD kept
@@ -100,12 +106,16 @@ pub fn answer(msg: &[u8], end: usize, qtype: u16, rcode: u8, addr: Option<Ipv6Ad
     out.extend_from_slice(&[0, 1, 0, give as u8, 0, 0, 0, 0]);
     out.extend_from_slice(&msg[12..end]);
     if let (true, Some(a)) = (give, addr) {
+        let data = match a {
+            std::net::IpAddr::V6(v6) => v6.octets().to_vec(),
+            std::net::IpAddr::V4(v4) => v4.octets().to_vec(),
+        };
         out.extend_from_slice(&[0xc0, 12]);
-        out.extend_from_slice(&AAAA.to_be_bytes());
+        out.extend_from_slice(&qtype.to_be_bytes());
         out.extend_from_slice(&1u16.to_be_bytes());
         out.extend_from_slice(&TTL.to_be_bytes());
-        out.extend_from_slice(&16u16.to_be_bytes());
-        out.extend_from_slice(&a.octets());
+        out.extend_from_slice(&(data.len() as u16).to_be_bytes());
+        out.extend_from_slice(&data);
     }
     out
 }
@@ -238,14 +248,17 @@ mod tests {
         let (name, qtype, end) = question(&q.msg).unwrap();
         assert_eq!((name.as_str(), qtype), ("cafa-cloud.vork", AAAA));
         let a: Ipv6Addr = "fd5f::1".parse().unwrap();
-        let r = answer(&q.msg, end, qtype, NOERROR, Some(a));
+        let r = answer(&q.msg, end, qtype, NOERROR, Some(a.into()));
         assert_eq!(&r[..2], &[0xab, 0xcd]);
         assert_eq!(r[3] & 15, NOERROR);
         assert_eq!(u16::from_be_bytes([r[6], r[7]]), 1);
         assert_eq!(&r[r.len() - 16..], &a.octets());
-        // Asked for A: no records, no error.
-        let r = answer(&q.msg, end, 1, NOERROR, Some(a));
+        // Asked for A with an IPv6 address: no records, no error.
+        let r = answer(&q.msg, end, A, NOERROR, Some(a.into()));
         assert_eq!(u16::from_be_bytes([r[6], r[7]]), 0);
+        let v4 = std::net::Ipv4Addr::new(198, 18, 0, 2);
+        let r4 = answer(&q.msg, end, A, NOERROR, Some(v4.into()));
+        assert_eq!(&r4[r4.len() - 4..], &v4.octets());
         let pkt = reply(&q, &r);
         assert_eq!(&pkt[24..40], &q.from.octets());
     }

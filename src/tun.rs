@@ -62,6 +62,25 @@ mod linux {
         Ok(())
     }
 
+    /// IPv4 aliases (ADR-0021): the range on the interface, unless a route
+    /// here already covers it (then IPv6 only, said in the log).
+    fn ipv4_aliases(name: &str) {
+        let me = crate::alias::ME.to_string();
+        let range = format!("{}/{}", crate::alias::NET, crate::alias::PREFIX);
+        let taken = std::process::Command::new("ip")
+            .args(["-4", "route", "show", "match", &me])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).lines().any(|l| !l.starts_with("default") && !l.contains(&format!("dev {name}"))))
+            .unwrap_or(true);
+        if taken {
+            return crate::node::log(format!("IPv4 aliases off: something here already routes {range}"));
+        }
+        match ip(&["-4", "addr", "replace", &format!("{me}/32"), "dev", name]).and_then(|_| ip(&["-4", "route", "replace", &range, "dev", name])) {
+            Ok(()) => crate::node::log(format!("IPv4 aliases in {range}: this node is {me}")),
+            Err(e) => crate::node::log(format!("IPv4 aliases off: {e:#}")),
+        }
+    }
+
     /// One descriptor sent over `conn` with SCM_RIGHTS.
     pub fn receive_fd(conn: &std::os::unix::net::UnixStream) -> io::Result<OwnedFd> {
         let mut data = [0u8; 1];
@@ -103,6 +122,7 @@ mod linux {
             ip(&["link", "set", "dev", &name, "mtu", &mtu.to_string(), "up"])?;
             ip(&["-6", "addr", "replace", &format!("{addr}/128"), "dev", &name])?;
             ip(&["-6", "route", "replace", "fd00::/8", "dev", &name])?;
+            ipv4_aliases(&name);
             // Safe: the descriptor is ours alone and lives as long as the AsyncFd.
             let fd = unsafe { AsyncFd::register(fd) }.map_err(|e| anyhow::anyhow!("{e}"))?;
             Ok(Tun { fd, name })

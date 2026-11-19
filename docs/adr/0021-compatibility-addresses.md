@@ -1,6 +1,6 @@
 # ADR-0021: Compatibility addresses: IPv6 per identity, local IPv4 aliases
 
-- **Status:** proposed
+- **Status:** accepted (IPv4 aliases in part: ADR-0025)
 - **Date:** 2026-11-18
 - **Irreversible:** no (the IPv6 derivation is part of the format; IPv4 aliases are local)
 
