@@ -69,7 +69,7 @@ Any node may be hostile: neighbors, relays, the far end of a path that isn't the
 |---|---|---|
 | Reach a node's services (SSH, dashboards, Docker) from any node | the walled garden (ADR-0027): only the owner's devices, other nodes only what `allow` opens; relaying untouched | implemented |
 | Grind a key to match an address prefix (2³² tries for 8 digits) | `allow` rules name nodes by full address; `<prefix>.vork` resolves only among the owner's devices | implemented |
-| Take a name (`cafa-cloud.vork`) by announcing it | names resolve only for the owner's devices | implemented |
+| Take a name (`home-server.vork`) by announcing it | names resolve only for the owner's devices | implemented |
 | Use someone's exit node | only the owner's devices (ADR-0026) | implemented |
 | An exit client reaches the exit's LAN | the internet only by default (private, shared, link-local, loopback, multicast dropped); `exit_lan = true` to allow | implemented |
 | Sniff the web dashboard's key on the LAN | HTTPS: a certificate the node makes and keeps (trust on first use, its SHA-256 shown by `vork web-link` to compare), or one given (`web_cert`, `web_key`: Let's Encrypt's, say); plain HTTP is redirected | implemented (a reload when a given certificate is renewed is to come: restart the node meanwhile) |
