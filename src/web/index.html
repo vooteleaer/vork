@@ -129,7 +129,18 @@
     .card:has(table) { overflow-x: auto; }
     .field { grid-template-columns: 76px 1fr auto; }
     .field .mono { word-break: break-all; }
-    .devtab tr > :nth-child(5), .devtab tr > :nth-child(6) { display: none; }
+    /* The devices as cards: name and connection, then the addresses, Unlink at the side. */
+    .devtab thead, .devtab tr > :nth-child(5), .devtab tr > :nth-child(6) { display: none; }
+    .devtab, .devtab tbody { display: block; }
+    .devtab tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "dev conn" "v4 v4" "dns act"; gap: 6px 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+    .devtab tr:last-child { border-bottom: 0; }
+    .devtab td { display: block; padding: 0; border: 0; min-width: 0; }
+    .devtab td:nth-child(1) { grid-area: dev; } .devtab td:nth-child(2) { grid-area: conn; justify-self: end; }
+    .devtab td:nth-child(3) { grid-area: v4; } .devtab td:nth-child(4) { grid-area: dns; word-break: break-all; }
+    .devtab td:nth-child(7) { grid-area: act; align-self: end; }
+    .devtab td:nth-child(3)::before { content: "IPv4  "; } .devtab td:nth-child(4)::before { content: "DNS  "; }
+    .devtab td:nth-child(3)::before, .devtab td:nth-child(4)::before { color: var(--faint); font: 600 11px Inter, system-ui, sans-serif; letter-spacing: .5px; white-space: pre; }
+    .card:has(.devtab) { overflow-x: visible; }
     .toast { left: 16px; right: 16px; bottom: 16px; max-width: none; }
   }
 </style>
