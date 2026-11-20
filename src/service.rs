@@ -91,7 +91,9 @@ fn service_main(_args: Vec<OsString>) {
     {
         use std::os::windows::process::CommandExt;
         let _ = std::process::Command::new("sc.exe")
-            .args(["failure", NAME, "reset=", "86400", "actions=", "restart/5000/restart/10000/restart/60000"])
+            // Every restart after 5 s: a day with several updates counted each as
+            // a failure, and from the third the node was down a minute.
+            .args(["failure", NAME, "reset=", "3600", "actions=", "restart/5000/restart/5000/restart/5000"])
             .creation_flags(0x0800_0000)
             .output();
     }
