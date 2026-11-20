@@ -2,6 +2,10 @@
 
 This guide takes you from nothing to your devices reaching each other by name. It takes about ten minutes per device. vØrk is an early prototype: keep all your devices on the same version, and don't rely on it for anything important yet.
 
+**Contents:** [which file](#which-file) · [one reachable device](#before-you-start-one-reachable-device) · [Windows](#windows) · [Android](#android) · [Debian, Ubuntu, Raspberry Pi](#debian-ubuntu-raspberry-pi) · [any Linux](#any-linux-the-node-alone) · [Docker and NAS](#docker-and-nas-truenas-scale) · [Home Assistant](#home-assistant) · [Haiku](#haiku) · [linking your devices](#link-your-devices) · [exit node](#use-an-exit-node) · **[the dashboard in a browser and its key](#the-dashboard-in-a-browser-its-key)** · [updates](#updates) · [when something doesn't work](#when-something-doesnt-work)
+
+## Which file
+
 Downloads are on the [releases page](https://github.com/vooteleaer/vork/releases). Take the newest release, and the file for each device from the table below.
 
 | Device | File | Section |
@@ -50,7 +54,7 @@ sudo apt install ./vork_<version>_<arch>.deb
 
 This installs the node as a system service (`vork status` shows it) with its network interface on, and the **vØrk** window in the applications menu, which also starts in the tray at login. The user who installed it may manage the node from the window (`operators` in `/etc/vork/vork.toml`).
 
-On a Raspberry Pi or server without a screen the window isn't needed: the `.deb` still brings its libraries. To do without them, use the [bare node](#any-linux-the-node-alone) instead. To see the dashboard in a browser on another machine, add `web = "0.0.0.0:8742"` to `/etc/vork/vork.toml`, run `sudo systemctl restart vork`, and open the link `vork web-link` prints.
+On a Raspberry Pi or server without a screen the window isn't needed: the `.deb` still brings its libraries. To do without them, use the [bare node](#any-linux-the-node-alone) instead. To see the dashboard in a browser on another machine, see [the dashboard in a browser and its key](#the-dashboard-in-a-browser-its-key).
 
 > Packages of 0.2.0 still listen on UDP 51820. If another device behind the same router already uses it, give this one another port: `sudo sed -i 's|^listen = .*|listen = "0.0.0.0:47821"|' /etc/vork/vork.toml && sudo systemctl restart vork`. Later versions pick a free port by themselves.
 
@@ -68,7 +72,7 @@ systemctl daemon-reload && systemctl enable --now vork
 vork status
 ```
 
-`--tun vork0` turns on the network interface, so programs here reach vØrk addresses and `.vork` names; `--port auto` picks a free UDP port. For the dashboard in a browser, add `web = "0.0.0.0:8742"` to `/etc/vork/vork.toml`, restart, and run `vork web-link`.
+`--tun vork0` turns on the network interface, so programs here reach vØrk addresses and `.vork` names; `--port auto` picks a free UDP port. For the dashboard in a browser, see [the dashboard in a browser and its key](#the-dashboard-in-a-browser-its-key).
 
 ## Docker and NAS (TrueNAS SCALE)
 
@@ -76,7 +80,7 @@ vork status
 
 1. Make a folder (a dataset on TrueNAS) for the node's identity, and put its path in place of `/mnt/tank/apps/vork` in the file.
 2. On TrueNAS SCALE: **Apps → Discover → ⋮ → Install via YAML**, and paste the file. Elsewhere: `docker compose -f node.yaml up -d`.
-3. The app's **Web UI** button opens the dashboard; its private link is in the container's log (`vork web-link`).
+3. The app's **Web UI** button opens the dashboard, which asks for its key the first time: see [the dashboard in a browser and its key](#the-dashboard-in-a-browser-its-key).
 4. Go on to [linking your devices](#link-your-devices), from the dashboard.
 
 ## Home Assistant
