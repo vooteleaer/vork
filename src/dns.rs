@@ -41,6 +41,39 @@ pub fn label(name: &str) -> String {
     out.trim_matches('-').chars().take(40).collect::<String>().trim_matches('-').to_string()
 }
 
+/// Devices' labels made unique: `(label, when linked, address)` each; where
+/// several share a label, the one linked first keeps it and the others get
+/// `-2`, `-3`… in the order they were linked (ties by address), skipping
+/// numbers a device's own name has. `mine` (this node's label) is taken, so a
+/// device sharing it starts at `-2`.
+pub fn number_labels<K: Copy + Eq + std::hash::Hash + Ord>(mut named: Vec<(String, u64, K)>, mine: &str) -> std::collections::HashMap<K, String> {
+    named.sort();
+    let mut taken: std::collections::HashSet<String> = named.iter().map(|(l, _, _)| l.clone()).collect();
+    taken.insert(mine.to_string());
+    let mut out = std::collections::HashMap::new();
+    let mut i = 0;
+    while i < named.len() {
+        let label = named[i].0.clone();
+        let mut next = if label == mine { 2 } else { 1 };
+        while i < named.len() && named[i].0 == label {
+            let l = if next == 1 {
+                label.clone()
+            } else {
+                while taken.contains(&format!("{label}-{next}")) {
+                    next += 1;
+                }
+                let l = format!("{label}-{next}");
+                taken.insert(l.clone());
+                l
+            };
+            out.insert(named[i].2, l);
+            next += 1;
+            i += 1;
+        }
+    }
+    out
+}
+
 /// A DNS query that came through the interface.
 pub struct Query {
     pub from: Ipv6Addr,
@@ -210,6 +243,22 @@ pub fn register(interface: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn devices_sharing_a_name_get_numbers_in_link_order() {
+        let n = |l: &str, t: u64, k: u8| (l.to_string(), t, k);
+        // Two Home Assistants: the one linked first keeps the name, whatever their addresses.
+        let a = number_labels(vec![n("homeassistant", 200, 1), n("homeassistant", 100, 9), n("laptop", 50, 2)], "pc");
+        assert_eq!(a[&9], "homeassistant");
+        assert_eq!(a[&1], "homeassistant-2");
+        assert_eq!(a[&2], "laptop");
+        // A third one later: the others keep theirs.
+        let b = number_labels(vec![n("homeassistant", 200, 1), n("homeassistant", 100, 9), n("homeassistant", 300, 3)], "pc");
+        assert_eq!((b[&9].as_str(), b[&1].as_str(), b[&3].as_str()), ("homeassistant", "homeassistant-2", "homeassistant-3"));
+        // A device named like this node gets a number; one already called x-2 keeps it.
+        let c = number_labels(vec![n("pc", 10, 1), n("pc-2", 5, 2), n("pc", 20, 3)], "pc");
+        assert_eq!((c[&1].as_str(), c[&2].as_str(), c[&3].as_str()), ("pc-3", "pc-2", "pc-4"));
+    }
 
     fn query_packet(name: &str, qtype: u16) -> Vec<u8> {
         let mut msg = vec![0xab, 0xcd, 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0];

@@ -2077,10 +2077,13 @@ impl Node {
             }
             return None;
         }
+        if let Some((d, _)) = self.device_labels().into_iter().find(|(_, l)| l == label) {
+            return Some(d);
+        }
+        // Devices applications here name (local API), by their announced name.
         let device = |d: &Hash| {
-            self.cfg.devices.contains(d)
-                || self.dest_identity(d).is_some_and(|i| self.cfg.devices.contains(&i))
-                || self.clients.values().any(|c| c.devices.contains(d))
+            !self.cfg.devices.contains(d)
+                && (self.dest_identity(d).is_some_and(|i| self.cfg.devices.contains(&i)) || self.clients.values().any(|c| c.devices.contains(d)))
         };
         self.routes.iter().filter(|(d, _)| device(d)).find_map(|(d, by)| {
             let r = by.values().filter(|r| r.ann.name_hash == wire::NO_NAME).min_by_key(|r| r.hops)?;
@@ -2088,7 +2091,28 @@ impl Node {
         })
     }
 
+    /// The owner's devices' `.vork` labels: each its announced name's; where
+    /// several share one, the device linked first keeps it and the others get
+    /// `-2`, `-3`… in the order they were linked (the group's times, the same on
+    /// every device), so linking another device never takes a name away. This
+    /// node keeps its own name here; a device sharing it gets a number.
+    fn device_labels(&self) -> HashMap<Hash, String> {
+        let named: Vec<(String, u64, Hash)> = self
+            .cfg
+            .devices
+            .iter()
+            .filter_map(|d| {
+                let r = self.routes.get(d)?.values().filter(|r| r.ann.name_hash == wire::NO_NAME).min_by_key(|r| r.hops)?;
+                let label = crate::dns::label(&announced_name(&r.ann.app_data)?);
+                let added = self.links.group.get(&hex::encode(d)).map_or(u64::MAX, |m| m.added);
+                (!label.is_empty()).then_some((label, added, *d))
+            })
+            .collect();
+        crate::dns::number_labels(named, &crate::dns::label(&self.cfg.name))
+    }
+
     fn known_nodes(&self) -> Vec<serde_json::Value> {
+        let labels = self.device_labels();
         let mut list: Vec<serde_json::Value> = self
             .routes
             .iter()
@@ -2107,6 +2131,8 @@ impl Node {
                     "direct": direct || neighbor,
                     "lite": best.ann.flags & FLAG_RELAY == 0,
                     "device": self.cfg.devices.contains(dest),
+                    // Its .vork name here (a number after it when another device shares its name).
+                    "dns": labels.get(dest).map(|l| format!("{l}.{}", crate::dns::DOMAIN)),
                     "on_lan": self.lan_seen.get(&best.ann.x_pub).is_some_and(|t| t.elapsed() < ROUTE_TTL),
                     "exit": serde_json::from_slice::<serde_json::Value>(&best.ann.app_data).ok().and_then(|v| v["exit"].as_bool()).unwrap_or(false),
                 }))
