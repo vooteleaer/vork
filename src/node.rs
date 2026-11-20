@@ -554,6 +554,11 @@ pub struct Node {
     /// here began over IPv4, whose answers go back translated.
     aliases: crate::alias::Aliases,
     v4_flows: HashMap<(Hash, crate::alias::Flow), Instant>,
+    /// Conversations a device began over IPv4, given here as IPv4: their first
+    /// packet as it came, to give again as IPv6 if a program here refuses IPv4.
+    v4_in: HashMap<(Hash, crate::alias::Flow), (Instant, Vec<u8>)>,
+    /// Those refused over IPv4: given as IPv6 from then on.
+    v6_in: HashMap<(Hash, crate::alias::Flow), Instant>,
     /// The devices using this node as their exit.
     exit_clients: crate::exit::Clients,
     /// Names asked through the exit, by the port they went from: who asked,
@@ -790,6 +795,8 @@ impl Node {
             dns_seen: HashMap::new(),
             aliases,
             v4_flows: HashMap::new(),
+            v4_in: HashMap::new(),
+            v6_in: HashMap::new(),
             exit_clients: Default::default(),
             exit_dns: HashMap::new(),
             who_asked: HashMap::new(),
@@ -2389,12 +2396,25 @@ impl Node {
         // A conversation a program there began over IPv4: given as IPv4 here
         // too, from the sender's IPv4 address on this machine, so programs
         // listening on IPv4 only are reached.
+        // Refused over IPv4 here once (a server on one IPv4 address only): IPv6.
         if crate::alias::from_v4(p) && crate::tun::V4.load(std::sync::atomic::Ordering::Relaxed) {
             let device = self.is_device(&who);
             if let Some(alias) = self.aliases.of(&who, device) {
-                if let Some((v4, _)) = crate::alias::to_v4(p, alias, self.aliases.me) {
-                    self.metrics.tun_in += v4.len() as u64;
-                    return tun.send(&v4);
+                if let Some((v4, flow)) = crate::alias::to_v4(p, alias, self.aliases.me) {
+                    if let Some(t) = self.v6_in.get_mut(&(who, flow)) {
+                        *t = Instant::now();
+                    } else {
+                        if crate::alias::opens(&v4) {
+                            if self.v4_in.len() >= 1024 {
+                                self.v4_in.retain(|_, (t, _)| t.elapsed() < Duration::from_secs(10));
+                            }
+                            if self.v4_in.len() < 1024 {
+                                self.v4_in.insert((who, flow), (Instant::now(), p.to_vec()));
+                            }
+                        }
+                        self.metrics.tun_in += v4.len() as u64;
+                        return tun.send(&v4);
+                    }
                 }
             }
         }
@@ -2839,8 +2859,30 @@ impl Node {
             (self.aliases.of(&d, true) == Some(dst)).then_some(d)
         });
         let Some(node) = node else { return };
+        // A program here refusing over IPv4 what a device began over IPv4:
+        // the refusal kept back, the conversation given again as IPv6.
+        if !self.v4_in.is_empty() {
+            if let Some(flow) = crate::alias::refusal_v4(p) {
+                if let Some((t, first)) = self.v4_in.remove(&(node, flow)) {
+                    if t.elapsed() < Duration::from_secs(10) {
+                        if self.v6_in.len() >= 1024 {
+                            self.v6_in.retain(|_, t| t.elapsed() < Duration::from_secs(600));
+                        }
+                        self.v6_in.insert((node, flow), Instant::now());
+                        if let Some(tun) = self.tun.clone() {
+                            tun.send(&first);
+                        }
+                        return;
+                    }
+                }
+            }
+        }
         let me = crate::tun::overlay(&self.my_hash);
         let Some((v6, flow)) = crate::alias::to_v6(p, me, crate::tun::overlay(&node)) else { return };
+        // Answered over IPv4: nothing to give again.
+        if !self.v4_in.is_empty() {
+            self.v4_in.remove(&(node, flow));
+        }
         if self.v4_flows.len() > 4096 {
             self.v4_flows.retain(|_, t| t.elapsed() < Duration::from_secs(600));
         }

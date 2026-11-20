@@ -147,6 +147,40 @@ pub fn from_v4(p: &[u8]) -> bool {
     p.len() >= 40 && p[0] >> 4 == 6 && (u32::from(p[1] & 15) << 16 | u32::from(p[2]) << 8 | u32::from(p[3])) == FROM_V4
 }
 
+/// Whether a packet given here as IPv4 opens a conversation (a TCP SYN, any
+/// UDP): kept a moment, to be given as IPv6 instead if IPv4 is refused.
+pub fn opens(v4: &[u8]) -> bool {
+    let ihl = (v4[0] & 15) as usize * 4;
+    match v4[9] {
+        6 => v4.get(ihl + 13).is_some_and(|f| f & 0x12 == 0x02),
+        17 => true,
+        _ => false,
+    }
+}
+
+/// A refusal a program here sends over IPv4 (a TCP reset, or ICMP port
+/// unreachable for UDP), and the flow it refuses, as `to_v4` names it: a
+/// server listening on one IPv4 address only (a NAS's web page on its LAN
+/// address) refuses its vØrk one, and the conversation is given again as IPv6.
+pub fn refusal_v4(p: &[u8]) -> Option<Flow> {
+    if p.len() < 20 || p[0] >> 4 != 4 {
+        return None;
+    }
+    let b = p.get((p[0] & 15) as usize * 4..)?;
+    match p[9] {
+        6 if b.len() >= 20 && b[13] & 0x04 != 0 => Some((6, port(b, 0), port(b, 2))),
+        1 if b.len() >= 28 && b[0] == 3 && b[1] == 3 => {
+            let inner = &b[8..];
+            if inner[9] != 17 {
+                return None;
+            }
+            let u = inner.get((inner[0] & 15) as usize * 4..)?.get(..4)?;
+            Some((17, port(u, 2), port(u, 0)))
+        }
+        _ => None,
+    }
+}
+
 /// What tells a translated conversation's replies apart: protocol (IPv6
 /// numbering), this end's port (or echo id), the far end's port.
 pub type Flow = (u8, u16, u16);
@@ -364,6 +398,25 @@ mod tests {
         assert_eq!(flow, (6, 40000, 8742));
         assert!(valid_v4(&v4));
         assert_eq!(&v4[12..16], &[198, 18, 0, 2]);
+    }
+
+    #[test]
+    fn a_refusal_names_its_flow() {
+        let syn = v4_tcp_syn();
+        assert!(opens(&syn));
+        assert_eq!(refusal_v4(&syn), None);
+        // The server's reset for it: from its port to the opener's.
+        let mut rst = syn.clone();
+        rst[20..22].copy_from_slice(&8742u16.to_be_bytes());
+        rst[22..24].copy_from_slice(&40000u16.to_be_bytes());
+        rst[33] = 0x14; // RST, ACK
+        assert!(!opens(&rst));
+        assert_eq!(refusal_v4(&rst), Some((6, 8742, 40000)));
+        // ICMP port unreachable for a UDP packet from 5353 to 53: the flow (17, 53, 5353).
+        let mut icmp = vec![0x45, 0, 0, 56, 0, 0, 0x40, 0, 64, 1, 0, 0, 198, 18, 0, 2, 198, 18, 0, 1, 3, 3, 0, 0, 0, 0, 0, 0];
+        icmp.extend_from_slice(&[0x45, 0, 0, 28, 0, 0, 0x40, 0, 64, 17, 0, 0, 198, 18, 0, 1, 198, 18, 0, 2]);
+        icmp.extend_from_slice(&[0x14, 0xe9, 0, 53, 0, 8, 0, 0]);
+        assert_eq!(refusal_v4(&icmp), Some((17, 53, 5353)));
     }
 
     #[test]
