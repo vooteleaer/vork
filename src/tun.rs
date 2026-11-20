@@ -16,6 +16,10 @@ use crate::identity::Hash;
 /// the interface). Packets translated from IPv4 elsewhere arrive as IPv4 then.
 pub static V4: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(!cfg!(target_os = "linux"));
 
+/// Whether the interface takes IPv6: everywhere but Haiku, whose network has
+/// IPv4 only; there everything for this node's programs is given as IPv4.
+pub static V6: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
 /// Inner MTU: both WireGuard layers and their headers fit in 1500 (measured margin to come).
 pub const MTU: u16 = 1280;
 
@@ -377,12 +381,78 @@ mod windows_tun {
     }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
+#[cfg(target_os = "haiku")]
+pub use haiku_tun::Tun;
+
+/// Haiku: its `tunnel` driver (`tun = "tun/0"`): `ifconfig tun/0 up` makes
+/// `/dev/tun/0`, which reads and writes plain IP packets. Haiku's network has
+/// IPv4 only, so the interface carries this node's IPv4 address and the
+/// devices' range; what arrives over IPv6 is given to it as IPv4 (V6 false).
+#[cfg(target_os = "haiku")]
+mod haiku_tun {
+    use std::io::{self, Read, Write};
+    use std::net::Ipv6Addr;
+
+    pub struct Tun {
+        file: std::fs::File,
+        rx: tokio::sync::Mutex<tokio::sync::mpsc::Receiver<Vec<u8>>>,
+        pub name: String,
+    }
+
+    fn ifconfig(prog: &str, args: &[&str]) -> anyhow::Result<()> {
+        let out = std::process::Command::new(prog).args(args).output().map_err(|e| anyhow::anyhow!("{prog} {}: {e}", args.join(" ")))?;
+        if !out.status.success() {
+            anyhow::bail!("{prog} {}: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim());
+        }
+        Ok(())
+    }
+
+    impl Tun {
+        pub fn open(name: &str, _addr: Ipv6Addr, v4: std::net::Ipv4Addr, mtu: u16) -> anyhow::Result<Tun> {
+            super::V6.store(false, std::sync::atomic::Ordering::Relaxed);
+            ifconfig("ifconfig", &[name, "up"])?;
+            let path = format!("/dev/{name}");
+            let file = std::fs::OpenOptions::new().read(true).write(true).open(&path).map_err(|e| anyhow::anyhow!("{path}: {e}"))?;
+            ifconfig("ifconfig", &[name, "inet", &v4.to_string(), "255.255.255.255", "mtu", &mtu.to_string(), "up"])?;
+            // The devices' range (ADR-0021); already there from an earlier run: fine.
+            let _ = ifconfig("route", &["add", name, "inet", &crate::alias::NET.to_string(), "netmask", "255.254.0.0"]);
+            super::V4.store(true, std::sync::atomic::Ordering::Relaxed);
+            crate::node::log(format!("IPv4 aliases in {}/{}: this node is {v4} (Haiku: IPv4 only)", crate::alias::NET, crate::alias::PREFIX));
+            let (tx, rx) = tokio::sync::mpsc::channel(1024);
+            let mut reader = file.try_clone()?;
+            std::thread::Builder::new().name("vork-tun".into()).spawn(move || {
+                let mut buf = vec![0u8; 65536];
+                while let Ok(n) = reader.read(&mut buf) {
+                    if n == 0 || tx.blocking_send(buf[..n].to_vec()).is_err() {
+                        return;
+                    }
+                }
+            })?;
+            Ok(Tun { file, rx: tokio::sync::Mutex::new(rx), name: name.to_string() })
+        }
+
+        pub async fn recv(&self, buf: &mut [u8]) -> io::Result<usize> {
+            let p = self.rx.lock().await.recv().await.ok_or_else(|| io::Error::other("interface closed"))?;
+            let n = p.len().min(buf.len());
+            buf[..n].copy_from_slice(&p[..n]);
+            Ok(n)
+        }
+
+        /// Writes one IPv4 packet (Haiku takes no IPv6 here).
+        pub fn send(&self, p: &[u8]) {
+            if p.first().is_some_and(|b| b >> 4 == 4) {
+                let _ = (&self.file).write(p);
+            }
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "android", windows, target_os = "haiku")))]
 pub struct Tun {
     pub name: String,
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
+#[cfg(not(any(target_os = "linux", target_os = "android", windows, target_os = "haiku")))]
 impl Tun {
     pub fn open(_name: &str, _addr: Ipv6Addr, _v4: std::net::Ipv4Addr, _mtu: u16) -> anyhow::Result<Tun> {
         anyhow::bail!("no interface on this system yet")

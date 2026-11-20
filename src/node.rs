@@ -2467,14 +2467,16 @@ impl Node {
         // too, from the sender's IPv4 address on this machine, so programs
         // listening on IPv4 only are reached.
         // Refused over IPv4 here once (a server on one IPv4 address only): IPv6.
-        if crate::alias::from_v4(p) && crate::tun::V4.load(std::sync::atomic::Ordering::Relaxed) {
+        // An interface without IPv6 (Haiku) gets everything as IPv4.
+        let v6 = crate::tun::V6.load(std::sync::atomic::Ordering::Relaxed);
+        if (crate::alias::from_v4(p) || !v6) && crate::tun::V4.load(std::sync::atomic::Ordering::Relaxed) {
             let device = self.is_device(&who);
             if let Some(alias) = self.aliases.of(&who, device) {
                 if let Some((v4, flow)) = crate::alias::to_v4(p, alias, self.aliases.me) {
-                    if let Some(t) = self.v6_in.get_mut(&(who, flow)) {
+                    if let Some(t) = self.v6_in.get_mut(&(who, flow)).filter(|_| v6) {
                         *t = Instant::now();
                     } else {
-                        if crate::alias::opens(&v4) {
+                        if v6 && crate::alias::opens(&v4) {
                             if self.v4_in.len() >= 1024 {
                                 self.v4_in.retain(|_, (t, _)| t.elapsed() < Duration::from_secs(10));
                             }
