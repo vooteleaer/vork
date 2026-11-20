@@ -1,5 +1,5 @@
 # Builds vork-<version>.msi: vØrk the network for Windows in one installer
-# (ADR-0029). Storage isn't part of it.
+# (ADR-0029).
 #
 #     powershell -ExecutionPolicy Bypass -File packaging\windows\build-msi.ps1 [-Out DIR]
 #

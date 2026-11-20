@@ -7,9 +7,9 @@ Byte order: our own fields are **big-endian**. WireGuard's fields keep WireGuard
 ## 1. Identity
 
 - A node has an **Ed25519** signing key and an **X25519** key. The X25519 key is its WireGuard static key for both layers.
-- **Address** = `SHA-256(x_pub ‖ ed_pub)[0..16]` (16 bytes; shown as 32 hex digits). X25519 first, as in the storage format, so a storage identity is a vØrk identity.
+- **Address** = `SHA-256(x_pub ‖ ed_pub)[0..16]` (16 bytes; shown as 32 hex digits). X25519 first.
 - **Destination** (a named service of an identity) = `SHA-256(SHA-256(name)[0..10] ‖ address)[0..16]`.
-- **Key file:** the 64 secret bytes, X25519 secret ‖ Ed25519 seed (a storage identity file).
+- **Key file:** the 64 secret bytes, X25519 secret ‖ Ed25519 seed.
 - Every signature covers `label ‖ message`, with a domain-separation label:
 
 | Label | Signs |
@@ -82,7 +82,7 @@ Not a message: every node registers the DNS-SD service `_vork._udp.local.` (inst
 ### ANNOUNCE
 
 - An announce is for one **destination** of an identity: the identity itself (`name_hash` all zero; destination = its address) or a named service (destination = `SHA-256(name_hash ‖ address)[0..16]`, `name_hash = SHA-256(name)[0..10]`). Names themselves never travel. The address is computed from `x_pub ‖ ed_pub`; the signature is checked over `vork/v0/announce ‖ destination ‖ x_pub ‖ name_hash ‖ seq ‖ flags ‖ app_data`.
-- `app_data` belongs to the destination's application (storage puts its announce interval and site there); the network only carries it.
+- `app_data` belongs to the destination's application; the network only carries it.
 - `seq` must strictly increase for each identity. A node stores the last value it used and sends `max(last + 1, Unix time in ms)`: devices without a clock still work, and a clock set back doesn't make announces look old.
 - `hops` is not signed. A forwarder sends it on as `hops + 1`. Announces with `hops ≥ 16` are dropped.
 - A node sends an announce for each of its destinations every **30 s** and when a link comes up. Path requests and `PATH_OPEN` name destinations; a node answers for all of its own.
@@ -121,7 +121,7 @@ Relay entries and far-end path state expire after **60 s** without traffic; prob
 ## 4. Sessions (inner layer)
 
 - A session goes to a **destination**. WireGuard between the two endpoints, carried in `DATA`: the responder's key is the destination's X25519 key (from its announce); the opener uses a **fresh X25519 key for every session**, so the far end can't tell who opened it, or link two sessions of the same opener, unless the opener identifies.
-- **Session nonce** = `SHA-256("vork/v0/session" ‖ opener's session key ‖ destination's key)`: both ends know it and no other session has it. Proofs are bound to it (storage's `link_nonce`).
+- **Session nonce** = `SHA-256("vork/v0/session" ‖ opener's session key ‖ destination's key)`: both ends know it and no other session has it. An application can bind proofs to it.
 - An endpoint finds the session of an incoming message by WireGuard's receiver index (`index >> 8` is the local session number in boringtun); a handshake initiation creates a session for its sender's key.
 - The far end of a path learns which session the path belongs to from the first message on it.
 - **Paths per session:** the origin keeps up to N paths through different first hops (default 2), plus one through a direct link when there is one. A dropped path's first hop rests 5 s, doubling up to 60 s, before it is tried again.
@@ -148,7 +148,7 @@ Bytes 1–4 are a stand-in; ping, bench and candidates move into a control servi
 
 ### Stream (reliable messages)
 
-Segments 8 and 9 make a reliable, ordered byte stream per session (ADR-0022), for messages too big or too important for single packets:
+Segments 8 and 9 make a reliable, ordered byte stream per session, for messages too big or too important for single packets:
 - The receiver acknowledges everything before `next` and up to 8 ranges `[start, end)` received past it, at once after a gap or a duplicate, else every second segment or after 10 ms. It keeps at most 8192 segments past `next`.
 - The sender keeps a congestion window (start 16 segments, slow start, then +1 per window; halved on loss, at most once per window). A segment is lost when 3 later segments arrived, or when a segment sent later than it was acknowledged. With nothing acknowledged for two round trips it resends its newest segment (tail probe); with nothing for a retransmission timeout (2 × variance + round trip, 200 ms to 10 s, doubling) it resends what is out and starts from 2 segments.
 - The stream carries messages: `length[4]` then the message (at most 32 MiB + 1 KiB). The message's first byte is its kind:

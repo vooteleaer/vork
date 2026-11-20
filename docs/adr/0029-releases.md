@@ -5,12 +5,12 @@
 - **Irreversible:** partly (the project key, once in installed nodes' `update_keys`, is what they trust until they are reinstalled)
 
 ## Context
-The repository is public, and the README has nothing to download. Self-updating (ADR-0028) exists, but only for one owner's own nodes, from a node of their own, signed with their own key. Versions were muddled: the node's crate said 0.0.1, the workspace 0.6.0 (shared with storage, which is a separate project now), and the first self-update release said 0.6.0-dev.
+The repository is public, and the README has nothing to download. Self-updating (ADR-0028) exists, but only for one owner's own nodes, from a node of their own, signed with their own key. Versions were muddled: the node's crate said 0.0.1, the workspace 0.6.0, and the first self-update release said 0.6.0-dev.
 
 ## Decision
 
 ### Versions
-- **vØrk the network has its own series, from 0.1.0**, separate from storage's (`docs/storage/versioning.md`). Its version is the node crate's (`[package]` in the root `Cargo.toml`).
+- **vØrk the network has its own series, from 0.1.0.** Its version is the node crate's (`[package]` in the root `Cargo.toml`).
 - **A release is `v0.MINOR.PATCH`**, a tag on the commit. Before 1.0, a MINOR release may change the wire format (nodes of different MINOR versions may not understand each other), and a PATCH release never does. Releases are GitHub pre-releases until 1.0.
 - **Builds between releases** are the next release's number, `dev` and the build number: `0.2.0-dev.143`. The build number is the commit count (ADR-0028), so it only grows.
 

@@ -56,7 +56,7 @@ foreach ($abi in $Abis) {
 
 # The libraries a new install joins (packaging/default-libraries).
 New-Item -ItemType Directory -Force "$Here\app\src\main\assets" | Out-Null
-Copy-Item "$Vork\packaging\default-libraries" "$Here\app\src\main\assets\default-libraries"
+if (Test-Path "$Vork\packaging\default-libraries") { Copy-Item "$Vork\packaging\default-libraries" "$Here\app\src\main\assets\default-libraries" }
 
 Write-Host "== APK"
 Push-Location $Here

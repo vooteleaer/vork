@@ -5,7 +5,7 @@
 - **Irreversible:** no (but the IPC protocol becomes part of the spec)
 
 ## Context
-Several applications on one machine (a TUN interface, storage, a messenger, a service) all need the network. Each running its own node would mean several sockets, several sets of neighbors and paths, and identities that can't share a machine's links. Reticulum solves this with a *shared instance*: the first program starts the transport, later ones attach to it through a local socket. Its weak spot showed in practice: the RPC between a client and a shared instance of a different implementation (Python `rnstatus` against Rust `prnsd`) didn't match, because it wasn't specified.
+Several applications on one machine (a TUN interface, a messenger, a service) all need the network. Each running its own node would mean several sockets, several sets of neighbors and paths, and identities that can't share a machine's links. Reticulum solves this with a *shared instance*: the first program starts the transport, later ones attach to it through a local socket. Its weak spot showed in practice: the RPC between a client and a shared instance of a different implementation (Python `rnstatus` against Rust `prnsd`) didn't match, because it wasn't specified.
 
 ## Decision
 - **One vØrk node per machine.** Applications attach to it over local IPC (a Unix socket; a named pipe on Windows).

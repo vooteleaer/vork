@@ -1,7 +1,7 @@
 <!--
   vØrk the network for Windows as one MSI (ADR-0029): the node as a service,
   wintun.dll, and the vork-net window with its tray icon. Built by
-  build-msi.ps1 with WiX 5; storage isn't part of it.
+  build-msi.ps1 with WiX 5.
 
   Install:    double-click, or  msiexec /i vork-<version>.msi /qn
   Uninstall:  Apps & features, or  msiexec /x vork-<version>.msi

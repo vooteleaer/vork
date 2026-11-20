@@ -6,11 +6,11 @@ Each milestone ends in something that runs and is measured (proto first). "Done 
 
 vØrk replaces Tailscale on the author's own machines (a Linux server, a Windows PC, Android phones, a TrueNAS box), released as [v0.2.0](https://github.com/vooteleaer/vork/releases/tag/v0.2.0), a pre-release: installers for Windows (MSI), Android, Debian/Ubuntu, static Linux binaries and a Docker setup for NAS boxes and a Home Assistant add-on.
 
-Built since the prototype: the node as a service (M1); the TUN interface on Linux, Windows and Android with IPv6 sessions and IPv4 delivered as IPv4 (M2); `.vork` names, devices linked with consent and one group per owner, the walled-garden firewall (M3); exit nodes (Linux offers, Windows and Android use); reachability learned from others, LAN discovery and router port mapping; a dashboard on every platform (a window on the desktop, the Android app, the browser); self-updating with signed releases; storage on vØrk (M9). Next: hardening (M4), Linux as an exit client, routing for big networks, a project release key.
+Built since the prototype: the node as a service (M1); the TUN interface on Linux, Windows and Android with IPv6 sessions and IPv4 delivered as IPv4 (M2); `.vork` names, devices linked with consent and one group per owner, the walled-garden firewall (M3); exit nodes (Linux offers, Windows and Android use); reachability learned from others, LAN discovery and router port mapping; a dashboard on every platform (a window on the desktop, the Android app, the browser); self-updating with signed releases; the local API for applications (M9). Next: hardening (M4), Linux as an exit client, routing for big networks, a project release key.
 
 ```
 M0 prototype (done)
- ├─ M1 config & service (done) ── M9 storage on vØrk (done) ─┬─ M2 IPv6 sessions & TUN (mostly) ── M3 DNS, devices, firewall (mostly)
+ ├─ M1 config & service (done) ── M9 local API & destinations (done) ─┬─ M2 IPv6 sessions & TUN (mostly) ── M3 DNS, devices, firewall (mostly)
  │                                                    └─ M10 embedded stack (no admin rights)
  ├─ M4 hardening
  ├─ S1 ESP32 spike (parallel, early) ── M5 ESPHome component
@@ -20,7 +20,7 @@ M0 prototype (done)
  └─ M12 protocol v1: spec freeze, test vectors, review
 ```
 
-Milestone numbers are names, not order: M9 comes right after M1, because storage is the first real application and it brings the shared node and the native API with it.
+Milestone numbers are names, not order: M9 came right after M1, as it brings the shared node and the native API that applications use.
 
 ## M0 Prototype — done
 
@@ -79,7 +79,6 @@ Links with fresh-handshake liveness, signed announces, path labels swapped per h
 - **Goal:** the CPU stops being the limit on ordinary hardware.
 - **Scope:** batched socket calls (`sendmmsg`/`recvmmsg`, UDP GSO/GRO on Linux), buffer reuse without per-packet allocation, several threads (sharded by neighbor); the bench as a regression test.
 - **Done when:** at least 2× the M0 numbers on the server and on the 2-core VM, measured with `scripts/bench-local.sh` and between machines.
-- **Storage (measured 2026-11-18, README):** 200 MiB PC ← server took 45 s over vØrk (4 links) against 55 s over Reticulum; 16 links halve it; the stream alone does ~200 Mbit/s. Next: more requests in flight by default, fewer copies between storage and the node (the local API carries every byte twice), and why the server's node uses 1.4 cores at 75 Mbit/s.
 - **Depends on:** nothing (can run alongside).
 
 ## M7 Identities
@@ -92,20 +91,13 @@ Links with fresh-handshake liveness, signed announces, path labels swapped per h
 ## M8 Islands
 
 - **Goal:** closed groups inside the open network (ADR-0014).
-- **Scope:** membership by signed invitations and revocations; island announces encrypted to the members; island policy (direct links allowed, relays preferred among members); later backed by a storage library.
+- **Scope:** membership by signed invitations and revocations; island announces encrypted to the members; island policy (direct links allowed, relays preferred among members).
 - **Depends on:** M7.
 
-## M9 Storage on vØrk — done
+## M9 Local API and destinations — done
 
-- **Goal:** vØrk storage runs on vØrk with no Reticulum code, its format unchanged so existing libraries move over (ADR-0015, ADR-0022).
-- **Scope, in steps that each run:**
-  1. *Identities and destinations:* **done.** vØrk addresses and key files are storage identities; named destinations `SHA-256(SHA-256(name)[0..10] ‖ address)[0..16]`; announces of several destinations per node with app data; path requests for destinations.
-  2. *Sessions and requests:* sessions to a destination, anonymous opener with optional identify, a session nonce; `request(path, body) → response` up to 32 MiB, fragmented, reliable, flow-controlled over the session's paths. **Done:** 32 MiB through a relay at ~200 Mbit/s on one VM, ~45 Mbit/s with 5 % loss each way; over two relayed paths too.
-  3. *Shared node and native API* (the part of ADR-0020 storage needs): applications attach over the local socket/pipe, register destinations, announce, serve and send requests; a Rust client crate. **Done:** [the local API](06-local-api.md), `crates/vork-api`; an application on one node answered 2 MB requests from an application on another, through a relay.
-  4. *Storage transport:* storage's `Transport` and server side over the native API; storage announces, path lookups, identify and route information from vØrk; placement by measured round trip and direct-vs-relayed. **Done** (placement still by hop count): `vorkd` attaches to the machine's node (`$VORK_API` or the default endpoint), registers `retifs.node`, `retifs.library` and `retifs.keyring`, and comes back by itself when the node restarts. Tested on one VM across a relay: `put` on one node and `get` on another (3 MB, hash equal, ~200 Mbit/s), `replicate` with a lease and its signed receipt, a library made on one node and joined from the other.
-  5. *Prns removed:* shared-instance, remote-control and NomadNet code dropped; no Reticulum crate in the build. **Done.** Also tested on Windows (named pipes, two nodes on one PC: 5 MB at ~235 Mbit/s). Two applications on the same node reach each other through a session joined in memory. Packaging, user documents and the NomadNet leftovers followed (2026-11-18): the .deb, Docker, the Windows installer and the Haiku package bring the node; the NomadNet command, the gateway's NomadNet sites and vorkd's flags are gone. **A real retifs store opens unchanged** (2026-11-18): a copy of the PC's store (194 GB, 13 million chunks) ran under vØrk's `vorkd`; a node with an empty store joined its `photos` library over vØrk and reached the same 959 records and 6 writers as retifs on the original, and a photo fetched over vØrk hashed the same as the one retifs read locally.
-  6. *Clients on the node* (2026-11-18): the desktop utilities (GTK, Windows, web, Haiku) and the Android app show the node and its connections; a connection is added by address and dialed at once through the control socket; the Windows utility, the Haiku package and the Android app run the node themselves. Left: trying the Android app, the Haiku package and the Flatpak on real devices; the Android JNI crate still takes the retifs Contacts and Calendar cores.
-- **Done when:** `vork put` on one machine and `vork get` on another across a router work over vØrk; a library written under retifs opens unchanged; `cargo tree` has no Prns.
+- **Goal:** applications use the machine's node: named services of an identity, sessions to them and requests over them, with no node of their own.
+- **Done:** identities and destinations (`SHA-256(SHA-256(name)[0..10] ‖ address)[0..16]`), announces of several destinations per node with app data, path requests for destinations; sessions to a destination with an anonymous opener that can identify, and `request(path, body) → response` up to 32 MiB, reliable and flow-controlled over the session's paths (32 MiB through a relay at ~200 Mbit/s); [the local API](06-local-api.md) and its client crate `crates/vork-api` (an application on one node answered 2 MB requests from one on another, through a relay). Tested on Linux and Windows (named pipes).
 - **Depends on:** M1.
 
 ## M10 Embedded stack (no admin rights)

@@ -21,7 +21,7 @@
       DATA: [ label ][ inner WireGuard: end <-> end ]   relays hold no keys for it
 ```
 
-- **Identity:** Ed25519 (signing) + X25519 (the WireGuard key). `address = SHA-256(x_pub ‖ ed_pub)[:16]`, the same as a storage identity.
+- **Identity:** Ed25519 (signing) + X25519 (the WireGuard key). `address = SHA-256(x_pub ‖ ed_pub)[:16]`.
 - **Links:** a neighbor is *up* only while its WireGuard handshake is fresh (< 180 s), so every link used is proven to work in both directions. This avoids RNS's asymmetric-link problem.
 - **Announces** are signed (`vork/v0/announce`, sequence number), flooded only over up links, and carry no IP address. The hop count is a hint, not trusted.
 - **Paths:** a session runs over one or more paths. `PATH_OPEN` is routed by destination address; every hop swaps the label for a fresh random one on the next link and remembers the pair. After that, `DATA` carries only a label: **no packet carries a source, only the opening message carries a destination, and a label means something on one link only**, so colluding relays can't match packets by it.
@@ -101,18 +101,6 @@ A Windows PC and a Linux server (Debian 13, Xeon E5-2650 from 2012, a busy produ
 
 The ping round trip was 2–4 ms. The ceiling, **about 450–500 Mbit/s**, is the server's receiving side: an old CPU where Meltdown/MDS mitigations make every system call expensive, and vØrk makes one or more per packet. The PC sent up to ~830 Mbit/s. Before 4 MB socket buffers (`SO_RCVBUFFORCE` as root) and a larger burst allowance for Windows' ~15 ms timer, the same link lost 10% at 100 Mbit/s and topped out at ~130.
 
-### Storage over vØrk (2026-11-18)
-
-A 200 MiB file fetched by a fresh store on the PC from a store on the server, both sides throwaway stores:
-
-| Network | Time | Throughput |
-|---|---|---|
-| vØrk, 4 links (the default) | 44.5–47.9 s | 35–38 Mbit/s |
-| vØrk, 16 links | 22.2–24.6 s | 68–76 Mbit/s |
-| vØrk stream alone, 32 MiB requests on the same link | 1.3–1.4 s each | ~200 Mbit/s |
-
-Storage on vØrk is limited by storage's request pattern (about 460 KB per request, a few in flight) and by CPU on the server (its vØrk node near 140 %, `vorkd` near 110 % during the 16-link run), not by the link. Both are M6 work.
-
 `scripts/bench-local.sh` runs a topology on one machine (several nodes on 127.0.0.1) to measure its CPU ceiling.
 
 ## Lite nodes (ESP32, ESPHome)
@@ -144,23 +132,6 @@ ESPHome's WireGuard component has **one peer and IPv4 only**, and it can't accep
 - **Eclipse resistance:** several bootstrap sources, diverse neighbors, long-lived anchors.
 - **Sybil:** proof-of-work stamps on announces.
 - **boringtun** 0.7.1 is used as-is; it needs payloads framed as IP packets. Check its maintenance status against the forks (defguard, nordisk) before relying on it.
-
-## Storage
-
-vØrk storage is an experimental encrypted, replicated data layer: libraries of records and files, kept on your own devices and blind storage nodes (ADR-0015). It runs on vØrk: `vorkd` attaches to the machine's vØrk node through its [local API](06-local-api.md) (ADR-0022).
-
-| Crate | What |
-|---|---|
-| `vork-api` | the vØrk node's local API: protocol and client |
-| `vork-core` | chunks, CIDs, manifests, records, leases, channels, recovery |
-| `vork-store` | the local slab store |
-| `vork-storage-net` | the network side: fetching, serving, the connection to the vØrk node |
-| `vork-storage-node` | `vorkd`, the storage daemon, and `vork-storage`, its commands |
-| `libvork` | client of the daemon's local API |
-| `vork-tree`, `vork-fuse`, `vork-cloudfiles`, `vork-haikufs` | a library as a folder: FUSE (`vork-mount`), Windows Explorer, Haiku |
-| `vork-gateway`, `vork-extract`, `vork-card` | libraries as local websites, attribute extraction, identities on a YubiKey |
-
-To run it: a vØrk node first (`vork run`, or the service), then `vorkd` (it finds the node's API socket, or `VORK_API=<socket or pipe>`); `vorkd --store DIR` keeps a separate store. `vork put FILE`, `vork query LIB …` and the other storage commands are passed to `vork-storage`; `vork help-storage` lists them. `vork status` on its own is the network node's; `vork status READ-CAP` is storage's. Storage documents: [docs/storage](storage/README.md).
 
 ## Documentation
 

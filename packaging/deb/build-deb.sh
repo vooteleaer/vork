@@ -1,6 +1,6 @@
 #!/bin/sh
 # Builds vork_<version>_<arch>.deb: vØrk the network for Debian and Ubuntu
-# (ADR-0029), for this machine's architecture. Storage isn't part of it.
+# (ADR-0029), for this machine's architecture.
 #
 #     packaging/deb/build-deb.sh [OUT]       # on Linux, in the repository
 #     packaging/deb/build-in-docker.sh       # both architectures, in Ubuntu 22.04
