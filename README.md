@@ -47,6 +47,7 @@ Downloads are on the [releases page](https://github.com/vooteleaer/vork/releases
 | **Windows** 10/11 | `vork-<version>.msi` | installs the node as a service and the vØrk window (its icon waits in the notification area) |
 | **Android** | `vork-net-<version>.apk` | the app: the node, the dashboard, a VPN for your apps |
 | **Debian 12, Ubuntu 22.04** or newer, elementary OS 7, Linux Mint 21 (x86-64) | `vork_<version>_amd64.deb` | the node as a system service, and the vØrk window |
+| **Raspberry Pi OS** (64-bit, bookworm), Debian 12 or Ubuntu 22.04 on ARM64 | `vork_<version>_arm64.deb` | the same, for ARM64 |
 | **Any Linux**, older ones too | `vork-linux-x86_64`, `vork-linux-aarch64` | the node alone, one static file: install it as below; its dashboard opens in the browser (`vork web-link`) |
 | **Home Assistant** (OS or Supervised) | the add-on repository [`vork-home-assistant`](https://github.com/vooteleaer/vork-home-assistant) | Home Assistant as one of your devices: `http://homeassistant.vork:8123` from anywhere |
 | **A NAS or server with Docker** (TrueNAS SCALE: Apps → Install via YAML) | [`packaging/docker/node.yaml`](packaging/docker/node.yaml) | the node in one small container, its dashboard on port 30742; the NAS's apps become reachable from your devices at `nas-name.vork:<port>` |
@@ -203,7 +204,7 @@ The full analysis is in the [threat model](docs/03-threat-model.md).
 ## Status and known limits
 
 - Prototype: the protocol and file formats will change, and nodes of different versions may stop understanding each other. Keep your devices on the same version.
-- Releases are pre-releases: no arm64 .deb, macOS or iOS yet, and updating is by downloading the new release.
+- Releases are pre-releases: no macOS or iOS yet, and updating is by downloading the new release.
 - An exit node must be Linux; Windows and Android can use one, Linux not yet.
 - To get started, you need one device that's reachable from the internet (or two on the same network: vØrk finds neighbors on the local network by itself).
 - Large networks: route announcements are flooded to everyone today. That's fine for many nodes, but not for millions.
