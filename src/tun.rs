@@ -11,6 +11,11 @@ use std::net::Ipv6Addr;
 
 use crate::identity::Hash;
 
+/// Whether the interface carries this node's IPv4 address (ADR-0021): on
+/// Linux once it is set, elsewhere always (Windows and Android set it with
+/// the interface). Packets translated from IPv4 elsewhere arrive as IPv4 then.
+pub static V4: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(!cfg!(target_os = "linux"));
+
 /// Inner MTU: both WireGuard layers and their headers fit in 1500 (measured margin to come).
 pub const MTU: u16 = 1280;
 
@@ -76,7 +81,10 @@ mod linux {
             return crate::node::log(format!("IPv4 aliases off: something here already routes {range}"));
         }
         match ip(&["-4", "addr", "replace", &format!("{me}/32"), "dev", name]).and_then(|_| ip(&["-4", "route", "replace", &range, "dev", name])) {
-            Ok(()) => crate::node::log(format!("IPv4 aliases in {range}: this node is {me}")),
+            Ok(()) => {
+                super::V4.store(true, std::sync::atomic::Ordering::Relaxed);
+                crate::node::log(format!("IPv4 aliases in {range}: this node is {me}"))
+            }
             Err(e) => crate::node::log(format!("IPv4 aliases off: {e:#}")),
         }
     }

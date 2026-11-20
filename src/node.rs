@@ -2386,6 +2386,18 @@ impl Node {
                 }
             }
         }
+        // A conversation a program there began over IPv4: given as IPv4 here
+        // too, from the sender's IPv4 address on this machine, so programs
+        // listening on IPv4 only are reached.
+        if crate::alias::from_v4(p) && crate::tun::V4.load(std::sync::atomic::Ordering::Relaxed) {
+            let device = self.is_device(&who);
+            if let Some(alias) = self.aliases.of(&who, device) {
+                if let Some((v4, _)) = crate::alias::to_v4(p, alias, self.aliases.me) {
+                    self.metrics.tun_in += v4.len() as u64;
+                    return tun.send(&v4);
+                }
+            }
+        }
         self.metrics.tun_in += p.len() as u64;
         tun.send(p);
     }

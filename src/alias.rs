@@ -134,6 +134,19 @@ impl Aliases {
     }
 }
 
+/// The flow label a translated packet carries, so the far end gives it to its
+/// programs as IPv4 again: a program there listening on IPv4 only (Docker's
+/// published ports, many servers) is reached at its IPv4 address too. A node
+/// that doesn't know the mark gives it IPv6, as before; a native IPv6 packet
+/// that happens to carry the label (one flow in a million) is given as IPv4
+/// and its answers go back as IPv6 all the same.
+pub const FROM_V4: u32 = 0xf4f4f;
+
+/// Whether an IPv6 packet was translated from IPv4 by the node that sent it.
+pub fn from_v4(p: &[u8]) -> bool {
+    p.len() >= 40 && p[0] >> 4 == 6 && (u32::from(p[1] & 15) << 16 | u32::from(p[2]) << 8 | u32::from(p[3])) == FROM_V4
+}
+
 /// What tells a translated conversation's replies apart: protocol (IPv6
 /// numbering), this end's port (or echo id), the far end's port.
 pub type Flow = (u8, u16, u16);
@@ -165,7 +178,7 @@ pub fn to_v6(p: &[u8], src: Ipv6Addr, dst: Ipv6Addr) -> Option<(Vec<u8>, Flow)> 
         _ => return None,
     };
     let mut out = Vec::with_capacity(40 + body.len());
-    out.extend_from_slice(&[0x60 | (p[1] >> 4), p[1] << 4, 0, 0]);
+    out.extend_from_slice(&[0x60 | (p[1] >> 4), p[1] << 4 | (FROM_V4 >> 16) as u8, (FROM_V4 >> 8) as u8, FROM_V4 as u8]);
     out.extend_from_slice(&(body.len() as u16).to_be_bytes());
     out.push(next);
     out.push(p[8].max(1));
@@ -338,6 +351,7 @@ mod tests {
         let (v6, flow) = to_v6(&v4_tcp_syn(), me6, far6).unwrap();
         assert_eq!(flow, (6, 40000, 8742));
         assert!(valid_v6(&v6));
+        assert!(from_v4(&v6), "marked as translated");
         assert_eq!(port(&v6[40..], 22), MSS, "MSS lowered");
         // The answer, turned around: back to IPv4 with the same flow.
         let mut back = v6.clone();
