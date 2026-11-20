@@ -1,7 +1,7 @@
 # Signs a release with the owner's release key and puts it on the release node
 # (ADR-0028); the owner's nodes take it from there by themselves.
 #
-#   .\packaging\release.ps1 -Linux vork-linux -Windows vork.exe [-Version 0.6.0] -Server root@release-node
+#   .\packaging\release.ps1 -Linux vork-linux -LinuxArm vork-linux-aarch64 -Windows vork.exe [-Version 0.6.0] -Server root@release-node
 #
 # The release node is -Server, or $env:VORK_RELEASE_SERVER (user@host for ssh).
 #
@@ -9,6 +9,7 @@
 # `vork release keygen`); only the signed release goes to the server.
 param(
     [string]$Linux,
+    [string]$LinuxArm,
     [string]$Windows,
     [string]$Version = "",
     [string]$Key = "$env:USERPROFILE\.vork\release.key",
@@ -23,8 +24,9 @@ $dir = Join-Path $env:TEMP "vork-release"
 Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue
 $files = @()
 if ($Linux) { $files += "linux-x86_64=$((Resolve-Path $Linux).Path)" }
+if ($LinuxArm) { $files += "linux-aarch64=$((Resolve-Path $LinuxArm).Path)" }
 if ($Windows) { $files += "windows-x86_64=$((Resolve-Path $Windows).Path)" }
-if (-not $files) { throw "give -Linux and/or -Windows" }
+if (-not $files) { throw "give -Linux, -LinuxArm and/or -Windows" }
 & $vork release make --key $Key --dir $dir --version $Version @files
 if ($LASTEXITCODE) { throw "release make failed" }
 scp -o BatchMode=yes -r "$dir/*" "${Server}:$ServerDir/"
