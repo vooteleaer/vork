@@ -1,0 +1,47 @@
+# The vØrk node alone, in one small container: for a NAS or a server that
+# runs Docker but takes no packages (TrueNAS SCALE: Apps → Discover → ⋮ →
+# Install via YAML; or `docker compose -f node.yaml up -d`).
+#
+# It downloads a release's static node (checked against its SHA-256), makes
+# its configuration and identity at the first start, and runs it with the
+# vork0 interface, so this machine has its vØrk address and IPv4 too.
+#
+# Change before installing:
+# - the folder that keeps the node (its identity!), /mnt/tank/apps/vork here;
+# - for another release, VORK_RELEASE and VORK_SHA256 (from its SHA256SUMS);
+#   on an ARM machine, vork-linux-aarch64 and its SHA-256.
+# The node's settings are then in that folder's vork.toml (restart after
+# editing). Its dashboard: add web = "0.0.0.0:8742" there, restart, and run
+#   docker exec vork /var/lib/vork/bin/vork web-link --config /var/lib/vork/vork.toml
+services:
+  vork:
+    image: alpine:3.20
+    container_name: vork
+    network_mode: host        # the node's UDP port (51820) is the machine's
+    restart: unless-stopped
+    cap_add: [NET_ADMIN]      # the vork0 interface
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    stop_grace_period: 15s
+    stop_signal: SIGINT
+    environment:
+      VORK_RELEASE: v0.1.0
+      VORK_FILE: vork-linux-x86_64
+      VORK_SHA256: e8cc198a2c0642f956d2aa58e8d4c111dbf6913290d3a9456a4d09e63447c677
+    volumes:
+      - /mnt/tank/apps/vork:/var/lib/vork
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        apk add --no-cache -q iproute2 iptables
+        B=/var/lib/vork/bin/vork
+        mkdir -p /var/lib/vork/bin
+        if ! echo "$$VORK_SHA256  $$B" | sha256sum -c -s 2>/dev/null; then
+          wget -qO "$$B.new" "https://github.com/vooteleaer/vork/releases/download/$$VORK_RELEASE/$$VORK_FILE"
+          echo "$$VORK_SHA256  $$B.new" | sha256sum -c -s || { echo "the download's SHA-256 doesn't match"; exit 1; }
+          chmod 755 "$$B.new" && mv "$$B.new" "$$B"
+        fi
+        C=/var/lib/vork/vork.toml
+        [ -e "$$C" ] || "$$B" init --config "$$C" --tun vork0
+        exec "$$B" run --config "$$C"
