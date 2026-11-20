@@ -128,8 +128,8 @@
   .seg button.on { background: var(--panel2); color: var(--text); }
   header.top .mlogo { display: none; width: 30px; height: 30px; border-radius: 8px; background: linear-gradient(135deg, var(--accent), var(--violet)); place-items: center; color: #fff; font-size: 15px; font-weight: 700; flex: none; }
   #pagesel { display: none; font-size: 16px; font-weight: 600; padding: 6px 10px; min-width: 0; max-width: 60vw; }
-  /* Devices: side by side only when the table has room; else pairing first. */
-  @media (max-width: 1400px) { .devgrid { grid-template-columns: minmax(0, 1fr); } .devgrid > .pair { order: -1; } }
+  /* Devices: pairing above the device list, never side by side. */
+  .devgrid { grid-template-columns: minmax(0, 1fr); } .devgrid > .pair { order: -1; }
   @media (max-width: 1100px) { .g4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .g21, .g3 { grid-template-columns: minmax(0, 1fr); } }
   @media (max-width: 1000px) {
     /* The devices as cards (a phone, also on its side): name and connection, then the addresses, Unlink at the side. */
@@ -438,7 +438,7 @@ function pDevices() {
       ${devs.length ? `<table class="devtab"><thead><tr><th>Device</th><th>Connection</th><th>IPv4</th><th>Hostname</th><th class="num">RTT</th><th class="num">Traffic</th><th></th></tr></thead><tbody>
       ${devs.map((a) => { const n = k[a], s = sess[a], nm = (n && n.name) || short(a); const v4 = (n && n.ipv4) || derived4(a);
         return `<tr><td><div class="row" style="gap:10px"><span class="dot ${n ? "ok" : ""}"></span><div><div class="name">${esc(nm)}</div><div class="muted small mono">${short(a)}${n?.exit ? ' · <span class="tag blue">exit</span>' : ""}</div></div></div></td>
-        <td>${reachOf(n)}</td><td class="mono">${esc((n && n.dns) || dnsName(nm, a))}${cp((n && n.dns) || dnsName(nm, a))}</td>
+        <td>${reachOf(n)}</td><td class="mono">${v4 ? esc(v4) + cp(v4) : "–"}</td><td class="mono">${esc((n && n.dns) || dnsName(nm, a))}${cp((n && n.dns) || dnsName(nm, a))}</td>
         <td class="num">${s?.rtt_ms != null ? s.rtt_ms.toFixed(0) + " ms" : "–"}</td><td class="num small">${s ? `↓${bytes(s.rx)} ↑${bytes(s.tx)}` : "–"}</td>
         <td class="num"><button class="btn danger sm" data-unlink="${a}">Unlink</button></td></tr>`; }).join("")}
       </tbody></table>` : `<div class="empty">No devices yet: pair one with a code.</div>`}
