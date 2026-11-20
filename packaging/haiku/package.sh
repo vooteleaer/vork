@@ -8,9 +8,9 @@
 #
 # The node runs for each user from login (a launch_daemon job), its settings
 # and identity in ~/config/settings/vork; its dashboard opens in WebPositive
-# from the Deskbar's Applications menu. Haiku has no TUN interface yet, so
-# programs there can't use vØrk addresses: the node keeps your devices'
-# connections, relays for them, and is reachable from them.
+# from the Deskbar's Applications menu. Its interface (tun/0, Haiku's
+# tunnel driver) is IPv4 only, as Haiku's network: programs there reach your
+# devices at their 198.18 addresses; .vork names don't resolve there yet.
 #
 # Three crates need a change for Haiku until their releases have it; build
 # with a copy of each from ~/.cargo/registry, changed, given as
@@ -48,7 +48,7 @@ cat > "$STAGE/apps/vork/vork-node" <<'EOF'
 #!/bin/sh
 C=$HOME/config/settings/vork/vork.toml
 if [ ! -e "$C" ]; then
-	/bin/vork init --config "$C" --port auto
+	/bin/vork init --config "$C" --port auto --tun tun/0
 	sed -i 's|^# web = .*|web = "127.0.0.1:8742"|' "$C"
 fi
 exec /bin/vork run --config "$C"
@@ -83,9 +83,8 @@ and no company in the middle: they reach each other from anywhere, through a \
 network of equal nodes where any node can relay and none can read what it carries.
 
 The node starts at login; its dashboard is in the Deskbar's Applications menu. \
-Haiku has no network interface for it yet: programs here can't use vØrk \
-addresses, but the node keeps your devices' connections and relays for them. \
-An early prototype."
+Programs here reach your devices at their vØrk IPv4 addresses (198.18.x.x) \
+through its interface; .vork names don't resolve here yet. An early prototype."
 packager		"vØrk <https://github.com/vooteleaer/vork>"
 vendor			"vØrk"
 licenses {

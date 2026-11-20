@@ -25,3 +25,6 @@ Ordinary software reaches vØrk through IP (ADR-0017). A shared node (ADR-0020) 
 
 ## Addendum (2026-11-19): devices' IPv4 the same everywhere
 Implemented in part (ADR-0025's addendum). The owner's **devices** don't get local aliases but a **derived** IPv4 address, the same on every machine, as Tailscale's: `198.18.0.0/16` by the first two bytes of the node's address (`198.18.0.x` left out), and each node's interface carries its own. Two devices deriving the same address (about 0.3 % among 20, 2 % among 50) leave the second a local alias on that machine, said in the log. Other nodes get local aliases from `198.19.0.0`–`198.19.254.255`; `198.19.255.0/24` is the exit clients' (ADR-0026). Not 100.64/10: machines moving from Tailscale still have it. Choosing the range by the machine's routes is still to come; on Linux the range is left off when a route already covers it.
+
+## Addendum (2026-11-20): Haiku, IPv4 only
+Haiku's network has no IPv6, and its tunnel driver (`tun = "tun/0"`: `ifconfig tun/0 up` makes `/dev/tun/0`, plain IP packets) takes IPv4 only. There the interface carries the node's derived IPv4 address and the devices' range, and everything that arrives over the sessions (IPv6, always) is given to it as IPv4; programs reach devices at their 198.18 addresses. `.vork` names wait for a resolver Haiku can ask over IPv4.
