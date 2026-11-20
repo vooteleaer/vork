@@ -19,7 +19,10 @@ A phone on a doubtful network wants its internet traffic to come out somewhere t
 
 ## Consequences
 - The exit sees the device's traffic as a router would; only the owner's devices can use it.
-- Not yet: IPv6 through the exit, exit nodes on Windows.
+- Not yet: IPv6 through the exit, exit nodes on Windows, Linux using an exit (its routes).
 
 ## Addendum (2026-11-19): the exit answers names itself
 A network may let only its own servers answer DNS (a router blocking outside DNS): there the public resolvers asked through the exit never answered, and every name waited 2 s for the device's own network. Now the exit takes its clients' UDP DNS (port 53, to any server) and asks its own resolvers (`nameserver` in /etc/resolv.conf), answering as from the server asked. Names work wherever the exit itself resolves them; the device's network still doesn't see them.
+
+## Addendum (2026-11-20): Windows uses an exit
+While the chosen exit answers, a Windows node routes `0.0.0.0/1`, `128.0.0.0/1` (and IPv6's halves, held back as on Android) to its interface, and sends every name to its resolver (an NRPT rule for `.`), which asks through the exit. Its own UDP is pinned to the interface the machine's default route took before (`IP_UNICAST_IF`), so it doesn't go into the interface it carries; that interface is looked for again every 5 s, as a laptop moves between networks. The private ranges (`10/8`, `172.16/12`, `192.168/16`) get routes through that default route's gateway meanwhile, so the LAN and other VLANs behind the router stay reachable (an exit carries the internet only), as Tailscale's allow-LAN-access. All of it is taken away when the exit stops answering or the node stops or restarts, and at start what a run that didn't end cleanly left. The routes carry metric 7, by which they are known. A peer reached over another VPN's address (Tailscale's 100.64/10) is then reached by other paths, since the node's UDP stays on the default route's interface.

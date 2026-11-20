@@ -140,7 +140,7 @@ On the devices that should use it:
 exit_via = "auto"        # the fastest of your devices that offers itself as an exit
 ```
 
-The Android app has a switch for the same thing. If the exit stops answering, your device goes back to its normal connection instead of cutting you off. By default, devices using the exit reach the internet only, not the exit's home network. `exit_lan = true` on the exit lets them in there too. Today the exit carries IPv4 traffic, and Windows can't use an exit yet.
+The Android app has a switch for the same thing, and on Windows the dashboard's Exit node page. Windows and Android send all their internet traffic and name lookups through the exit while it answers; your local network (other devices at home, a printer) stays reachable directly. If the exit stops answering, your device goes back to its normal connection instead of cutting you off. By default, devices using the exit reach the internet only, not the exit's home network. `exit_lan = true` on the exit lets them in there too. Today the exit carries IPv4 traffic, and a Linux device can be an exit but can't use one yet.
 
 ## The firewall
 
@@ -186,7 +186,7 @@ The full analysis is in the [threat model](docs/03-threat-model.md).
 
 - Prototype: the protocol and file formats will change, and nodes of different versions may stop understanding each other. Keep your devices on the same version.
 - Releases are pre-releases: no arm64 .deb, macOS or iOS yet, and updating is by downloading the new release.
-- Windows can't use an exit node yet; the exit itself must be Linux.
+- An exit node must be Linux; Windows and Android can use one, Linux not yet.
 - To get started, you need one device that's reachable from the internet (or two on the same network: vØrk finds neighbors on the local network by itself).
 - Large networks: route announcements are flooded to everyone today. That's fine for many nodes, but not for millions.
 - No per-relay bandwidth limits yet.
