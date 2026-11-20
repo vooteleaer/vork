@@ -526,6 +526,7 @@ pub struct Node {
     /// Windows, using an exit node: the default route this machine's
     /// internet took before (interface and gateway; the node's own UDP and
     /// the LAN stay on it) while all else goes through the exit.
+    #[cfg_attr(not(windows), allow(dead_code))]
     exit_routed: Option<(u32, std::net::Ipv4Addr)>,
     /// Sessions opened for IP in which we identified (the far end checks sources by identity).
     ip_identified: HashSet<u32>,
