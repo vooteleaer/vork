@@ -523,6 +523,10 @@ pub struct Node {
     tried: HashMap<[u8; 32], Instant>,
     /// The TUN interface (M2).
     tun: Option<Arc<crate::tun::Tun>>,
+    /// Windows, using an exit node: the interface this machine's internet
+    /// took before (the node's own UDP stays on it) while all else goes
+    /// through the exit.
+    exit_routed: Option<u32>,
     /// Sessions opened for IP in which we identified (the far end checks sources by identity).
     ip_identified: HashSet<u32>,
     /// Overlay destinations no node is known for: when last logged.
@@ -781,6 +785,7 @@ impl Node {
             started: Instant::now(),
             tried: HashMap::new(),
             tun: None,
+            exit_routed: None,
             ip_identified: HashSet::new(),
             ip_unknown: HashMap::new(),
             ip_peer: HashMap::new(),
@@ -1142,6 +1147,7 @@ impl Node {
                 }
                 _ = async { match stop.as_mut() { Some(s) => { let _ = s.changed().await; } None => std::future::pending().await } } => {
                     let _ = stop_tx.send(true);
+                    self.exit_routes_off();
                     if let Some(m) = mapper {
                         let _ = tokio::time::timeout(Duration::from_secs(3), m).await;
                     }
@@ -1164,6 +1170,7 @@ impl Node {
                     #[cfg(not(any(unix, windows)))]
                     std::future::pending::<()>().await;
                 } => {
+                    self.exit_routes_off();
                     self.remember_neighbors();
                     self.reach.save();
                     let _ = stop_tx.send(true);
@@ -1230,6 +1237,7 @@ impl Node {
                         if self.cfg.exit_auto {
                             self.choose_exit();
                         }
+                        self.exit_routes_sync();
                     }
                     self.exit_dns_late();
                     if self.metrics.history.back().is_none_or(|s| unix_now() >= s.t + 5) {
@@ -1933,6 +1941,49 @@ impl Node {
                 None => log("no exit node answers: internet goes out directly"),
             }
             self.cfg.exit_via = pick;
+        }
+    }
+
+    /// Windows: the machine's internet through the exit while it answers
+    /// (ADR-0026), and back to its own connection when it doesn't. The
+    /// node's own UDP is pinned to the interface the internet took before,
+    /// so it doesn't go into the interface it carries; that interface is
+    /// looked for again each time, as a laptop moves between networks.
+    fn exit_routes_sync(&mut self) {
+        #[cfg(windows)]
+        {
+            let Some(tun) = self.tun.clone() else { return };
+            let physical = if self.exit_up() { crate::tun::default_interface(tun.index) } else { None };
+            match (physical, self.exit_routed) {
+                (Some(p), Some(was)) if p == was => {}
+                (Some(p), was) => {
+                    crate::tun::pin_socket(&self.send_sock, Some(p));
+                    if was.is_none() {
+                        let index = tun.index;
+                        std::thread::spawn(move || crate::tun::exit_routes(index, true));
+                        log(format!("exit: this machine's internet goes through {}", self.cfg.exit_via.map(|v| short(&v)).unwrap_or_default()));
+                    }
+                    self.exit_routed = Some(p);
+                }
+                (None, Some(_)) => {
+                    let index = tun.index;
+                    std::thread::spawn(move || crate::tun::exit_routes(index, false));
+                    crate::tun::pin_socket(&self.send_sock, None);
+                    self.exit_routed = None;
+                    log("exit: this machine's internet goes out directly again");
+                }
+                (None, None) => {}
+            }
+        }
+    }
+
+    /// The exit's routes taken away now (the node stopping or restarting).
+    fn exit_routes_off(&mut self) {
+        #[cfg(windows)]
+        if self.exit_routed.take().is_some() {
+            if let Some(tun) = &self.tun {
+                crate::tun::exit_routes(tun.index, false);
+            }
         }
     }
 
@@ -2644,6 +2695,7 @@ impl Node {
         let (Some(state), Ok(exe)) = (self.state.dir().map(|d| d.to_path_buf()), std::env::current_exe()) else { return };
         let restart = |node: &mut Node, what: String| {
             node.update_note(what);
+            node.exit_routes_off();
             node.remember_neighbors();
             node.reach.save();
             // A non-zero exit: systemd (Restart=on-failure) and Windows' recovery start it again.

@@ -183,7 +183,7 @@ pub fn receive_fd_at(path: &std::path::Path) -> anyhow::Result<std::os::fd::Owne
 }
 
 #[cfg(windows)]
-pub use windows_tun::Tun;
+pub use windows_tun::{default_interface, exit_routes, pin_socket, Tun};
 
 /// Windows: a wintun adapter (wintun.dll next to vork.exe; creating one
 /// needs administrator rights, so the node runs as a service for it).
@@ -198,6 +198,105 @@ mod windows_tun {
         session: Arc<wintun::Session>,
         rx: tokio::sync::Mutex<tokio::sync::mpsc::Receiver<Vec<u8>>>,
         pub name: String,
+        /// The adapter's interface index.
+        pub index: u32,
+    }
+
+    /// Routes that send everything to the interface while an exit node is
+    /// used (ADR-0026): halves of each family, so they win over the default
+    /// route without replacing it. IPv6 is held back by the node, not leaked.
+    const EXIT_ROUTES: [(&str, &str); 4] = [("ipv4", "0.0.0.0/1"), ("ipv4", "128.0.0.0/1"), ("ipv6", "::/1"), ("ipv6", "8000::/1")];
+    /// The NRPT rule that sends every name to the node's resolver meanwhile.
+    const EXIT_DNS_RULE: &str = "vork-exit";
+    /// One change to routes at a time (they run on threads of their own).
+    static EXIT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn powershell(script: &str) -> bool {
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", script])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+
+    /// All traffic through the interface, and names through the node, or
+    /// back to normal. Slow (netsh, PowerShell): run off the node's loop.
+    pub fn exit_routes(index: u32, on: bool) {
+        let _held = EXIT_LOCK.lock();
+        let iface = format!("interface={index}");
+        for (family, prefix) in EXIT_ROUTES {
+            let p = format!("prefix={prefix}");
+            if on {
+                // Already there from an earlier run: fine.
+                let _ = netsh(&["interface", family, "add", "route", &p, &iface, "metric=0", "store=active"]);
+            } else {
+                let _ = netsh(&["interface", family, "delete", "route", &p, &iface, "store=active"]);
+            }
+        }
+        let dns = if on {
+            format!(
+                "if (-not (Get-DnsClientNrptRule | Where-Object {{ $_.Comment -eq '{EXIT_DNS_RULE}' }})) {{ Add-DnsClientNrptRule -Namespace '.' -NameServers '{}' -Comment '{EXIT_DNS_RULE}' }}; Clear-DnsClientCache",
+                crate::dns::ADDR
+            )
+        } else {
+            format!("Get-DnsClientNrptRule | Where-Object {{ $_.Comment -eq '{EXIT_DNS_RULE}' }} | Remove-DnsClientNrptRule -Force; Clear-DnsClientCache")
+        };
+        if !powershell(&dns) {
+            crate::node::log(format!("exit: names couldn't be {} the node's resolver", if on { "sent to" } else { "taken back from" }));
+        }
+    }
+
+    /// The interface the machine's own default route uses (the lowest metric
+    /// of a connected interface's 0.0.0.0/0, this adapter left out).
+    pub fn default_interface(exclude: u32) -> Option<u32> {
+        use windows_sys::Win32::NetworkManagement::IpHelper::*;
+        use windows_sys::Win32::Networking::WinSock::AF_INET;
+        let mut best: Option<(u32, u32)> = None;
+        unsafe {
+            let mut table: *mut MIB_IPFORWARD_TABLE2 = std::ptr::null_mut();
+            if GetIpForwardTable2(AF_INET, &mut table) != 0 || table.is_null() {
+                return None;
+            }
+            let rows = std::slice::from_raw_parts((*table).Table.as_ptr(), (*table).NumEntries as usize);
+            for r in rows {
+                if r.DestinationPrefix.PrefixLength != 0 || r.InterfaceIndex == exclude {
+                    continue;
+                }
+                let mut row: MIB_IPINTERFACE_ROW = std::mem::zeroed();
+                InitializeIpInterfaceEntry(&mut row);
+                row.Family = AF_INET;
+                row.InterfaceIndex = r.InterfaceIndex;
+                if GetIpInterfaceEntry(&mut row) != 0 || !row.Connected {
+                    continue;
+                }
+                let metric = r.Metric.saturating_add(row.Metric);
+                if best.is_none_or(|(m, _)| metric < m) {
+                    best = Some((metric, r.InterfaceIndex));
+                }
+            }
+            FreeMibTable(table as *const _);
+        }
+        best.map(|(_, i)| i)
+    }
+
+    /// The node's own UDP leaves by this interface whatever the routes say
+    /// (`IP_UNICAST_IF`), so its packets don't go into the interface it
+    /// carries; None lets the routes decide again.
+    pub fn pin_socket(sock: &std::net::UdpSocket, index: Option<u32>) {
+        use std::os::windows::io::AsRawSocket;
+        use windows_sys::Win32::Networking::WinSock::*;
+        let s = sock.as_raw_socket() as SOCKET;
+        let i = index.unwrap_or(0);
+        unsafe {
+            if sock.local_addr().is_ok_and(|a| a.is_ipv6()) {
+                let v = i;
+                setsockopt(s, IPPROTO_IPV6, IPV6_UNICAST_IF, &v as *const u32 as *const u8, 4);
+            }
+            // IPv4's takes the index in network byte order.
+            let v = i.to_be();
+            setsockopt(s, IPPROTO_IP, IP_UNICAST_IF, &v as *const u32 as *const u8, 4);
+        }
     }
 
     fn netsh(args: &[&str]) -> anyhow::Result<()> {
@@ -229,6 +328,11 @@ mod windows_tun {
             // (IPv4's netsh names the interface with name=, not interface=.)
             let _ = netsh(&["interface", "ipv4", "add", "address", &format!("name={idx}"), &format!("address={v4}"), "mask=255.255.255.255", "store=active"]);
             let _ = netsh(&["interface", "ipv4", "add", "route", &format!("prefix={}/{}", crate::alias::NET, crate::alias::PREFIX), &iface, "store=active"]);
+            // IPv4 through an exit node fits the sessions too.
+            let _ = netsh(&["interface", "ipv4", "set", "subinterface", &idx, &format!("mtu={mtu}"), "store=active"]);
+            // An exit's routes and names left by a run that didn't end cleanly: gone.
+            let index: u32 = idx.parse().unwrap_or(0);
+            std::thread::spawn(move || exit_routes(index, false));
             let (tx, rx) = tokio::sync::mpsc::channel(1024);
             let s = session.clone();
             std::thread::Builder::new().name("vork-wintun".into()).spawn(move || {
@@ -238,7 +342,7 @@ mod windows_tun {
                     }
                 }
             })?;
-            Ok(Tun { session, rx: tokio::sync::Mutex::new(rx), name: name.to_string() })
+            Ok(Tun { session, rx: tokio::sync::Mutex::new(rx), name: name.to_string(), index })
         }
 
         pub async fn recv(&self, buf: &mut [u8]) -> io::Result<usize> {
