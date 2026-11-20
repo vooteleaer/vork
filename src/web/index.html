@@ -222,7 +222,10 @@ const sw = (key, on, extra = "") => `<label class="switch"><input type="checkbox
 async function api(path, body) {
   if (APP) return appAsk(path === "/api/cmd" ? body : { cmd: path.slice(5) });
   // Relative: behind Home Assistant's ingress the page lives under a path of its own.
-  const r = await fetch(path.slice(1), body ? { method: "POST", headers: { "X-Vork-Token": token(), "Content-Type": "application/json" }, body: JSON.stringify(body) } : { headers: { "X-Vork-Token": token() } });
+  // The desktop app on Linux and macOS (a vork: page): WebKit gives its requests
+  // no body, so the command goes in the address too.
+  const url = path.slice(1) + (body && location.protocol === "vork:" ? "?c=" + encodeURIComponent(JSON.stringify(body)) : "");
+  const r = await fetch(url, body ? { method: "POST", headers: { "X-Vork-Token": token(), "Content-Type": "application/json" }, body: JSON.stringify(body) } : { headers: { "X-Vork-Token": token() } });
   if (r.status === 401) { localStorage.removeItem("vork-token"); nokey = true; throw new Error("key"); }
   return r.json();
 }

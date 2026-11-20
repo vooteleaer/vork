@@ -167,6 +167,30 @@ fn answer(status: u16, kind: &'static str, body: impl Into<Vec<u8>>) -> Answer {
     Answer { status, kind, body: body.into() }
 }
 
+/// The command a page put in the address (`?c=…`, percent-encoded): WebKitGTK
+/// gives a custom scheme's requests no body, so the page sends it there too.
+fn command_in(query: Option<&str>) -> Option<Vec<u8>> {
+    let v = query?.split('&').find_map(|p| p.strip_prefix("c="))?;
+    let (b, mut out, mut i) = (v.as_bytes(), Vec::new(), 0);
+    while i < b.len() {
+        match b[i] {
+            b'%' if i + 2 < b.len() => {
+                out.push(u8::from_str_radix(std::str::from_utf8(&b[i + 1..i + 3]).ok()?, 16).ok()?);
+                i += 3;
+            }
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            c => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    Some(out)
+}
+
 /// The routes of the node's own dashboard server (`src/web.rs`).
 fn route(method: &str, path: &str, body: &[u8]) -> Answer {
     let line = match (method, path) {
@@ -256,7 +280,8 @@ mod window {
                 // The node may take a moment; never on the UI thread.
                 std::thread::spawn(move || {
                     let path = request.uri().path().to_string();
-                    let a = route(request.method().as_str(), &path, request.body());
+                    let from_query = if request.body().is_empty() { command_in(request.uri().query()) } else { None };
+                    let a = route(request.method().as_str(), &path, from_query.as_deref().unwrap_or(request.body()));
                     let response = Response::builder()
                         .status(a.status)
                         .header("Content-Type", a.kind)
@@ -563,5 +588,17 @@ mod browser {
         if let Err(e) = r {
             eprintln!("couldn't open a browser ({e}): open the link above yourself");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_command_comes_from_the_address() {
+        let c = super::command_in(Some("c=%7B%22cmd%22%3A%22link%22%2C%22address%22%3A%22vork-link%3Aab%3Fc%3D1%26n%3Dx%22%7D")).unwrap();
+        assert_eq!(c, br#"{"cmd":"link","address":"vork-link:ab?c=1&n=x"}"#);
+        assert_eq!(super::command_in(Some("x=1")), None);
+        // A cut-off escape is kept as it is (then not JSON: a bad request).
+        assert_eq!(super::command_in(Some("c=%7")).unwrap(), b"%7");
     }
 }
