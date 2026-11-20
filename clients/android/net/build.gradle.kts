@@ -27,8 +27,9 @@ android {
         targetSdk = 34
         versionCode = commits
         versionName = if (released) workspaceVersion else "$workspaceVersion-dev.$commits"
-        // The node is built for 64-bit ARM phones (and x86_64 emulators).
-        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+        // The node is built for 64-bit ARM phones, 32-bit ARM (TV boxes such as
+        // the Mi Box run a 32-bit Android) and x86_64 emulators.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }
 
     // The window is the node's web dashboard (src/web/index.html), the same

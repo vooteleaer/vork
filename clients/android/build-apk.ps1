@@ -7,7 +7,8 @@
 # -Release: shrunk with R8 and signed with the debug key (for testers).
 #
 # Needs the Android SDK with NDK 27 ($env:ANDROID_HOME, default C:\Android\Sdk),
-# JDK 17, and rustup targets aarch64-linux-android and x86_64-linux-android.
+# JDK 17, and rustup targets aarch64-linux-android, armv7-linux-androideabi
+# and x86_64-linux-android.
 # The JNI crate is outside the workspace (it still takes retifs-contacts and
 # retifs-calendar, next to the vork repository), with its own Cargo.lock.
 param([string[]]$Abis = @("arm64-v8a", "x86_64"), [switch]$Release)
@@ -28,12 +29,14 @@ Get-ChildItem "$Here\app\src\main\jniLibs", "$Here\net\src\main\jniLibs" -Direct
     Where-Object { $Abis -notcontains $_.Name } | Remove-Item -Recurse -Force
 
 foreach ($abi in $Abis) {
-    $triple = @{ "arm64-v8a" = "aarch64-linux-android"; "x86_64" = "x86_64-linux-android" }[$abi]
+    $triple = @{ "arm64-v8a" = "aarch64-linux-android"; "armeabi-v7a" = "armv7-linux-androideabi"; "x86_64" = "x86_64-linux-android" }[$abi]
+    # The NDK's compiler for it (32-bit ARM's is named armv7a-…).
+    $clang = "$Bin\$($triple.Replace('armv7-', 'armv7a-'))$Api-clang"
     $var = $triple.ToUpper().Replace("-", "_")
     $under = $triple.Replace("-", "_")
-    Set-Item "env:CARGO_TARGET_${var}_LINKER" "$Bin\$triple$Api-clang.cmd"
-    Set-Item "env:CC_$under" "$Bin\$triple$Api-clang.cmd"
-    Set-Item "env:CXX_$under" "$Bin\$triple$Api-clang++.cmd"
+    Set-Item "env:CARGO_TARGET_${var}_LINKER" "$clang.cmd"
+    Set-Item "env:CC_$under" "$clang.cmd"
+    Set-Item "env:CXX_$under" "$clang++.cmd"
     Set-Item "env:AR_$under" "$Bin\llvm-ar.exe"
     Write-Host "== $abi ($triple)"
     Invoke-Cargo build --release --target $triple --manifest-path "$Here\jni\Cargo.toml"

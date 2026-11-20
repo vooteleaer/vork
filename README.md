@@ -45,7 +45,7 @@ Downloads are on the [releases page](https://github.com/vooteleaer/vork/releases
 | On | Take | What it does |
 |---|---|---|
 | **Windows** 10/11 | `vork-<version>.msi` | installs the node as a service and the vØrk window (its icon waits in the notification area) |
-| **Android** | `vork-net-<version>.apk` | the app: the node, the dashboard, a VPN for your apps |
+| **Android, Android TV** | `vork-net-<version>.apk` | the app: the node, the dashboard, a VPN for your apps (64- and 32-bit ARM; on a TV, moved around with the remote) |
 | **Debian 12, Ubuntu 22.04** or newer, elementary OS 7, Linux Mint 21 (x86-64) | `vork_<version>_amd64.deb` | the node as a system service, and the vØrk window |
 | **Raspberry Pi OS** (64-bit, bookworm), Debian 12 or Ubuntu 22.04 on ARM64 | `vork_<version>_arm64.deb` | the same, for ARM64 |
 | **Any Linux**, older ones too | `vork-linux-x86_64`, `vork-linux-aarch64` | the node alone, one static file: install it as below; its dashboard opens in the browser (`vork web-link`) |

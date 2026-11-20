@@ -208,6 +208,9 @@ class MainActivity : ComponentActivity() {
             } else {
                 vpnAllowed()
             }
+        } catch (e: android.content.ActivityNotFoundException) {
+            // Some TVs (Mi Box) have no screen to give the consent on: given once from a computer.
+            said("This device has no VPN consent screen. From a computer: adb shell appops set $packageName ACTIVATE_VPN allow, then turn it on again", true)
         } catch (e: Exception) {
             said("Couldn't turn it on: ${e.message ?: e.javaClass.simpleName}", true)
         }
@@ -228,6 +231,9 @@ class MainActivity : ComponentActivity() {
         if (requestCode == REQUEST_VPN) {
             when {
                 resultCode == RESULT_OK -> vpnAllowed()
+                // Refused at once on a TV: often a missing consent screen (Mi Box).
+                System.currentTimeMillis() - asked < 1_500 && packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK) ->
+                    said("Refused at once: this TV may have no VPN consent screen. From a computer: adb shell appops set $packageName ACTIVATE_VPN allow (or turn off always-on for another VPN app), then try again", true)
                 // Refused before anyone could answer: another app holds an always-on VPN.
                 System.currentTimeMillis() - asked < 1_500 -> said("Another VPN app is set to always-on, and Android allows one VPN at a time: turn always-on off for it (Settings → VPN), then try again", true)
                 else -> said("The VPN wasn't allowed, so apps can't reach vØrk addresses", true)

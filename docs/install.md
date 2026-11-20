@@ -11,7 +11,7 @@ Downloads are on the [releases page](https://github.com/vooteleaer/vork/releases
 | Device | File | Section |
 |---|---|---|
 | Windows 10/11 | `vork-<version>.msi` | [Windows](#windows) |
-| Android (64-bit) | `vork-net-<version>.apk` | [Android](#android) |
+| Android, Android TV | `vork-net-<version>.apk` | [Android](#android) |
 | Debian 12, Ubuntu 22.04 or newer, elementary OS 7, Linux Mint 21 (PC) | `vork_<version>_amd64.deb` | [Debian, Ubuntu, Raspberry Pi](#debian-ubuntu-raspberry-pi) |
 | Raspberry Pi OS 64-bit (bookworm), Debian or Ubuntu on ARM64 | `vork_<version>_arm64.deb` | [Debian, Ubuntu, Raspberry Pi](#debian-ubuntu-raspberry-pi) |
 | Any other Linux, or a server without a screen | `vork-linux-x86_64`, `vork-linux-aarch64` | [Any Linux](#any-linux-the-node-alone) |
@@ -43,6 +43,17 @@ To update, run a newer MSI over it. To remove it: **Settings → Apps → vØrk 
 4. Go on to [linking your devices](#link-your-devices): the app scans pairing codes with the camera.
 
 To update, install a newer APK over it.
+
+**Android TV** (a TV box such as the Mi Box, or a TV running Android TV): the same APK, from 0.3.0 on (it carries 32-bit ARM too, which most TV boxes run).
+
+- Install it from a USB stick with a file manager, or from a computer with `adb install vork-net-<version>.apk` (turn on developer options and network debugging on the TV first). **vØrk** then appears among the TV's apps.
+- Move around the dashboard with the remote's arrows; the middle button presses.
+- Link it by showing a code on the TV (**Devices → Show a code**) and scanning it with your phone's vØrk app; typing a link with a remote is no fun.
+- Some TV boxes (Mi Box) have no screen to allow a VPN on, so the switch is refused at once. Allow it once from a computer, then turn the switch on again:
+
+  ```
+  adb shell appops set org.vork.net ACTIVATE_VPN allow
+  ```
 
 ## Debian, Ubuntu, Raspberry Pi
 
