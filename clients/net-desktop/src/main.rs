@@ -309,6 +309,14 @@ mod window {
                         .map_err(|e| eprintln!("vork-net: no tray icon ({e})"))
                         .ok();
                 }
+                // The page fills the window at every size (maximized too).
+                #[cfg(not(target_os = "linux"))]
+                Event::WindowEvent { event: WindowEvent::Resized(size), .. } => {
+                    let _ = webview.set_bounds(wry::Rect {
+                        position: wry::dpi::PhysicalPosition::new(0, 0).into(),
+                        size: wry::dpi::PhysicalSize::new(size.width, size.height).into(),
+                    });
+                }
                 // Closing the window keeps the app in the tray; Quit ends it.
                 Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
                     if tray.is_some() {
