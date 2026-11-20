@@ -142,7 +142,7 @@ It prints a private link to open in your browser. The dashboard uses its own cer
 
 It shows traffic, connections and the log, and lets you pair devices, open firewall ports, choose an exit node and check for updates:
 
-<p align="center"><img src="docs/images/devices.png" alt="The Devices page: linked devices with their connection type, IPv4 address, .vork name and traffic, and a panel for showing a pairing code." width="860"></p>
+<p align="center"><img src="docs/images/devices.png" alt="The Devices page: a panel for showing a pairing code or pasting a link, and below it the linked devices with their connection type, IPv4 address, .vork name and traffic." width="860"></p>
 
 ## Exit node: browse safely on someone else's Wi-Fi
 
