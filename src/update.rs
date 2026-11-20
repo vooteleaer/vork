@@ -61,6 +61,8 @@ pub fn target() -> &'static str {
         "linux-aarch64"
     } else if cfg!(all(windows, target_arch = "x86_64")) {
         "windows-x86_64"
+    } else if cfg!(all(target_os = "haiku", target_arch = "x86_64")) {
+        "haiku-x86_64" // updated with its package, not by itself
     } else if cfg!(target_os = "android") {
         "android" // updated with its app, not by itself
     } else {
