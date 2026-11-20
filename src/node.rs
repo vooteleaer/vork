@@ -413,6 +413,9 @@ pub struct Config {
     pub web: Option<SocketAddr>,
     /// Its certificate chain and key, if given (else self-signed).
     pub web_cert: Option<(std::path::PathBuf, std::path::PathBuf)>,
+    /// The dashboard behind Home Assistant's ingress, and the one address let in.
+    pub web_ingress: Option<SocketAddr>,
+    pub web_ingress_from: std::net::IpAddr,
     /// Where names outside `.vork` are asked (when this node is the system's
     /// resolver, as on Android): the network's own servers.
     pub dns_upstream: Vec<SocketAddr>,
@@ -1029,7 +1032,7 @@ impl Node {
             }
             let given = self.cfg.web_cert.as_ref().map(|(c, k)| (c.as_path(), k.as_path()));
             match crate::web::certificate(self.state.dir(), &names, &ips, given) {
-                Ok((tls, fp)) => match crate::web::serve(addr, token.clone(), tls, web_tx).await {
+                Ok((tls, fp)) => match crate::web::serve(addr, token.clone(), tls, web_tx.clone()).await {
                     Ok(()) => {
                         let shown = if addr.ip().is_unspecified() { host } else { addr.ip().to_string() };
                         log(format!("dashboard at https://{shown}:{}/#t={token} (certificate SHA-256 {fp})", addr.port()));
@@ -1038,9 +1041,14 @@ impl Node {
                 },
                 Err(e) => warn(format!("no dashboard: its certificate: {e:#}")),
             }
-        } else {
-            drop(web_tx);
         }
+        if let Some(addr) = self.cfg.web_ingress {
+            match crate::web::serve_ingress(addr, self.cfg.web_ingress_from, web_tx.clone()).await {
+                Ok(()) => log(format!("dashboard for Home Assistant's ingress on http://{addr} (from {} only)", self.cfg.web_ingress_from)),
+                Err(e) => warn(format!("no ingress dashboard on {addr}: {e:#}")),
+            }
+        }
+        drop(web_tx);
         let mut tun_buf = vec![0u8; 65536];
         let mut last_remember = Instant::now();
         let mut last_seek = Instant::now();

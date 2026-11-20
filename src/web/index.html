@@ -192,7 +192,8 @@ window.vorkResume = () => refresh();
   const m = location.hash.match(/t=([0-9a-f]+)/);
   if (m) { localStorage.setItem("vork-token", m[1]); history.replaceState(null, "", location.pathname); }
 })();
-const token = () => APP ? "app" : localStorage.getItem("vork-token") || "";
+// The app and Home Assistant's ingress sign in their own way: no key.
+const token = () => APP ? "app" : window.VORK_INGRESS ? "ingress" : localStorage.getItem("vork-token") || "";
 
 // ---- state ----
 let S = {}, M = null, LOG = [], page = (location.hash.match(/^#\/(\w+)/) || [])[1] || "dashboard", nokey = false, down = false;
@@ -220,7 +221,8 @@ const sw = (key, on, extra = "") => `<label class="switch"><input type="checkbox
 
 async function api(path, body) {
   if (APP) return appAsk(path === "/api/cmd" ? body : { cmd: path.slice(5) });
-  const r = await fetch(path, body ? { method: "POST", headers: { "X-Vork-Token": token(), "Content-Type": "application/json" }, body: JSON.stringify(body) } : { headers: { "X-Vork-Token": token() } });
+  // Relative: behind Home Assistant's ingress the page lives under a path of its own.
+  const r = await fetch(path.slice(1), body ? { method: "POST", headers: { "X-Vork-Token": token(), "Content-Type": "application/json" }, body: JSON.stringify(body) } : { headers: { "X-Vork-Token": token() } });
   if (r.status === 401) { localStorage.removeItem("vork-token"); nokey = true; throw new Error("key"); }
   return r.json();
 }

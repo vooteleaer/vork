@@ -374,6 +374,8 @@ pub fn settings(a: RunArgs) -> Result<Settings> {
         exit_auto: file.exit_via.as_deref() == Some("auto"),
         exit_via: file.exit_via.as_deref().filter(|s| !s.is_empty() && *s != "auto").map(|s| crate::links::parse(s).with_context(|| format!("exit_via: {s} isn't an address (or \"auto\")"))).transpose()?,
         web: file.web.as_deref().filter(|w| !w.is_empty()).map(|w| w.parse().with_context(|| format!("web: {w} isn't host:port"))).transpose()?,
+        web_ingress: file.web_ingress.as_deref().filter(|w| !w.is_empty()).map(|w| w.parse().with_context(|| format!("web_ingress: {w} isn't host:port"))).transpose()?,
+        web_ingress_from: file.web_ingress_from.unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::new(172, 30, 32, 2))),
         name: file.name.clone().filter(|n| !n.trim().is_empty()).unwrap_or_else(node::machine_name),
         gateway: a.gateway.or(file.gateway),
         paths: a.paths.or(file.paths).unwrap_or(2).max(1),

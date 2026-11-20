@@ -36,6 +36,11 @@ pub struct FileConfig {
     /// without them it makes a self-signed one.
     pub web_cert: Option<std::path::PathBuf>,
     pub web_key: Option<std::path::PathBuf>,
+    /// The dashboard behind Home Assistant's ingress: plain HTTP on this
+    /// address, from `web_ingress_from` only (default 172.30.32.2, the
+    /// Supervisor's proxy), which signs its users in itself.
+    pub web_ingress: Option<String>,
+    pub web_ingress_from: Option<std::net::IpAddr>,
     /// Openings in the walled garden for nodes that aren't the owner's devices (ADR-0027).
     pub allow: Option<Vec<String>>,
     /// Self-updating (ADR-0028): trusted release keys, where this node takes
@@ -187,6 +192,9 @@ map_port = true
 # `vork web-link` shows its fingerprint), or one you give, e.g. Let's Encrypt's:
 # web_cert = "/etc/letsencrypt/live/node.example.org/fullchain.pem"
 # web_key = "/etc/letsencrypt/live/node.example.org/privkey.pem"
+# In a Home Assistant add-on, the dashboard in Home Assistant's own pages
+# (ingress): plain HTTP, only for the Supervisor's proxy, which signs you in.
+# web_ingress = "0.0.0.0:8099"
 
 # Who reaches this node's own services over vØrk: your devices always; other
 # nodes only what's opened here (relaying for others is never affected).
