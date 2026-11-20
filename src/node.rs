@@ -3856,8 +3856,11 @@ impl Node {
     fn on_control(&mut self, request: &str, owner: bool) -> String {
         let v = serde_json::from_str::<serde_json::Value>(request).unwrap_or_default();
         let cmd = v.get("cmd").and_then(|c| c.as_str()).unwrap_or_default();
-        if !matches!(cmd, "status") && !owner {
-            return json!({ "error": "only the node's own user (or root) may change it" }).to_string();
+        // Looking is for any local user (the desktop window runs as one); the log
+        // isn't, as it shows the dashboard's key.
+        if !matches!(cmd, "status" | "metrics") && !owner {
+            let how = if cfg!(unix) { format!(": add your user to operators in {}", self.cfg.config_path.as_ref().map_or("vork.toml".into(), |p| p.display().to_string())) } else { String::new() };
+            return json!({ "error": format!("only the node's own user (or root) may do this{how}") }).to_string();
         }
         match Some(cmd) {
             Some("status") => self.status_json().to_string(),

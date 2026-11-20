@@ -52,7 +52,7 @@ Download the `.deb` for your machine (`amd64` for a PC, `arm64` for a Raspberry 
 sudo apt install ./vork_<version>_<arch>.deb
 ```
 
-This installs the node as a system service (`vork status` shows it) with its network interface on, and the **vØrk** window in the applications menu, which also starts in the tray at login. The user who installed it may manage the node from the window (`operators` in `/etc/vork/vork.toml`).
+This installs the node as a system service (`vork status` shows it) with its network interface on, and the **vØrk** window in the applications menu, which also starts in the tray at login. The user who installed it may manage the node from the window (`operators` in `/etc/vork/vork.toml`). If the window shows the node but can't change anything ("only the node's own user (or root) may do this"), add your user there, `operators = ["you"]`, and run `sudo systemctl restart vork`; installing or upgrading the package with `sudo apt install` adds the user who ran it while no one is named.
 
 On a Raspberry Pi or server without a screen the window isn't needed: the `.deb` still brings its libraries. To do without them, use the [bare node](#any-linux-the-node-alone) instead. To see the dashboard in a browser on another machine, see [the dashboard in a browser and its key](#the-dashboard-in-a-browser-its-key).
 

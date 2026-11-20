@@ -8,13 +8,20 @@ if [ "$1" = configure ]; then
         # a PC) may have 51820; the router is asked to open this one.
         /usr/bin/vork init --port auto >/dev/null
         sed -i 's/^# tun = "vork0"/tun = "vork0"/' /etc/vork/vork.toml
-        # Whoever installed it may manage the node from the vØrk window.
-        WHO=${SUDO_USER:-}
-        if [ -z "$WHO" ] && [ -n "${PKEXEC_UID:-}" ]; then WHO=$(id -nu "$PKEXEC_UID" 2>/dev/null || true); fi
-        if [ -n "$WHO" ] && [ "$WHO" != root ]; then
-            sed -i "s/^# operators = \[\"alice\"\]/operators = [\"$WHO\"]/" /etc/vork/vork.toml
-        fi
         echo "vork: node configuration written to /etc/vork/vork.toml"
+    fi
+    # Whoever installs (or upgrades) it may manage the node from the vØrk window,
+    # while no operators are named yet (the window runs as that user, not root).
+    WHO=${SUDO_USER:-}
+    if [ -z "$WHO" ] && [ -n "${PKEXEC_UID:-}" ]; then WHO=$(id -nu "$PKEXEC_UID" 2>/dev/null || true); fi
+    if [ -n "$WHO" ] && [ "$WHO" != root ] && ! grep -q '^operators' /etc/vork/vork.toml; then
+        if grep -q '^# operators = \["alice"\]' /etc/vork/vork.toml; then
+            sed -i "s/^# operators = \[\"alice\"\]/operators = [\"$WHO\"]/" /etc/vork/vork.toml
+        else
+            # At the top, where no [table] has started.
+            sed -i "1i operators = [\"$WHO\"]" /etc/vork/vork.toml
+        fi
+        echo "vork: $WHO may manage the node (operators in /etc/vork/vork.toml)"
     fi
     if command -v systemctl >/dev/null && [ -d /run/systemd/system ]; then
         systemctl daemon-reload >/dev/null 2>&1 || true

@@ -219,7 +219,7 @@ async function copy(v) { if (APP) { APP.copy(v); return toast("Copied: " + v); }
 const cp = (v) => v ? `<button class="copy" title="Copy" data-copy="${esc(v)}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button>` : "";
 const sw = (key, on, extra = "") => `<label class="switch"><input type="checkbox" data-set="${key}" ${on ? "checked" : ""} ${extra}><span></span></label>`;
 
-let apiN = 0;
+let apiN = 0, LOGERR = "";
 async function api(path, body) {
   if (APP) return appAsk(path === "/api/cmd" ? body : { cmd: path.slice(5) });
   // Relative: behind Home Assistant's ingress the page lives under a path of its own.
@@ -654,7 +654,7 @@ function pSettings() {
 function pLog() {
   const lines = LOG.filter((l) => !logFilter || l.msg.toLowerCase().includes(logFilter.toLowerCase()));
   return `<div class="card"><div class="card-head"><div><h2>Log</h2><div class="sub">The node's latest ${LOG.length} lines (information and warnings)</div></div><input type="text" id="logFilter" placeholder="Filter" value="${esc(logFilter)}"></div>
-    <div class="log" id="logbox">${lines.slice().reverse().map((l) => `<div class="${l.warn ? "w" : ""}"><time>${new Date(l.t * 1000).toLocaleTimeString()}</time>${esc(l.msg)}</div>`).join("") || '<div class="empty">Nothing.</div>'}</div></div>`;
+    <div class="log" id="logbox">${lines.slice().reverse().map((l) => `<div class="${l.warn ? "w" : ""}"><time>${new Date(l.t * 1000).toLocaleTimeString()}</time>${esc(l.msg)}</div>`).join("") || `<div class="empty">${LOGERR ? esc(LOGERR) : "Nothing."}</div>`}</div></div>`;
 }
 
 function keyPage() {
@@ -691,7 +691,7 @@ async function refresh() {
   try {
     const [s, m] = await Promise.all([api("/api/status"), api("/api/metrics")]);
     S = s; M = m; nokey = false; down = false;
-    if (page === "log") LOG = (await api("/api/log")).lines || [];
+    if (page === "log") { const l = await api("/api/log"); LOG = l.lines || []; LOGERR = l.error || ""; }
   } catch (e) { if (!nokey) down = true; }
   draw();
 }
