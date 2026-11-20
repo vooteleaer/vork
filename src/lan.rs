@@ -2,9 +2,11 @@
 //! each registers `_vork._udp.local.` with its port and its WireGuard key in
 //! TXT (`k`), and browses for the others. What's found is only a lead: the
 //! node dials it, and the WireGuard handshake decides.
+//!
+//! Not on Haiku yet: mdns-sd needs IP_PKTINFO, which Haiku doesn't have.
+//! There the node finds others through its connections and links only.
 
-use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 
 pub const SERVICE: &str = "_vork._udp.local.";
 
@@ -14,9 +16,15 @@ pub struct Found {
     pub addrs: Vec<SocketAddr>,
 }
 
+#[cfg(not(target_os = "haiku"))]
+pub use mdns_sd::ServiceDaemon;
+
 /// Registers this node and browses for others; what's found arrives on `tx`.
 /// Keep the daemon while it should run (dropping it doesn't stop it: call `shutdown`).
+#[cfg(not(target_os = "haiku"))]
 pub fn start(name: &str, x_pub: &[u8; 32], port: u16, tx: tokio::sync::mpsc::Sender<Found>) -> anyhow::Result<ServiceDaemon> {
+    use mdns_sd::{ServiceEvent, ServiceInfo};
+    use std::net::IpAddr;
     let mdns = ServiceDaemon::new()?;
     let key = hex::encode(x_pub);
     let info = ServiceInfo::new(SERVICE, name, &format!("vork-{name}.local."), "", port, &[("k", key.as_str()), ("v", "0")][..])?.enable_addr_auto();
@@ -46,4 +54,20 @@ pub fn start(name: &str, x_pub: &[u8; 32], port: u16, tx: tokio::sync::mpsc::Sen
         }
     })?;
     Ok(mdns)
+}
+
+/// Haiku: no local network discovery yet.
+#[cfg(target_os = "haiku")]
+pub struct ServiceDaemon;
+
+#[cfg(target_os = "haiku")]
+impl ServiceDaemon {
+    pub fn shutdown(&self) -> Result<(), ()> {
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "haiku")]
+pub fn start(_name: &str, _x_pub: &[u8; 32], _port: u16, _tx: tokio::sync::mpsc::Sender<Found>) -> anyhow::Result<ServiceDaemon> {
+    anyhow::bail!("not available on Haiku yet")
 }
