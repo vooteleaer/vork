@@ -2655,7 +2655,16 @@ impl Node {
         }
         let Some((step, _)) = self.update.take() else { return };
         if status != STATUS_OK {
-            return self.update_note(format!("the release node refused: {}", String::from_utf8_lossy(body)));
+            let why = String::from_utf8_lossy(body).to_string();
+            // Not known as the owner's device there: the release node restarted
+            // (a release of its own) and this session's identity was lost with
+            // it. Identify again and ask in half a minute, not in six hours.
+            if why.contains("owner's devices") {
+                self.link_identified.remove(&sid);
+                self.update_next = Instant::now() + Duration::from_secs(30);
+                return self.update_note(format!("the release node refused ({why}): identifying again, trying in 30 s"));
+            }
+            return self.update_note(format!("the release node refused: {why}"));
         }
         match step {
             UpdateStep::Asked(_, _) if body.len() > 64 => {
