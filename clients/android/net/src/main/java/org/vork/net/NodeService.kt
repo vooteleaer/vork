@@ -90,6 +90,16 @@ class NodeService : Service() {
             val model = Build.MODEL.replace("\"", "").trim().ifEmpty { "android" }
             p.config.appendText("name = \"$model\"\n")
         }
+        // A port of its own, chosen once: at home a phone shares the router's
+        // NAT with a server on 51820, and a router that keeps source ports
+        // gives the phone's flows that same outside port, so a node talking
+        // to the phone could never reach the server's forwarded port.
+        val fixed = Regex("(?m)^listen\\s*=\\s*\"0\\.0\\.0\\.0:51820\"\\s*$")
+        val now = p.config.readText()
+        if (fixed.containsMatchIn(now)) {
+            val port = 40000 + java.security.SecureRandom().nextInt(20000)
+            p.config.writeText(now.replace(fixed, "listen = \"0.0.0.0:$port\""))
+        }
         // The log is the node's own: kept short.
         if (p.log.length() > 1_000_000) p.log.writeText("")
     }

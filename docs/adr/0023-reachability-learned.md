@@ -21,3 +21,6 @@ A new node knows nobody: it needs one address to start (bootstrap), and the user
 - A node learns from others whether it can be reached, which tells the user whether the router port matters.
 - Reports reveal which nodes a node has linked with (their keys and public addresses) to its neighbors. That's no more than announces already tell, but private addresses stay within their kind of network.
 - Leads can make a node dial an address a liar chose: at most one handshake initiation (148 bytes) per 30 s per node, too little to be a weapon.
+
+## Addendum (2026-11-20): phones take a port of their own
+Two nodes behind one router both listening on 51820 collide there: a router that keeps source ports gives the first one's flows the outside port 51820, and a node talking to it then reaches that node, never the other's forwarded 51820 (a NAS with a port forward was unreachable directly from a PC that also talked to a phone on the NAS's LAN). The Android app now gives its node a random port (40000–59999) chosen once, and moves one still on 51820 to it: a phone needs no fixed port, and 51820 stays the server's.
