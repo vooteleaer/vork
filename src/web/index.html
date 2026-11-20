@@ -315,6 +315,9 @@ function topology() {
       if (!p.via) { link(who, p.to); continue; }
       if (!nodes[p.via]) node(p.via, { name: (m.names || {})[p.via] || nameOf(p.via) || short(p.via), relay: true });
       link(who, p.via);
+      // Through another of the owner's devices that tells its own paths: the rest of
+      // the way is in what it tells (so a path through three or more of them shows each).
+      if (nodes[p.via].device && from[p.via]) continue;
       // More hops than the relay: nodes between it and the device not known here, drawn as one "?".
       if ((p.hops || 2) > 2) { const q = "?" + [p.via, p.to].sort().join(""); node(q, { name: `${p.hops - 2} more`, unknown: true, relay: true }); link(p.via, q); link(q, p.to); }
       else link(p.via, p.to);
