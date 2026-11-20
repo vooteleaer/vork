@@ -523,10 +523,10 @@ pub struct Node {
     tried: HashMap<[u8; 32], Instant>,
     /// The TUN interface (M2).
     tun: Option<Arc<crate::tun::Tun>>,
-    /// Windows, using an exit node: the interface this machine's internet
-    /// took before (the node's own UDP stays on it) while all else goes
-    /// through the exit.
-    exit_routed: Option<u32>,
+    /// Windows, using an exit node: the default route this machine's
+    /// internet took before (interface and gateway; the node's own UDP and
+    /// the LAN stay on it) while all else goes through the exit.
+    exit_routed: Option<(u32, std::net::Ipv4Addr)>,
     /// Sessions opened for IP in which we identified (the far end checks sources by identity).
     ip_identified: HashSet<u32>,
     /// Overlay destinations no node is known for: when last logged.
@@ -1953,27 +1953,25 @@ impl Node {
         #[cfg(windows)]
         {
             let Some(tun) = self.tun.clone() else { return };
-            let physical = if self.exit_up() { crate::tun::default_interface(tun.index) } else { None };
-            match (physical, self.exit_routed) {
-                (Some(p), Some(was)) if p == was => {}
-                (Some(p), was) => {
+            let physical = if self.exit_up() { crate::tun::default_route(tun.index) } else { None };
+            if physical == self.exit_routed {
+                return;
+            }
+            let index = tun.index;
+            match physical {
+                Some((p, _)) => {
                     crate::tun::pin_socket(&self.send_sock, Some(p));
-                    if was.is_none() {
-                        let index = tun.index;
-                        std::thread::spawn(move || crate::tun::exit_routes(index, true));
+                    if self.exit_routed.is_none() {
                         log(format!("exit: this machine's internet goes through {}", self.cfg.exit_via.map(|v| short(&v)).unwrap_or_default()));
                     }
-                    self.exit_routed = Some(p);
                 }
-                (None, Some(_)) => {
-                    let index = tun.index;
-                    std::thread::spawn(move || crate::tun::exit_routes(index, false));
+                None => {
                     crate::tun::pin_socket(&self.send_sock, None);
-                    self.exit_routed = None;
                     log("exit: this machine's internet goes out directly again");
                 }
-                (None, None) => {}
             }
+            self.exit_routed = physical;
+            std::thread::spawn(move || crate::tun::exit_routes(index, physical));
         }
     }
 
@@ -1982,7 +1980,7 @@ impl Node {
         #[cfg(windows)]
         if self.exit_routed.take().is_some() {
             if let Some(tun) = &self.tun {
-                crate::tun::exit_routes(tun.index, false);
+                crate::tun::exit_routes(tun.index, None);
             }
         }
     }

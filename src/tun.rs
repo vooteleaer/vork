@@ -183,7 +183,7 @@ pub fn receive_fd_at(path: &std::path::Path) -> anyhow::Result<std::os::fd::Owne
 }
 
 #[cfg(windows)]
-pub use windows_tun::{default_interface, exit_routes, pin_socket, Tun};
+pub use windows_tun::{default_route, exit_routes, pin_socket, Tun};
 
 /// Windows: a wintun adapter (wintun.dll next to vork.exe; creating one
 /// needs administrator rights, so the node runs as a service for it).
@@ -205,7 +205,13 @@ mod windows_tun {
     /// Routes that send everything to the interface while an exit node is
     /// used (ADR-0026): halves of each family, so they win over the default
     /// route without replacing it. IPv6 is held back by the node, not leaked.
-    const EXIT_ROUTES: [(&str, &str); 4] = [("ipv4", "0.0.0.0/1"), ("ipv4", "128.0.0.0/1"), ("ipv6", "::/1"), ("ipv6", "8000::/1")];
+    const EXIT_ROUTES: [&str; 4] = ["0.0.0.0/1", "128.0.0.0/1", "::/1", "8000::/1"];
+    /// Private networks, kept on the machine's own gateway meanwhile: an
+    /// exit carries the internet only, and the LAN (other VLANs behind the
+    /// router too) stays reachable, as Tailscale's "allow LAN access".
+    const LAN_ROUTES: [&str; 3] = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"];
+    /// The metric the node's own routes carry, so they are known to take away.
+    const METRIC: u32 = 7;
     /// The NRPT rule that sends every name to the node's resolver meanwhile.
     const EXIT_DNS_RULE: &str = "vork-exit";
     /// One change to routes at a time (they run on threads of their own).
@@ -220,39 +226,46 @@ mod windows_tun {
             .is_ok_and(|s| s.success())
     }
 
-    /// All traffic through the interface, and names through the node, or
-    /// back to normal. Slow (netsh, PowerShell): run off the node's loop.
-    pub fn exit_routes(index: u32, on: bool) {
+    fn quoted(list: &[&str]) -> String {
+        list.iter().map(|p| format!("'{p}'")).collect::<Vec<_>>().join(",")
+    }
+
+    /// All traffic through the interface `index` (the LAN through
+    /// `physical`, the machine's own default route: interface and gateway),
+    /// and names through the node; or (None) all of it taken away again.
+    /// Slow (PowerShell): run off the node's loop.
+    pub fn exit_routes(index: u32, physical: Option<(u32, std::net::Ipv4Addr)>) {
         let _held = EXIT_LOCK.lock();
-        let iface = format!("interface={index}");
-        for (family, prefix) in EXIT_ROUTES {
-            let p = format!("prefix={prefix}");
-            if on {
-                // Already there from an earlier run: fine.
-                let _ = netsh(&["interface", family, "add", "route", &p, &iface, "metric=0", "store=active"]);
-            } else {
-                let _ = netsh(&["interface", family, "delete", "route", &p, &iface, "store=active"]);
-            }
-        }
-        let dns = if on {
-            format!(
-                "if (-not (Get-DnsClientNrptRule | Where-Object {{ $_.Comment -eq '{EXIT_DNS_RULE}' }})) {{ Add-DnsClientNrptRule -Namespace '.' -NameServers '{}' -Comment '{EXIT_DNS_RULE}' }}; Clear-DnsClientCache",
+        // What the node added before (by its metric) goes first, every time:
+        // a new default route (another network) gets its LAN routes afresh.
+        let mut script = format!(
+            "$ErrorActionPreference = 'SilentlyContinue'; \
+             Get-NetRoute -PolicyStore ActiveStore | Where-Object {{ ($_.RouteMetric -eq {METRIC} -or $_.InterfaceIndex -eq {index}) -and $_.DestinationPrefix -in @({}) }} | Remove-NetRoute -Confirm:$false; \
+             Get-DnsClientNrptRule | Where-Object {{ $_.Comment -eq '{EXIT_DNS_RULE}' }} | Remove-DnsClientNrptRule -Force; ",
+            quoted(&[&EXIT_ROUTES[..], &LAN_ROUTES[..]].concat())
+        );
+        if let Some((phys, gw)) = physical {
+            script += &format!(
+                "foreach ($p in @({})) {{ New-NetRoute -DestinationPrefix $p -InterfaceIndex {phys} -NextHop '{gw}' -RouteMetric {METRIC} -PolicyStore ActiveStore | Out-Null }}; \
+                 foreach ($p in @({})) {{ New-NetRoute -DestinationPrefix $p -InterfaceIndex {index} -RouteMetric {METRIC} -PolicyStore ActiveStore | Out-Null }}; \
+                 Add-DnsClientNrptRule -Namespace '.' -NameServers '{}' -Comment '{EXIT_DNS_RULE}'; ",
+                if gw.is_unspecified() { String::new() } else { quoted(&LAN_ROUTES) },
+                quoted(&EXIT_ROUTES),
                 crate::dns::ADDR
-            )
-        } else {
-            format!("Get-DnsClientNrptRule | Where-Object {{ $_.Comment -eq '{EXIT_DNS_RULE}' }} | Remove-DnsClientNrptRule -Force; Clear-DnsClientCache")
-        };
-        if !powershell(&dns) {
-            crate::node::log(format!("exit: names couldn't be {} the node's resolver", if on { "sent to" } else { "taken back from" }));
+            );
+        }
+        script += "Clear-DnsClientCache; exit 0";
+        if !powershell(&script) {
+            crate::node::log("exit: the routes couldn't be changed (PowerShell)");
         }
     }
 
-    /// The interface the machine's own default route uses (the lowest metric
-    /// of a connected interface's 0.0.0.0/0, this adapter left out).
-    pub fn default_interface(exclude: u32) -> Option<u32> {
+    /// The machine's own default route (the lowest metric of a connected
+    /// interface's 0.0.0.0/0, this adapter left out): interface and gateway.
+    pub fn default_route(exclude: u32) -> Option<(u32, std::net::Ipv4Addr)> {
         use windows_sys::Win32::NetworkManagement::IpHelper::*;
         use windows_sys::Win32::Networking::WinSock::AF_INET;
-        let mut best: Option<(u32, u32)> = None;
+        let mut best: Option<(u32, u32, std::net::Ipv4Addr)> = None;
         unsafe {
             let mut table: *mut MIB_IPFORWARD_TABLE2 = std::ptr::null_mut();
             if GetIpForwardTable2(AF_INET, &mut table) != 0 || table.is_null() {
@@ -271,13 +284,14 @@ mod windows_tun {
                     continue;
                 }
                 let metric = r.Metric.saturating_add(row.Metric);
-                if best.is_none_or(|(m, _)| metric < m) {
-                    best = Some((metric, r.InterfaceIndex));
+                let gw = std::net::Ipv4Addr::from(u32::from_be(r.NextHop.Ipv4.sin_addr.S_un.S_addr));
+                if best.is_none_or(|(m, _, _)| metric < m) {
+                    best = Some((metric, r.InterfaceIndex, gw));
                 }
             }
             FreeMibTable(table as *const _);
         }
-        best.map(|(_, i)| i)
+        best.map(|(_, i, gw)| (i, gw))
     }
 
     /// The node's own UDP leaves by this interface whatever the routes say
@@ -332,7 +346,7 @@ mod windows_tun {
             let _ = netsh(&["interface", "ipv4", "set", "subinterface", &idx, &format!("mtu={mtu}"), "store=active"]);
             // An exit's routes and names left by a run that didn't end cleanly: gone.
             let index: u32 = idx.parse().unwrap_or(0);
-            std::thread::spawn(move || exit_routes(index, false));
+            std::thread::spawn(move || exit_routes(index, None));
             let (tx, rx) = tokio::sync::mpsc::channel(1024);
             let s = session.clone();
             std::thread::Builder::new().name("vork-wintun".into()).spawn(move || {
