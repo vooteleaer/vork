@@ -76,6 +76,14 @@ pub fn set_value(text: &str, key: &str, value: &str) -> String {
     if done { out } else { append(&out, &line) }
 }
 
+/// The value of `key = value` as written (a string still quoted), if set.
+pub fn value(text: &str, key: &str) -> Option<String> {
+    text.lines().map(str::trim).filter(|l| !l.starts_with('#')).find_map(|l| {
+        let (k, v) = l.split_once('=')?;
+        (k.trim() == key).then(|| v.split(" #").next().unwrap_or(v).trim().to_string())
+    })
+}
+
 fn append(text: &str, line: &str) -> String {
     let sep = if text.is_empty() || text.ends_with('\n') { "" } else { "\n" };
     format!("{text}{sep}{line}\n")

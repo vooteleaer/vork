@@ -528,6 +528,9 @@ pub struct Node {
     /// the LAN stay on it) while all else goes through the exit.
     #[cfg_attr(not(windows), allow(dead_code))]
     exit_routed: Option<(u32, std::net::Ipv4Addr)>,
+    /// A restart asked for (the dashboard, after a setting taken at start):
+    /// when, a moment after the answer went out.
+    restart_at: Option<Instant>,
     /// Sessions opened for IP in which we identified (the far end checks sources by identity).
     ip_identified: HashSet<u32>,
     /// Overlay destinations no node is known for: when last logged.
@@ -787,6 +790,7 @@ impl Node {
             tried: HashMap::new(),
             tun: None,
             exit_routed: None,
+            restart_at: None,
             ip_identified: HashSet::new(),
             ip_unknown: HashMap::new(),
             ip_peer: HashMap::new(),
@@ -1241,6 +1245,14 @@ impl Node {
                         self.exit_routes_sync();
                     }
                     self.exit_dns_late();
+                    if self.restart_at.is_some_and(|t| Instant::now() >= t) {
+                        log("restarting, as asked");
+                        self.exit_routes_off();
+                        self.remember_neighbors();
+                        self.reach.save();
+                        // A non-zero exit: the service (systemd, Windows' recovery, Docker) starts it again.
+                        std::process::exit(75);
+                    }
                     if self.metrics.history.back().is_none_or(|s| unix_now() >= s.t + 5) {
                         self.sample();
                     }
@@ -3781,6 +3793,11 @@ impl Node {
         }
         match Some(cmd) {
             Some("status") => self.status_json().to_string(),
+            // Started again by its service, with settings taken at start (the port).
+            Some("restart") => {
+                self.restart_at = Some(Instant::now() + Duration::from_millis(500));
+                json!({ "ok": true }).to_string()
+            }
             // Lets go of the interface (Android's VPN turned off): no restart needed.
             // Counters, their last hour, and the parts behind them (the dashboard).
             Some("metrics") => self.metrics_json().to_string(),
@@ -4118,6 +4135,10 @@ impl Node {
             "map_port": self.cfg.map_port,
             "announce": self.cfg.announce,
             "port": self.cfg.listen.port(),
+            // The port as the file has it (another from the next start), and
+            // where the router opened it (UPnP, PCP), if it did.
+            "port_next": crate::settings::value(&text, "listen").and_then(|l| l.trim_matches('"').parse::<SocketAddr>().ok()).map(|a| a.port()),
+            "mapped": self.mapped.map(|a| a.to_string()),
             "exit": self.cfg.exit,
             "exit_lan": self.cfg.exit_lan,
             "exit_via": self.cfg.exit_via.map(hex::encode),
@@ -4187,6 +4208,18 @@ impl Node {
                         let on = value.as_bool().ok_or(format!("{key} is true or false"))?;
                         restart = true;
                         crate::settings::set_value(&text, key, &on.to_string())
+                    }
+                    // The UDP port, chosen by hand (to forward it on a router
+                    // without UPnP or PCP): taken at the next start.
+                    "port" => {
+                        let port = value.as_u64().or_else(|| value.as_str().and_then(|s| s.trim().parse().ok())).filter(|p| (1..=65535).contains(p)).ok_or("a port is a number from 1 to 65535")? as u16;
+                        if port != self.cfg.listen.port() && std::net::UdpSocket::bind(SocketAddr::new(self.cfg.listen.ip(), port)).is_err() {
+                            return Err(format!("UDP port {port} is in use on this machine"));
+                        }
+                        restart = port != self.cfg.listen.port();
+                        let addr = SocketAddr::new(self.cfg.listen.ip(), port);
+                        log(format!("UDP port {port} from the next start"));
+                        crate::settings::set_value(&text, "listen", &format!("\"{addr}\""))
                     }
                     _ => return Err(format!("{key} can't be set this way")),
                 }

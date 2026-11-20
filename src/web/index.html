@@ -580,6 +580,19 @@ function pUpdates() {
   return `${kpis}<div style="margin-top:16px">${releaseCard(running, APP ? "android" : u.target)}</div>${self}`;
 }
 
+// The UDP port: chosen by hand to forward it on a router without UPnP/PCP,
+// and whether the router opened it.
+function portSetting(s) {
+  const next = s.port_next ?? s.port, pending = next !== s.port;
+  const reached = (S.reach?.reached_by || []).length > 0;
+  const note = s.mapped ? `The router opened it: reachable from outside at <span class="mono">${esc(s.mapped)}</span>`
+    : reached ? "Reachable from outside: other nodes reached it there"
+    : `${s.map_port ? "The router didn't open it (no UPnP or PCP?)" : "Asking the router is off"}: to be reachable from outside, forward UDP ${s.port} on the router to this machine. Without it the node still works: what can't reach it directly goes through relays`;
+  return `<div class="setting"><div class="t"><div>UDP port ${s.port}</div><div>${note}</div></div>
+      <div class="row" style="flex-wrap:nowrap;gap:6px"><input type="text" inputmode="numeric" id="port" value="${next}" style="width:90px"><button class="btn ghost sm" id="portAuto" title="A free port from 40000 to 59999">Auto</button><button class="btn sm" id="savePort">Save</button></div></div>
+    ${pending ? `<div class="setting"><div class="t"><div>Port ${next} from the next start</div><div>${APP ? "The app's node restarts with it" : "The node's service starts it again at once"}</div></div><button class="btn sm" id="restartNow">Restart now</button></div>` : ""}`;
+}
+
 function pSettings() {
   const s = S.settings || {};
   return `
@@ -590,7 +603,8 @@ function pSettings() {
       ${(s.peers || []).map((p) => `<div class="field"><span class="k">Peer</span><span class="mono">${esc(p)}</span><button class="link" data-peer-remove="${esc(p)}">Remove</button></div>`).join("")}
       <div class="row" style="margin-top:8px"><input type="text" id="peer" placeholder="host:port" style="flex:1"><button class="btn ghost" id="addPeer">Add</button></div></div>
   </div>
-  <div class="card" style="margin-top:16px"><h2>Network</h2><div class="sub">UDP port ${s.port} · settings in <span class="mono">${esc(s.file || "(no file)")}</span></div>
+  <div class="card" style="margin-top:16px"><h2>Network</h2><div class="sub">Settings in <span class="mono">${esc(s.file || "(no file)")}</span></div>
+    ${portSetting(s)}
     <div class="setting"><div class="t"><div>Find nodes on this network</div><div>mDNS on the local network</div></div>${sw("lan", s.lan)}</div>
     <div class="setting"><div class="t"><div>Ask the router for a port</div><div>UPnP, NAT-PMP and PCP</div></div>${sw("map_port", s.map_port)}</div>
     <div class="setting"><div class="t"><div>Direct links with any node</div><div>Shows them this node's address; your devices link directly anyway</div></div>${sw("direct", s.direct)}</div>
@@ -682,6 +696,9 @@ document.addEventListener("click", async (e) => {
   if (d.ruleAdd) return act({ cmd: "allow_add", rule: d.ruleAdd }, "Opened: " + d.ruleAdd);
   if (d.exitVia !== undefined) return act({ cmd: "set", key: "exit_via", value: d.exitVia }, d.exitVia ? "Internet through " + nameOf(d.exitVia) : "Internet directly");
   if (t.id === "checkReleases") return checkReleases(true);
+  if (t.id === "portAuto") { $("#port").value = 40000 + Math.floor(Math.random() * 20000); return; }
+  if (t.id === "savePort") { const p = Number($("#port").value.trim()); if (!(p >= 1 && p <= 65535)) return toast("A port is a number from 1 to 65535", true); return act({ cmd: "set", key: "port", value: p }, `UDP port ${p} saved`); }
+  if (t.id === "restartNow") { if (APP) { APP.restart(); toast("Restarting"); return; } try { await cmd({ cmd: "restart" }); toast("Restarting: back in a few seconds"); } catch (e) { toast("The node didn't answer", true); } return; }
   if (t.id === "checkUpdate") return act({ cmd: "update_check" }, "Looking for a newer release");
   if (t.id === "useKey") {
     const m = $("#key").value.trim().match(/(?:#t=)?([0-9a-f]{16,})\s*$/i);
