@@ -25,7 +25,7 @@ services:
   vork:
     image: alpine:3.20
     container_name: vork
-    network_mode: host        # the node's UDP port (51820) is the machine's
+    network_mode: host        # the node's UDP port (a free one, chosen at the first start) is the machine's
     restart: unless-stopped
     cap_add: [NET_ADMIN]      # the vork0 interface
     devices: ["/dev/net/tun:/dev/net/tun"]
@@ -52,7 +52,7 @@ services:
           chmod 755 "$$B.new" && mv "$$B.new" "$$B"
         fi
         C=/var/lib/vork/vork.toml
-        [ -e "$$C" ] || "$$B" init --config "$$C" --tun vork0
+        [ -e "$$C" ] || "$$B" init --config "$$C" --tun vork0 --port auto
         if [ -n "$$VORK_WEB" ] && ! grep -q '^web *=' "$$C"; then
           sed -i "s|^# web = .*|web = \"$$VORK_WEB\"|" "$$C"
           grep -q '^web *=' "$$C" || echo "web = \"$$VORK_WEB\"" >> "$$C"

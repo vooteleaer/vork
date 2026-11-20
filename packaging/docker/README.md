@@ -13,7 +13,10 @@ docker exec vork /var/lib/vork/bin/vork link --config /var/lib/vork/vork.toml 'v
 ```
 
 with a link from another device (Devices → Show a code). For other nodes to
-reach it from outside, forward UDP 51820 on the router to this machine.
+reach it from outside, the node asks the router for a port by itself (UPnP,
+PCP); it listens on a free port chosen at its first start (in `vork.toml`,
+`listen`), so it doesn't collide with other nodes behind the same router. A
+router without UPnP needs that port forwarded by hand.
 
 ## With storage: `compose.yaml`
 

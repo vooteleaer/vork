@@ -50,6 +50,11 @@ enum Cmd {
         /// Turn the interface on, with this name (`tun = "…"`).
         #[arg(long)]
         tun: Option<String>,
+        /// The UDP port to listen on (default 51820), or `auto`: a free one
+        /// chosen now (40000–59999), for a machine sharing its router with
+        /// other nodes; the router is asked to open it (UPnP, PCP).
+        #[arg(long)]
+        port: Option<String>,
     },
     /// Create an identity (Ed25519 + X25519) and print its address and WireGuard key.
     Keygen {
@@ -274,6 +279,19 @@ fn parse_address(h: Option<String>) -> Result<Option<[u8; 16]>> {
         Some(h) => Ok(Some(hex::decode(&h)?.try_into().map_err(|_| anyhow::anyhow!("address must be 16 bytes"))?)),
         None => Ok(None),
     }
+}
+
+/// A UDP port in 40000–59999 that nothing here listens on (`init --port auto`).
+fn free_port() -> u16 {
+    for _ in 0..50 {
+        let mut b = [0u8; 2];
+        let _ = getrandom::getrandom(&mut b);
+        let port = 40000 + u16::from_le_bytes(b) % 20000;
+        if std::net::UdpSocket::bind(("0.0.0.0", port)).is_ok() {
+            return port;
+        }
+    }
+    51821
 }
 
 fn print_identity(id: &identity::Identity) {
@@ -558,7 +576,7 @@ fn main() -> Result<()> {
 #[tokio::main]
 async fn network_main() -> Result<()> {
     match Cli::parse().cmd {
-        Cmd::Init { config: path, if_missing, tun } => {
+        Cmd::Init { config: path, if_missing, tun, port } => {
             let (default_cfg, default_state) = config::default_paths();
             let path = path.unwrap_or(default_cfg.clone());
             if if_missing && path.exists() {
@@ -577,6 +595,11 @@ async fn network_main() -> Result<()> {
                 let text = std::fs::read_to_string(&path)?;
                 let line = format!("tun = {}", toml::Value::String(name));
                 std::fs::write(&path, text.replacen("# tun = \"vork0\"", &line, 1))?;
+            }
+            if let Some(port) = port {
+                let port: u16 = if port == "auto" { free_port() } else { port.parse().context("--port: a number or auto")? };
+                let text = std::fs::read_to_string(&path)?;
+                std::fs::write(&path, text.replacen("listen = \"0.0.0.0:51820\"", &format!("listen = \"0.0.0.0:{port}\""), 1))?;
             }
             std::fs::create_dir_all(&state)?;
             let id = load_or_create_key(&state.join("node.key"))?;
