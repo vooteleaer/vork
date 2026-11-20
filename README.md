@@ -1,3 +1,5 @@
+<img src="docs/images/icon.svg" alt="" width="64" align="right">
+
 # vØrk
 
 **Your own private network between your devices: no account, no company in the middle.**
@@ -44,6 +46,7 @@ Downloads are on the [releases page](https://github.com/vooteleaer/vork/releases
 | **Android** | `vork-net-<version>.apk` | the app: the node, the dashboard, a VPN for your apps |
 | **Debian 12, Ubuntu 22.04** or newer, elementary OS 7, Linux Mint 21 (x86-64) | `vork_<version>_amd64.deb` | the node as a system service, and the vØrk window |
 | **Any Linux**, older ones too | `vork-linux-x86_64`, `vork-linux-aarch64` | the node alone, one static file: install it as below; its dashboard opens in the browser (`vork web-link`) |
+| **A NAS or server with Docker** (TrueNAS SCALE: Apps → Install via YAML) | [`packaging/docker/node.yaml`](packaging/docker/node.yaml) | the node in one small container, its dashboard on port 30742; the NAS's apps become reachable from your devices at `nas-name.vork:<port>` |
 
 Once it runs, the dashboard's **Updates** page tells you when a newer release is out.
 

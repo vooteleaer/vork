@@ -2,9 +2,15 @@
 
 Each milestone ends in something that runs and is measured (proto first). "Done when" is the acceptance test. Order follows two rules: make vØrk usable on our own machines early, so that using it finds the problems; and check the riskiest unknowns before much is built on top of them.
 
+## Where it stands (2026-11-20)
+
+vØrk replaces Tailscale on the author's own machines (a Linux server, a Windows PC, Android phones, a TrueNAS box), released as [v0.1.0](https://github.com/vooteleaer/vork/releases/tag/v0.1.0), a pre-release: installers for Windows (MSI), Android, Debian/Ubuntu, static Linux binaries and a Docker setup for NAS boxes.
+
+Built since the prototype: the node as a service (M1); the TUN interface on Linux, Windows and Android with IPv6 sessions and IPv4 delivered as IPv4 (M2); `.vork` names, devices linked with consent and one group per owner, the walled-garden firewall (M3); exit nodes (Linux offers, Windows and Android use); reachability learned from others, LAN discovery and router port mapping; a dashboard on every platform (a window on the desktop, the Android app, the browser); self-updating with signed releases; storage on vØrk (M9). Next: hardening (M4), Linux as an exit client, routing for big networks, a project release key.
+
 ```
 M0 prototype (done)
- ├─ M1 config & service ── M9 storage on vØrk (next) ─┬─ M2 IPv6 sessions & TUN ── M3 DNS, whois, identity firewall
+ ├─ M1 config & service (done) ── M9 storage on vØrk (done) ─┬─ M2 IPv6 sessions & TUN (mostly) ── M3 DNS, devices, firewall (mostly)
  │                                                    └─ M10 embedded stack (no admin rights)
  ├─ M4 hardening
  ├─ S1 ESP32 spike (parallel, early) ── M5 ESPHome component
@@ -20,12 +26,12 @@ Milestone numbers are names, not order: M9 comes right after M1, because storage
 
 Links with fresh-handshake liveness, signed announces, path labels swapped per hop, several paths per session with probing and failover, Lite profile, path requests, observed addresses, direct links, router port mapping, ping and bench. Tested on localhost and between a PC and the server across a router (~450–500 Mbit/s, CPU-bound on the server).
 
-## M1 Config, service, persistence — in progress
+## M1 Config, service, persistence — done
 
 - **Goal:** a node that runs 24/7 (a home server as a public backbone) and survives restarts.
 - **Scope:** a config file (TOML: key path, listen address, bootstrap peers, flags); the announce sequence number as a stored counter instead of the clock (open question 3); remembered neighbors (reconnect after restart without bootstrap); a state directory for what the node chooses once and keeps (sequence counter, neighbors, later the IPv4 alias range and aliases); a systemd unit and a Windows service; log levels; `vork status` over a local control socket.
 - **Done when:** a server runs vØrk as a service through a restart and a reboot; a PC reconnects without `--peer` after its first contact.
-- **Status:** implemented and tested locally: `vork init`, `vork.toml`, the state directory (key created on first run, sequence counter, remembered neighbors), reconnecting without bootstrap peers, `vork status` over a Unix socket / named pipe, log levels and a log file, `packaging/vork.service`, `vork service install|uninstall` on Windows. The server runs it as a service since 2026-11-18 (UDP 51820): it reconnects to remembered neighbors after `systemctl restart`, and a PC reconnects to it without `--peer`. Left: a reboot of the server, and a port forward of UDP 51820 to it so nodes outside the LAN reach it.
+- **Status:** implemented and tested locally: `vork init`, `vork.toml`, the state directory (key created on first run, sequence counter, remembered neighbors), reconnecting without bootstrap peers, `vork status` over a Unix socket / named pipe, log levels and a log file, `packaging/vork.service`, `vork service install|uninstall` on Windows. The server runs it as a service since 2026-11-18 (UDP 51820): it reconnects to remembered neighbors after `systemctl restart`, and a PC reconnects to it without `--peer`. Since then the server has run it through reboots behind a port forward, and installers set it up: an MSI on Windows, a .deb, a Docker setup (ADR-0029).
 - **Depends on:** nothing.
 
 ## S1 ESP32 spike (parallel, early)
@@ -35,20 +41,22 @@ Links with fresh-handshake liveness, signed announces, path labels swapped per h
 - **Done when:** a PC pings the ESP32 by its address through the server, end to end encrypted; flash and RAM use measured.
 - **Risks:** the inner layer may not fit the stock libraries; then the outcome is a change to the wire format (for example, a lighter inner layer for Lite nodes) decided before M12.
 
-## M2 IPv6 sessions and TUN
+## M2 IPv6 sessions and TUN — mostly done
 
 - **Goal:** ordinary applications reach peers by identity.
 - **Scope:** sessions carry IPv6 packets between overlay addresses (ADR-0017, ADR-0021), one per identity, all of a machine's identities on its TUN interface, source checked against the session's identity; the ping/bench/candidate functions move to a control service on the overlay; a TUN interface (Linux `/dev/net/tun`; Windows wintun); the node drops packets whose overlay source doesn't match the session's identity; **flow pinning** (a TCP/UDP flow stays on one path, chosen by hash of its 5-tuple; spray stays for bulk native traffic); MTU set so both layers fit in 1500 (inner MTU about 1360, to be measured).
 - **First part done (2026-11-18):** Linux TUN (`tun = "vork0"`), the node's identity as `fd…`/128 and `fd00::/8` routed to the interface, IPv6 as session datagrams with the source checked against the identified far end, answers on the session they came in on. Two nodes in separate network namespaces: ping6 0.2–0.3 ms, HTTP over `fd…`, 20 MB at ~1.1 Gbit/s. Then Windows (wintun: `tun = "vork"` with wintun.dll next to vork.exe, needs the service's administrator rights; built, not run yet) and Android (the app's VpnService makes the interface, `fd00::/8` only, and hands it to the node over `tun.sock`, `tun = "fd"`; handover tested on Linux, the app not on a phone yet). Left: applications' identities on the interface, flow pinning, the MTU measured, turning the Android interface off without restarting the node.
+- **Since (2026-11-19/20):** Windows (wintun) and Android run every day; IPv4 between devices at a derived address the same everywhere, translated at the nodes and delivered as IPv4 at the far end (a server listening on IPv4 only is reached; one refusing IPv4 gets the conversation as IPv6) (ADR-0021); exit nodes carry a device's internet (ADR-0026): Linux offers, Android and Windows use one, the LAN kept local.
 - **Done when:** `ssh` to `fd…` (a home machine) from a laptop behind another NAT works through relays and then over a direct link; an `iperf3` TCP test runs without reordering trouble over two paths.
 - **Depends on:** M1, M9 (sessions).
 
-## M3 Daemon API, whois, DNS, identity firewall
+## M3 Daemon API, whois, DNS, identity firewall — mostly done
 
 - **Goal:** applications know who is on the other end, and names replace addresses.
 - **Scope:** the rest of the **shared node** (ADR-0020; M9 brings the first part): status, peers, `whois(overlay address) → identity`; **DNS** (ADR-0018): `<address>.vork` and petnames from a local file, AAAA and PTR, and **IPv4 aliases** handed out by `A` queries with translation at the node (ADR-0021), wired into the OS only for its own domain (systemd-resolved routing domain, Windows NRPT, macOS `/etc/resolver`); an **identity firewall**: which identities may reach which ports/services.
 - **Progress:** the resolver at `fd00::53` answers `<name>.vork` for this node and the owner's devices and `<address>.vork` for any node, wired in through systemd-resolved, NRPT and the Android VPN (ADR-0025).
 - **Progress (identity firewall):** the walled garden (ADR-0027): the owner's devices reach a node's services, other nodes what `allow` opens; relaying untouched.
+- **Progress (devices):** devices are linked with both sides agreeing, by QR code or link (ADR-0024), and an owner's devices are one group: a device linked to one is linked to all (ADR-0030). Left: whois for applications, several identities per node.
 - **Done when:** `ssh nas.vork` works over IPv6 and an IPv4-only program reaches the same name through its alias; a service sees the caller's identity through whois; a connection from an identity not on the list is refused; two programs on one machine, each with its own identity, are reachable through the same node.
 - **Depends on:** M2.
 
@@ -87,7 +95,7 @@ Links with fresh-handshake liveness, signed announces, path labels swapped per h
 - **Scope:** membership by signed invitations and revocations; island announces encrypted to the members; island policy (direct links allowed, relays preferred among members); later backed by a storage library.
 - **Depends on:** M7.
 
-## M9 Storage on vØrk — next
+## M9 Storage on vØrk — done
 
 - **Goal:** vØrk storage runs on vØrk with no Reticulum code, its format unchanged so existing libraries move over (ADR-0015, ADR-0022).
 - **Scope, in steps that each run:**

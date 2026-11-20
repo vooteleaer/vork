@@ -420,11 +420,11 @@ mod tests {
     #[test]
     fn nets() {
         let lan = Net::parse("192.168.0.0/24").unwrap();
-        assert!(lan.contains("192.168.0.18".parse().unwrap()));
+        assert!(lan.contains("192.168.0.20".parse().unwrap()));
         assert!(!lan.contains("192.168.1.18".parse().unwrap()));
         assert!(lan.contains("::ffff:192.168.0.7".parse().unwrap()));
         let tail = Net::parse("100.64.0.0/10").unwrap();
-        assert!(tail.contains("100.75.58.112".parse().unwrap()));
+        assert!(tail.contains("100.101.102.103".parse().unwrap()));
         assert!(!tail.contains("100.128.0.1".parse().unwrap()));
         assert!(Net::parse("::1").unwrap().contains("::1".parse().unwrap()));
         assert!(Net::parse("0.0.0.0/0").unwrap().contains("8.8.8.8".parse().unwrap()));

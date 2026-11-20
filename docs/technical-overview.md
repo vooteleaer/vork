@@ -45,7 +45,7 @@
 
 ## Try it
 
-Prebuilt static binaries are in `dist/` (Linux x86_64, Linux aarch64 for a Raspberry Pi, Windows x86_64), or `cargo build --release`.
+Installers and static binaries (Linux x86_64 and aarch64, Windows x86_64) are on the [releases page](https://github.com/vooteleaer/vork/releases); the README says which to take. Or `cargo build --release`.
 
 ```sh
 vork init                         # writes vork.toml, creates the identity, prints address and wg key
@@ -58,8 +58,9 @@ vork status                       # asks the running node (neighbors, destinatio
 
 As a service:
 
-- **Linux:** `packaging/vork.service` (instructions inside): `vork init` as root, install the unit, `systemctl enable --now vork`.
-- **Windows** (as administrator): `vork init`, then `vork service install` (starts at boot; logs to `vork.log` in the state directory), `vork service uninstall` to remove it.
+- **Linux:** the `.deb`, or `packaging/vork.service` (instructions inside): `vork init` as root, install the unit, `systemctl enable --now vork`.
+- **Windows:** the MSI (`packaging/windows`) installs the service, wintun.dll and the `vork-net` window. By hand, as administrator: `vork init`, then `vork service install` (starts at boot; logs to `vork.log` in the state directory), `vork service uninstall` to remove it.
+- **Docker, a NAS (TrueNAS SCALE):** `packaging/docker/node.yaml`, the node alone in one small container.
 
 Testing tools: `--ping <address>` once a second; `--bench <address> --bench-rate <Mbit/s>` sends paced traffic (1200-byte packets) and the receiver logs what arrives and the loss each second. There is no congestion control in the bench: above the ceiling it just loses packets.
 
