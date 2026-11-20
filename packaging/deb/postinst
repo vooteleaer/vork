@@ -4,7 +4,9 @@ if [ "$1" = configure ]; then
     # A new node: its configuration and identity (an existing one is kept),
     # with the interface on, so programs reach vØrk addresses and .vork names.
     if [ ! -e /etc/vork/vork.toml ]; then
-        /usr/bin/vork init >/dev/null
+        # A free UDP port of its own: another node behind the same router (a phone,
+        # a PC) may have 51820; the router is asked to open this one.
+        /usr/bin/vork init --port auto >/dev/null
         sed -i 's/^# tun = "vork0"/tun = "vork0"/' /etc/vork/vork.toml
         # Whoever installed it may manage the node from the vØrk window.
         WHO=${SUDO_USER:-}

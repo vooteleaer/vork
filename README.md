@@ -36,7 +36,7 @@ It does what Tailscale and similar tools do, without their coordination server. 
 
 You need at least two devices. One of them should be reachable from the internet: a home server or always-on PC is ideal. vØrk asks your router to open a port by itself (UPnP / NAT-PMP / PCP), which works on most home routers. After that, every other device only needs to find that one.
 
-If your router doesn't do that, forward the node's UDP port on the router by hand: the dashboard's **Settings → Network** shows the port, says whether the router opened it, and lets you choose the port yourself (**Save**, then **Restart now**). Even with no port open anywhere, your devices still reach each other: what can't connect directly goes through relays.
+Each install picks a free UDP port of its own (from 40000–59999), so several devices behind one router don't get in each other's way. If your router doesn't open it, forward the node's UDP port on the router by hand: the dashboard's **Settings → Network** shows the port, says whether the router opened it, and lets you choose the port yourself (**Save**, then **Restart now**). Even with no port open anywhere, your devices still reach each other: what can't connect directly goes through relays.
 
 ### 1. Install it on each device
 

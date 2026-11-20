@@ -89,7 +89,7 @@
     <SetProperty Id="OldService" Value="&quot;[System64Folder]sc.exe&quot; delete vork" Before="OldService" Sequence="execute" />
     <CustomAction Id="OldService" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec" Execute="deferred" Impersonate="no" Return="ignore" />
     <!-- A new node: its configuration and identity, with the interface on. An existing one is left as it is. -->
-    <SetProperty Id="InitNode" Value="&quot;[INSTALLFOLDER]vork.exe&quot; init --if-missing --tun vork --config &quot;[CommonAppDataFolder]vork\vork.toml&quot;" Before="InitNode" Sequence="execute" />
+    <SetProperty Id="InitNode" Value="&quot;[INSTALLFOLDER]vork.exe&quot; init --if-missing --tun vork --port auto --config &quot;[CommonAppDataFolder]vork\vork.toml&quot;" Before="InitNode" Sequence="execute" />
     <CustomAction Id="InitNode" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec" Execute="deferred" Impersonate="no" Return="check" />
     <InstallExecuteSequence>
       <Custom Action="CloseWindow" Before="InstallValidate" />
