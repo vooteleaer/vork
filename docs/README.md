@@ -2,6 +2,7 @@
 
 | Document | What |
 |---|---|
+| [install](install.md) | installing on each kind of device, linking, updating, troubleshooting |
 | [technical-overview](technical-overview.md) | how the prototype works, what was tested, throughput |
 | [00-vision](00-vision.md) | what vØrk is for, principles, non-goals |
 | [01-architecture](01-architecture.md) | how the parts fit: layers, paths, NAT traversal, node profiles, privacy classes, applications |

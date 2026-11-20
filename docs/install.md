@@ -1,0 +1,124 @@
+# Installing vØrk
+
+This guide takes you from nothing to your devices reaching each other by name. It takes about ten minutes per device. vØrk is an early prototype: keep all your devices on the same version, and don't rely on it for anything important yet.
+
+Downloads are on the [releases page](https://github.com/vooteleaer/vork/releases). Take the newest release, and the file for each device from the table below.
+
+| Device | File | Section |
+|---|---|---|
+| Windows 10/11 | `vork-<version>.msi` | [Windows](#windows) |
+| Android (64-bit) | `vork-net-<version>.apk` | [Android](#android) |
+| Debian 12, Ubuntu 22.04 or newer, elementary OS 7, Linux Mint 21 (PC) | `vork_<version>_amd64.deb` | [Debian, Ubuntu, Raspberry Pi](#debian-ubuntu-raspberry-pi) |
+| Raspberry Pi OS 64-bit (bookworm), Debian or Ubuntu on ARM64 | `vork_<version>_arm64.deb` | [Debian, Ubuntu, Raspberry Pi](#debian-ubuntu-raspberry-pi) |
+| Any other Linux, or a server without a screen | `vork-linux-x86_64`, `vork-linux-aarch64` | [Any Linux](#any-linux-the-node-alone) |
+| A NAS or server with Docker (TrueNAS SCALE) | `packaging/docker/node.yaml` | [Docker and NAS](#docker-and-nas-truenas-scale) |
+| Home Assistant OS or Supervised | the add-on repository | [Home Assistant](#home-assistant) |
+| Haiku | `vork-<version>-1-x86_64.hpkg` | [Haiku](#haiku) |
+
+Each file's SHA-256 is in the release's `SHA256SUMS`: `sha256sum -c SHA256SUMS --ignore-missing` on Linux, `Get-FileHash <file>` on Windows.
+
+## Before you start: one reachable device
+
+Your devices find each other through vØrk nodes. At least one of them is easiest **reachable from the internet**: a home server, a NAS, an always-on PC. Each install picks a free UDP port and asks your router to open it (UPnP, NAT-PMP, PCP), which most home routers do. The dashboard's **Settings → Network** shows the port and whether the router opened it; if it didn't, forward that UDP port on the router to the device by hand, or choose a port there yourself.
+
+Even with no port open anywhere, devices still reach each other: what can't connect directly goes through relays.
+
+## Windows
+
+1. Run `vork-<version>.msi`. Windows may say it protected your PC (the installer isn't code-signed yet): **More info → Run anyway**. Accept the licence; Windows asks for administrator rights.
+2. The node is installed as a service and starts with Windows. The **vØrk** window opens at the end of the install, and its icon stays in the notification area (it starts at login).
+3. Go on to [linking your devices](#link-your-devices).
+
+To update, run a newer MSI over it. To remove it: **Settings → Apps → vØrk → Uninstall**. The node's identity and settings stay in `C:\ProgramData\vork` (delete the folder to forget them).
+
+## Android
+
+1. Open `vork-net-<version>.apk` on the phone (allow installing from your browser or file manager when asked).
+2. Open **vØrk**. The node starts and keeps running in the background.
+3. To let your apps reach your devices (names like `laptop.vork`), turn on the switch on the dashboard: Android asks to allow a VPN connection once.
+4. Go on to [linking your devices](#link-your-devices): the app scans pairing codes with the camera.
+
+To update, install a newer APK over it.
+
+## Debian, Ubuntu, Raspberry Pi
+
+Download the `.deb` for your machine (`amd64` for a PC, `arm64` for a Raspberry Pi with a 64-bit system), then:
+
+```sh
+sudo apt install ./vork_<version>_<arch>.deb
+```
+
+This installs the node as a system service (`vork status` shows it) with its network interface on, and the **vØrk** window in the applications menu, which also starts in the tray at login. The user who installed it may manage the node from the window (`operators` in `/etc/vork/vork.toml`).
+
+On a Raspberry Pi or server without a screen the window isn't needed: the `.deb` still brings its libraries. To do without them, use the [bare node](#any-linux-the-node-alone) instead. To see the dashboard in a browser on another machine, add `web = "0.0.0.0:8742"` to `/etc/vork/vork.toml`, run `sudo systemctl restart vork`, and open the link `vork web-link` prints.
+
+> Packages of 0.2.0 still listen on UDP 51820. If another device behind the same router already uses it, give this one another port: `sudo sed -i 's|^listen = .*|listen = "0.0.0.0:47821"|' /etc/vork/vork.toml && sudo systemctl restart vork`. Later versions pick a free port by themselves.
+
+To update, install a newer `.deb` the same way. To remove it: `sudo apt remove vork` (the identity in `/etc/vork` and `/var/lib/vork` stays).
+
+## Any Linux: the node alone
+
+One static file with no dependencies, for any Linux, old ones too (systemd for the service). As root:
+
+```sh
+install -m 755 vork-linux-x86_64 /usr/local/bin/vork      # or vork-linux-aarch64
+vork init --tun vork0 --port auto     # /etc/vork/vork.toml and this machine's identity
+curl -fsSLo /etc/systemd/system/vork.service https://raw.githubusercontent.com/vooteleaer/vork/main/packaging/vork.service
+systemctl daemon-reload && systemctl enable --now vork
+vork status
+```
+
+`--tun vork0` turns on the network interface, so programs here reach vØrk addresses and `.vork` names; `--port auto` picks a free UDP port. For the dashboard in a browser, add `web = "0.0.0.0:8742"` to `/etc/vork/vork.toml`, restart, and run `vork web-link`.
+
+## Docker and NAS (TrueNAS SCALE)
+
+[`packaging/docker/node.yaml`](../packaging/docker/node.yaml) runs the node in one small container on the host's network, with its interface, so the NAS's apps become reachable from your devices at `nas-name.vork:<port>`.
+
+1. Make a folder (a dataset on TrueNAS) for the node's identity, and put its path in place of `/mnt/tank/apps/vork` in the file.
+2. On TrueNAS SCALE: **Apps → Discover → ⋮ → Install via YAML**, and paste the file. Elsewhere: `docker compose -f node.yaml up -d`.
+3. The app's **Web UI** button opens the dashboard; its private link is in the container's log (`vork web-link`).
+4. Go on to [linking your devices](#link-your-devices), from the dashboard.
+
+## Home Assistant
+
+1. **Settings → Add-ons → Add-on store → ⋮ → Repositories**, add `https://github.com/vooteleaer/vork-home-assistant`.
+2. Install **vØrk** and start it. Turn on **Show in sidebar** if you like.
+3. **Open Web UI** opens the dashboard inside Home Assistant. Go on to [linking your devices](#link-your-devices).
+
+Your devices then reach Home Assistant at `http://homeassistant.vork:8123`. The add-on's **Documentation** tab has the rest.
+
+## Haiku
+
+```sh
+pkgman install ./vork-<version>-1-x86_64.hpkg
+```
+
+The node starts at the next login (or now: `/boot/system/apps/vork/vork-node &` in Terminal). Its dashboard is **vØrk** in the Deskbar's Applications menu. Haiku has no IPv6: from 0.3.0 the node's interface is IPv4 only, so programs there reach your devices at their `198.18.x.x` addresses (shown in the dashboard), not by `.vork` name; 0.2.0's package has no interface.
+
+## Link your devices
+
+Linking makes two devices each other's: they reach each other's services and names, and nothing else can. Your devices are one group: a device linked to any of them is linked to all.
+
+1. On a device that already runs vØrk, open the dashboard: **Devices → Show a code**. It shows a QR code and a link, good for 10 minutes and one device.
+2. On the new device:
+   - **Android:** scan the QR code from the app (**Devices → Scan**).
+   - **A dashboard** (Windows, Linux, Home Assistant, NAS): **Devices**, paste the link under *Or paste another device's link*, **Link**.
+   - **A terminal:** `vork link 'vork-link:…'`.
+3. Both now list each other under **Devices**. Try it: `ping <name>.vork`, or open `http://<name>.vork:<port>` in a browser.
+
+**If linking doesn't get through** (the new device is elsewhere, and the one that made the code can't be reached from outside), give the new device a connection first: **Settings → Connections**, add `host:port` of one of your nodes that is reachable from the internet, or one of the [public nodes to start from](../README.md#public-nodes-to-start-from). Then use the link again.
+
+## Use an exit node
+
+An exit node sends a device's internet traffic out through home, for when you're on someone else's Wi-Fi. The exit is a Linux device of yours (a home server, a Raspberry Pi with the `.deb`): add `exit = true` to its `/etc/vork/vork.toml` and restart it. Then, on a phone or Windows PC: the dashboard's **Exit node** page, **Automatic** (the fastest of your exits). Your local network stays reachable directly; if the exit stops answering, the device goes back to its own connection.
+
+## Updates
+
+The dashboard's **Updates** page shows the newest release and what's new in it, and offers this device's file when it's newer: install it over the old one, as above. Your settings and devices stay.
+
+## When something doesn't work
+
+- **What the node says:** the dashboard's **Log** page; on Linux `journalctl -u vork`; on Windows `C:\ProgramData\vork\state\vork.log`; in Docker the container's log.
+- **Is it running, and with whom:** `vork status` (neighbors, sessions, whether others reached it from outside).
+- **Devices don't reach each other:** check that both list each other under **Devices**, and that at least one of your nodes is reachable from the internet (**Settings → Network**), or add a public node as a connection.
+- **A program can't reach a device by name:** try its `198.18.x.x` address from the dashboard; on Android the VPN switch must be on.
