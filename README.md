@@ -103,13 +103,9 @@ If the new device can't reach the one that made the link (it's elsewhere, behind
 
 #### Public nodes to start from
 
-If none of your own nodes is reachable from the internet yet, you can start from a public one: add it under **Settings → Connections** (or `peers` in `vork.toml`). It only helps your devices find each other and relays for them; it can't read your traffic or reach your devices' services, and nothing joins it unless you add it.
+A new node that knows no one yet starts from the public nodes in [`bootstrap.txt`](bootstrap.txt), so every node is in the same network and your devices find each other even when none of them is reachable from the internet. A public node only helps nodes find each other and relays for them; it can't read your traffic or reach your devices' services. Once your node has neighbors it no longer needs them.
 
-| Node |
-|---|
-| `88.196.217.196:51821` |
-
-Once your devices are linked and reach each other, you can remove it.
+The nodes on the list are offered by their owners ([how to offer one](docs/bootstrap.md)). For a network of your own, turn it off: **Settings → Network → Start from public nodes**, or `bootstrap = false` in `vork.toml`.
 
 > [!TIP]
 > Your devices are one group: link a new device to any one of them and it's linked to all of them. A phone linked to the home server sees the laptop that was linked there before, and the laptop sees the phone. Unlinking a device on any of them unlinks it everywhere.

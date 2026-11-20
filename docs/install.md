@@ -121,7 +121,7 @@ Linking makes two devices each other's: they reach each other's services and nam
    - **A terminal:** `vork link 'vork-link:…'`.
 3. Both now list each other under **Devices**. Try it: `ping <name>.vork`, or open `http://<name>.vork:<port>` in a browser.
 
-**If linking doesn't get through** (the new device is elsewhere, and the one that made the code can't be reached from outside), give the new device a connection first: **Settings → Connections**, add `host:port` of one of your nodes that is reachable from the internet, or one of the [public nodes to start from](../README.md#public-nodes-to-start-from). Then use the link again.
+**If linking doesn't get through** (the new device is elsewhere, and the one that made the code can't be reached from outside): a new node starts from the [public nodes](../README.md#public-nodes-to-start-from) by itself, so wait half a minute and use the link again. With that turned off, give it a connection first: **Settings → Connections**, add `host:port` of one of your nodes that is reachable from the internet.
 
 ## Use an exit node
 

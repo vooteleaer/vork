@@ -26,6 +26,8 @@ pub struct FileConfig {
     pub map_port: Option<bool>,
     /// Find other nodes on the local network (multicast beacons).
     pub lan: Option<bool>,
+    /// Knowing no one, start from the public nodes in bootstrap.txt (ADR-0031).
+    pub bootstrap: Option<bool>,
     /// The TUN interface to create (M2): programs reach other nodes at `fd…` addresses.
     pub tun: Option<String>,
     /// This node's name, announced (default: the machine's name).
@@ -162,6 +164,11 @@ state = "STATE"
 # "host:port@wireguard-key". After the first contact the node remembers its
 # neighbors, so this can stay short.
 peers = []
+
+# Knowing no one yet (no peers up, none remembered), start from the public
+# nodes in the project's bootstrap.txt, so every node is in the same network.
+# false: a network of your own, reached only through your peers.
+bootstrap = true
 
 # Announce this node so others can reach it.
 announce = true

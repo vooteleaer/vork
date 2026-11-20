@@ -406,6 +406,8 @@ pub struct Config {
     pub map_port: bool,
     /// Find other nodes on the local network: mDNS (ADR-0023).
     pub lan: bool,
+    /// Knowing no one, start from the public nodes in bootstrap.txt (ADR-0031).
+    pub bootstrap: bool,
     /// The TUN interface to create (M2).
     pub tun: Option<String>,
     /// This node's name, in its announce.
@@ -566,6 +568,10 @@ pub struct Node {
     device_paths: HashMap<Hash, (Instant, Option<(Instant, serde_json::Value)>)>,
     /// Names asked lately (logged once a minute each).
     dns_seen: HashMap<(String, u16), Instant>,
+    /// Public nodes asked for their keys while this node knew no one (ADR-0031).
+    bootstrap_asked: HashSet<SocketAddr>,
+    /// When the bootstrap list was last asked for (once an hour at most).
+    bootstrap_fetched: Option<Instant>,
     /// IPv4 aliases for nodes (ADR-0021), and the conversations programs
     /// here began over IPv4, whose answers go back translated.
     aliases: crate::alias::Aliases,
@@ -812,6 +818,8 @@ impl Node {
             group_heard: HashMap::new(),
             device_paths: HashMap::new(),
             dns_seen: HashMap::new(),
+            bootstrap_asked: HashSet::new(),
+            bootstrap_fetched: None,
             aliases,
             v4_flows: HashMap::new(),
             v4_in: HashMap::new(),
@@ -1235,6 +1243,7 @@ impl Node {
                         last_seek = Instant::now();
                         sought = true;
                         self.seek_neighbors();
+                        self.bootstrap();
                     }
                     if last_links.elapsed() >= Duration::from_secs(5) {
                         last_links = Instant::now();
@@ -3840,6 +3849,52 @@ impl Node {
     // ---- state and control ------------------------------------------------------
 
     /// Stores the neighbors that are up now, so the next run can dial them.
+    /// Knowing no one (no neighbor up once the configured and remembered ones
+    /// had their chance): the public nodes in bootstrap.txt (ADR-0031). Once a
+    /// neighbor is up, those not answering are let go.
+    fn bootstrap(&mut self) {
+        if self.neighbors.values().any(|n| n.up) {
+            if !self.bootstrap_asked.is_empty() {
+                let asked = std::mem::take(&mut self.bootstrap_asked);
+                self.asking.retain(|a, _| !asked.contains(a));
+            }
+            return;
+        }
+        if !self.cfg.bootstrap || self.started.elapsed() < Duration::from_secs(20) {
+            return;
+        }
+        let state = self.state.dir().map(std::path::Path::to_path_buf);
+        if crate::bootstrap::stale(state.as_deref()) && self.bootstrap_fetched.is_none_or(|t| t.elapsed() >= Duration::from_secs(3600)) {
+            self.bootstrap_fetched = Some(Instant::now());
+            crate::bootstrap::refresh(state.as_deref());
+        }
+        let mine = *self.me.x_pub().as_bytes();
+        let mut dialed = 0;
+        for e in crate::bootstrap::entries(state.as_deref()) {
+            let Ok((addr, key)) = parse_peer_text(&e) else { continue };
+            if addr == self.cfg.listen {
+                continue;
+            }
+            match key {
+                Some(k) if k != mine && !self.neighbor_by_key.contains_key(&k) => {
+                    let id = self.add_neighbor(k, Some(addr), Some(Duration::from_secs(60)));
+                    self.initiate(id);
+                    dialed += 1;
+                }
+                Some(_) => {}
+                None if !self.asking.contains_key(&addr) => {
+                    self.bootstrap_asked.insert(addr);
+                    self.ask_key(addr);
+                    dialed += 1;
+                }
+                None => {}
+            }
+        }
+        if dialed > 0 {
+            log(format!("knowing no one: dialing {dialed} public node(s) to start from (bootstrap.txt; bootstrap = false turns it off)"));
+        }
+    }
+
     fn remember_neighbors(&self) {
         let now = unix_now();
         let up: Vec<Remembered> = self
@@ -4262,6 +4317,7 @@ impl Node {
             "devices": self.cfg.devices.iter().map(hex::encode).collect::<Vec<_>>(),
             "direct": self.cfg.direct,
             "lan": self.cfg.lan,
+            "bootstrap": self.cfg.bootstrap,
             "map_port": self.cfg.map_port,
             "announce": self.cfg.announce,
             "port": self.cfg.listen.port(),
@@ -4333,6 +4389,12 @@ impl Node {
                             log(format!("internet traffic goes out through {}", short(&h)));
                             crate::settings::set_value(&text, "exit_via", &format!("\"{}\"", hex::encode(h)))
                         }
+                    }
+                    // Taken at once: the next look dials the public nodes, or doesn't.
+                    "bootstrap" => {
+                        let on = value.as_bool().ok_or("bootstrap is true or false")?;
+                        self.cfg.bootstrap = on;
+                        crate::settings::set_value(&text, key, &on.to_string())
                     }
                     "lan" | "map_port" | "announce" => {
                         let on = value.as_bool().ok_or(format!("{key} is true or false"))?;

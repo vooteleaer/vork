@@ -1,0 +1,11 @@
+# Public vØrk nodes to start from (ADR-0031).
+#
+# A node that knows no one yet (no peers, nothing remembered, no neighbor up)
+# dials these, so everyone starts in the same network. They are only a first
+# contact: they help nodes find each other and relay for them, and can't read
+# anyone's traffic or reach their devices' services.
+#
+# Every node here is listed by its owner, who chose to offer it (see
+# docs/bootstrap.md). One "host:port" per line, or "host:port@wireguard-key".
+# Nodes fetch this file from GitHub, and each release carries a copy.
+88.196.217.196:51821

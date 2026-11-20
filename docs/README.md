@@ -46,3 +46,4 @@ New decisions copy [adr/0000-template.md](adr/0000-template.md). *Accepted* mean
 | [0028](adr/0028-self-updating.md) | Self-updating | accepted |
 | [0029](adr/0029-releases.md) | Public releases | accepted |
 | [0030](adr/0030-one-owner-one-group.md) | One owner, one group: a device of my device is mine | accepted |
+| [0031](adr/0031-bootstrap-list.md) | One network from the start: a list of public nodes, by their owners' choice | accepted |

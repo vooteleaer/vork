@@ -648,6 +648,7 @@ function pSettings() {
   <div class="card" style="margin-top:16px"><h2>Network</h2><div class="sub">Settings in <span class="mono">${esc(s.file || "(no file)")}</span></div>
     ${portSetting(s)}
     <div class="setting"><div class="t"><div>Find nodes on this network</div><div>mDNS on the local network</div></div>${sw("lan", s.lan)}</div>
+    <div class="setting"><div class="t"><div>Start from public nodes</div><div>Knowing no one yet, dial the public nodes listed in the project's bootstrap.txt, so this node is in the same network as everyone's. Off: a network of your own, reached only through your connections.</div></div>${sw("bootstrap", s.bootstrap !== false)}</div>
     <div class="setting"><div class="t"><div>Ask the router for a port</div><div>UPnP, NAT-PMP and PCP</div></div>${sw("map_port", s.map_port)}</div>
     <div class="setting"><div class="t"><div>Direct links with any node</div><div>Shows them this node's address; your devices link directly anyway</div></div>${sw("direct", s.direct)}</div>
     <div class="setting"><div class="t"><div>Announce this node</div><div>Others can find it by its address</div></div>${sw("announce", s.announce)}</div>

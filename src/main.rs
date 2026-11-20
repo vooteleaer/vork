@@ -15,6 +15,7 @@ mod stream;
 mod tun;
 mod dns;
 mod alias;
+mod bootstrap;
 mod exit;
 mod firewall;
 mod update;
@@ -353,6 +354,7 @@ pub fn settings(a: RunArgs) -> Result<Settings> {
         // Asked of the router by default (any free outside port will do: others learn it, ADR-0023).
         map_port: !a.no_map_port && (a.map_port || file.map_port.unwrap_or(true)),
         lan: !(a.no_lan || file.lan == Some(false)),
+        bootstrap: file.bootstrap != Some(false),
         tun: file.tun.clone().filter(|t| !t.is_empty()),
         config_path,
         dns_upstream: Vec::new(),
