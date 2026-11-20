@@ -1,6 +1,6 @@
 # ADR-0029: Public releases
 
-- **Status:** accepted (the format and the keys; v0.1.0 released 2026-11-20); proposed (how public nodes fetch updates)
+- **Status:** accepted (the format and the keys; v0.1.0 and v0.2.0 released 2026-11-20); proposed (how public nodes fetch updates)
 - **Date:** 2026-11-19
 - **Irreversible:** partly (the project key, once in installed nodes' `update_keys`, is what they trust until they are reinstalled)
 
