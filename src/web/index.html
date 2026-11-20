@@ -219,12 +219,15 @@ async function copy(v) { if (APP) { APP.copy(v); return toast("Copied: " + v); }
 const cp = (v) => v ? `<button class="copy" title="Copy" data-copy="${esc(v)}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button>` : "";
 const sw = (key, on, extra = "") => `<label class="switch"><input type="checkbox" data-set="${key}" ${on ? "checked" : ""} ${extra}><span></span></label>`;
 
+let apiN = 0;
 async function api(path, body) {
   if (APP) return appAsk(path === "/api/cmd" ? body : { cmd: path.slice(5) });
   // Relative: behind Home Assistant's ingress the page lives under a path of its own.
   // The desktop app on Linux and macOS (a vork: page): WebKit gives its requests
-  // no body, so the command goes in the address too.
-  const url = path.slice(1) + (body && location.protocol === "vork:" ? "?c=" + encodeURIComponent(JSON.stringify(body)) : "");
+  // no body, so the command goes in the address too; and it keeps a custom
+  // scheme's answers despite no-store, so each address is a new one.
+  const wk = location.protocol === "vork:";
+  const url = path.slice(1) + (wk ? "?n=" + Date.now() + "-" + ++apiN + (body ? "&c=" + encodeURIComponent(JSON.stringify(body)) : "") : "");
   const r = await fetch(url, body ? { method: "POST", headers: { "X-Vork-Token": token(), "Content-Type": "application/json" }, body: JSON.stringify(body) } : { headers: { "X-Vork-Token": token() } });
   if (r.status === 401) { localStorage.removeItem("vork-token"); nokey = true; throw new Error("key"); }
   return r.json();
