@@ -267,7 +267,13 @@ mod window {
                 });
             })
             .with_navigation_handler(|url| url.starts_with(HOME))
-            .with_new_window_req_handler(|_, _| NewWindowResponse::Deny)
+            // A web link (a release's download or page) opens in the browser.
+            .with_new_window_req_handler(|url, _| {
+                if url.starts_with("https://") {
+                    browser::open_browser(&url);
+                }
+                NewWindowResponse::Deny
+            })
             .with_url(HOME);
         #[cfg(not(target_os = "linux"))]
         let webview = builder.build(&window);
@@ -415,30 +421,37 @@ mod window {
         base.join("vork").join("net-desktop")
     }
 
-    /// The vØrk mark, drawn: a rounded square in the dashboard's gradient with
-    /// a white Ø (a ring and a slash), antialiased.
+    /// The icon (docs/images/icon.svg), drawn and antialiased: a node and its
+    /// three neighbors, white on the dashboard's blue-violet rounded square.
     pub fn icon_rgba(n: u32) -> (Vec<u8>, u32) {
         let s = n as f32 / 64.0;
-        let (c, r_out, r_in, radius) = (32.0 * s, 17.0 * s, 11.5 * s, 14.0 * s);
-        let (a, b, half) = ((19.0 * s, 47.0 * s), (45.0 * s, 17.0 * s), 2.6 * s);
+        let (c, radius) = (32.0 * s, 14.0 * s);
+        let center = (32.0 * s, 36.0 * s);
+        let nodes = [(32.0 * s, 15.0 * s), (13.8 * s, 46.5 * s), (50.2 * s, 46.5 * s)];
+        let ends = [(32.0 * s, 21.3 * s), (19.3 * s, 43.3 * s), (44.7 * s, 43.3 * s)];
+        let (ring, half, hub) = (5.6 * s, 1.6 * s, 9.0 * s);
+        let cover = |d: f32| (0.5 - d).clamp(0.0, 1.0);
+        let segment = |p: (f32, f32), a: (f32, f32), b: (f32, f32)| {
+            let (vx, vy) = (b.0 - a.0, b.1 - a.1);
+            let t = (((p.0 - a.0) * vx + (p.1 - a.1) * vy) / (vx * vx + vy * vy)).clamp(0.0, 1.0);
+            ((p.0 - a.0 - t * vx).powi(2) + (p.1 - a.1 - t * vy).powi(2)).sqrt()
+        };
+        let dist = |p: (f32, f32), q: (f32, f32)| ((p.0 - q.0).powi(2) + (p.1 - q.1).powi(2)).sqrt();
         let mut px = Vec::with_capacity((n * n * 4) as usize);
         for y in 0..n {
             for x in 0..n {
-                let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
+                let p = (x as f32 + 0.5, y as f32 + 0.5);
                 // Rounded square: signed distance to its edge.
-                let (qx, qy) = ((fx - c).abs() - (c - radius), (fy - c).abs() - (c - radius));
+                let (qx, qy) = ((p.0 - c).abs() - (c - radius), (p.1 - c).abs() - (c - radius));
                 let outside = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + qx.max(qy).min(0.0) - radius;
-                let square = (0.5 - outside).clamp(0.0, 1.0);
-                // Ring and slash.
-                let d = ((fx - c).powi(2) + (fy - c).powi(2)).sqrt();
-                let ring = (0.5 - (d - (r_out + r_in) / 2.0).abs() + (r_out - r_in) / 2.0).clamp(0.0, 1.0);
-                let (vx, vy) = (b.0 - a.0, b.1 - a.1);
-                let t = (((fx - a.0) * vx + (fy - a.1) * vy) / (vx * vx + vy * vy)).clamp(0.0, 1.0);
-                let ds = ((fx - a.0 - t * vx).powi(2) + (fy - a.1 - t * vy).powi(2)).sqrt();
-                let slash = (0.5 - (ds - half)).clamp(0.0, 1.0);
-                let white = ring.max(slash);
+                let square = cover(outside);
+                let mut white = cover(dist(p, center) - hub);
+                for (node, end) in nodes.iter().zip(ends.iter()) {
+                    white = white.max(cover((dist(p, *node) - ring).abs() - half));
+                    white = white.max(cover(segment(p, center, *end) - half));
+                }
                 // #4f8dff to #a78bfa along the diagonal.
-                let g = ((fx + fy) / (2.0 * n as f32)).clamp(0.0, 1.0);
+                let g = ((p.0 + p.1) / (2.0 * n as f32)).clamp(0.0, 1.0);
                 let base = [79.0 + (167.0 - 79.0) * g, 141.0 + (139.0 - 141.0) * g, 255.0 + (250.0 - 255.0) * g];
                 for ch in base {
                     px.push((ch + (255.0 - ch) * white).round() as u8);
@@ -538,7 +551,7 @@ mod browser {
         a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
     }
 
-    fn open_browser(url: &str) {
+    pub fn open_browser(url: &str) {
         #[cfg(windows)]
         let r = std::process::Command::new("rundll32").args(["url.dll,FileProtocolHandler", url]).spawn();
         #[cfg(target_os = "macos")]

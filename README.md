@@ -7,7 +7,7 @@ vØrk (say "vurk"; written `vork` wherever the `Ø` won't fit) connects your lap
 It does what Tailscale and similar tools do, without their coordination server. There is no sign-up and no central server that could go down, be shut off, or be told who talks to whom. Your devices find each other through one shared network of vØrk nodes, and everything they send is sealed so that only the receiving device can open it.
 
 > [!WARNING]
-> **vØrk is an early prototype.** It runs every day on the author's own machines, but the wire format still changes between versions, nothing has been audited, and there are no ready-made downloads yet. Try it if you're curious and comfortable with a terminal. Don't rely on it for anything important yet.
+> **vØrk is an early prototype.** It runs every day on the author's own machines, but the wire format still changes between versions and nothing has been audited. Try it if you're curious. Don't rely on it for anything important yet.
 
 <p align="center"><img src="docs/images/network.svg" alt="Your laptop, phone, home server and desktop connect through a mesh of other people's vØrk nodes. A highlighted path runs from the phone to the home server through two relays, sealed end to end." width="860"></p>
 
@@ -34,7 +34,21 @@ It does what Tailscale and similar tools do, without their coordination server. 
 
 You need at least two devices. One of them should be reachable from the internet: a home server or always-on PC is ideal. vØrk asks your router to open a port by itself (UPnP / NAT-PMP / PCP), which works on most home routers. After that, every other device only needs to find that one.
 
-There are no ready-made downloads yet, so you build vØrk from source with [Rust](https://rustup.rs/):
+### 1. Install it on each device
+
+Downloads are on the [releases page](https://github.com/vooteleaer/vork/releases):
+
+| On | Take | What it does |
+|---|---|---|
+| **Windows** 10/11 | `vork-<version>.msi` | installs the node as a service and the vØrk window (its icon waits in the notification area) |
+| **Android** | `vork-net-<version>.apk` | the app: the node, the dashboard, a VPN for your apps |
+| **Debian, Ubuntu** (x86-64) | `vork_<version>_amd64.deb` | the node as a system service, and the vØrk window |
+| **Any Linux** | `vork-linux-x86_64`, `vork-linux-aarch64` | the node alone, one static file: install it as below |
+
+Once it runs, the dashboard's **Updates** page tells you when a newer release is out.
+
+<details>
+<summary>Building from source instead, with <a href="https://rustup.rs/">Rust</a></summary>
 
 ```sh
 git clone https://github.com/vooteleaer/vork
@@ -42,31 +56,22 @@ cd vork
 cargo build --release          # the program is target/release/vork (vork.exe on Windows)
 ```
 
-### 1. Install it on each computer
+The installers are built by `packaging/windows/build-msi.ps1` (WiX 5), `packaging/deb/build-in-docker.sh` and `clients/android/build-apk.ps1`.
+</details>
 
-**Linux** (as root):
-
-```sh
-install -m 755 target/release/vork /usr/local/bin/vork
-vork init                      # creates /etc/vork/vork.toml and this machine's key
-```
-
-Open `/etc/vork/vork.toml` and remove the `#` in front of `tun = "vork0"`, so that ordinary programs can use vØrk addresses and `.vork` names. Then start it as a service:
+**Linux without the package** (the bare binary, as root):
 
 ```sh
-install -m 644 packaging/vork.service /etc/systemd/system/vork.service
+install -m 755 vork-linux-x86_64 /usr/local/bin/vork
+vork init --tun vork0          # creates /etc/vork/vork.toml and this machine's key
+curl -fsSLo /etc/systemd/system/vork.service https://raw.githubusercontent.com/vooteleaer/vork/main/packaging/vork.service
 systemctl daemon-reload && systemctl enable --now vork
 vork status
 ```
 
-**Windows** (in a terminal opened *as administrator*):
+`--tun vork0` turns on the network interface, so that ordinary programs can use vØrk addresses and `.vork` names.
 
-1. Put `vork.exe` in `C:\Program Files\vork\`, together with `wintun.dll` from [wintun.net](https://www.wintun.net/) (the 64-bit one).
-2. Run `vork init`. It creates `C:\ProgramData\vork\vork.toml`.
-3. In that file, set `tun = "vork"`.
-4. Run `vork service install`. vØrk now starts with Windows.
-
-**Android:** the app in [`clients/android`](clients/android) runs vØrk as a VPN. It's built with `clients\android\build-apk.ps1` (needs the Android SDK and NDK). It shows the same dashboard as the desktop app (its pages in a menu at the top), can scan pairing codes and use an exit node.
+**Android:** the app runs vØrk as a VPN. It shows the same dashboard as the desktop (its pages in a menu at the top), can scan pairing codes and use an exit node.
 
 ### 2. Link your devices
 
@@ -153,7 +158,9 @@ A rule for one node always uses its full 32-digit address, since that can't be f
 
 ## Updates
 
-vØrk can update itself with releases you sign with your own key. One of your nodes holds the releases, and the others fetch, check and install them. This is currently meant for people building their own releases; see [ADR-0028](docs/adr/0028-self-updating.md) and the `update_*` settings in `vork.toml`.
+The dashboard's **Updates** page shows the latest release on GitHub, what's new in it, and when it's newer than yours, the file for your device to download and install over the old one. Your settings and devices stay.
+
+For your own builds, vØrk can also update itself with releases you sign with your own key. One of your nodes holds the releases, and the others fetch, check and install them. This is currently meant for people building their own releases; see [ADR-0028](docs/adr/0028-self-updating.md) and the `update_*` settings in `vork.toml`.
 
 ## How it compares
 
@@ -178,7 +185,7 @@ The full analysis is in the [threat model](docs/03-threat-model.md).
 ## Status and known limits
 
 - Prototype: the protocol and file formats will change, and nodes of different versions may stop understanding each other. Keep your devices on the same version.
-- No ready-made downloads or installers yet.
+- Releases are pre-releases: no arm64 .deb, macOS or iOS yet, and updating is by downloading the new release.
 - Windows can't use an exit node yet; the exit itself must be Linux.
 - To get started, you need one device that's reachable from the internet (or two on the same network: vØrk finds neighbors on the local network by itself).
 - Large networks: route announcements are flooded to everyone today. That's fine for many nodes, but not for millions.

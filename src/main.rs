@@ -644,7 +644,7 @@ async fn network_main() -> Result<()> {
             };
             println!("Good for {mins} minutes, for {times}{}.", if approve { ", each one allowed by you (vork requests)" } else { "" });
         }
-        Cmd::Version => println!("vork build {} ({})", update::build(), update::target()),
+        Cmd::Version => println!("vork {} build {} ({})", env!("VORK_VERSION"), update::build(), update::target()),
         Cmd::Update { config } => {
             let r = ask_node(config, serde_json::json!({ "cmd": "update_check" })).await?;
             println!("looking for a newer release than build {} (vork status shows what came of it)", r["build"]);

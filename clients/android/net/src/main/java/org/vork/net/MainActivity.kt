@@ -138,6 +138,15 @@ class MainActivity : ComponentActivity() {
 
         @JavascriptInterface
         fun version(): String = runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull() ?: ""
+
+        /** A web link (a release's download or page) in the phone's browser. */
+        @JavascriptInterface
+        fun open(url: String) {
+            if (!url.startsWith("https://")) return
+            runOnUiThread {
+                runCatching { startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) }
+            }
+        }
     }
 
     /** A message on the page (and the page refreshed). */

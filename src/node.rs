@@ -4296,6 +4296,7 @@ impl Node {
             })),
             "update": json!({
                 "build": crate::update::build(),
+                "version": env!("VORK_VERSION"),
                 "target": crate::update::target(),
                 "from": self.cfg.update_from.map(hex::encode),
                 "serves": self.cfg.update_dir.as_ref().map(|d| d.display().to_string()),

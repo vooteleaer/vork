@@ -1,6 +1,6 @@
 # ADR-0029: Public releases
 
-- **Status:** accepted (the format and the keys); proposed (how public nodes fetch updates)
+- **Status:** accepted (the format and the keys; v0.1.0 released 2026-11-20); proposed (how public nodes fetch updates)
 - **Date:** 2026-11-19
 - **Irreversible:** partly (the project key, once in installed nodes' `update_keys`, is what they trust until they are reinstalled)
 
@@ -22,7 +22,7 @@ One GitHub release per version, every file named so the release works for self-u
 | `vork-linux-x86_64`, `vork-linux-aarch64` | the node, static (musl) |
 | `vork-windows-x86_64.exe` | the node for Windows |
 | `manifest.json`, `manifest.sig` | ADR-0028's signed manifest over the node binaries |
-| `vork-setup-<version>.exe` | Windows installer: the node as a service, `wintun.dll`, the `vork-net` window and tray, a Start menu entry |
+| `vork-<version>.msi` | Windows installer (WiX): the node as a service, `wintun.dll`, the `vork-net` window and tray, a Start menu entry |
 | `vork_<version>_amd64.deb`, `vork_<version>_arm64.deb` | Debian/Ubuntu: the node as a systemd service, and `vork-net` (needs WebKitGTK) |
 | `vork-net-<version>.apk` | Android (arm64) |
 | `SHA256SUMS` | the SHA-256 of every file above |
@@ -43,4 +43,10 @@ ADR-0028 delivers releases over vØrk, from an owner's node to that owner's devi
 - A stranger can download, install and stay up to date without building anything.
 - The project key can make every default install run its code. Its loss is the worst incident this project can have: keep it offline, and plan how to replace it (a release signed with both the old and the new key) before it's needed.
 - The Linux packages own `/usr/bin/vork`; a self-update replaces it in place, so `dpkg --verify` reports it changed until the next package is installed. Android updates come with the APK, not by themselves.
-- To do: the version in the binary (`vork version` shows it beside the build), the project key, a release script that builds every file above and writes `SHA256SUMS`, and the fetch path for public nodes.
+- To do: the project key, a release script that builds every file above and writes `SHA256SUMS`, and the fetch path for public nodes.
+
+## Addendum (2026-11-20): an MSI, and the dashboard asks GitHub
+- **The Windows installer is an MSI** (`packaging/windows/vork.wxs`, built by `build-msi.ps1` with WiX 5, whose licence asks no fee), replacing the home-made `vork-setup.exe`: Windows' own way to install, silently too (`msiexec /i vork-….msi /qn`), with upgrades and removal from Apps & features. Its own version is `MAJOR.MINOR.BUILD`, as an MSI's must be numbers. It takes over a node installed by the old setup or by hand (the service is replaced; `%ProgramData%\vork` is kept, as on removal).
+- **The binary knows its version:** `vork version` and the status show `0.1.0` for a tagged release and `0.1.0-dev.143` between releases.
+- **The Updates page asks GitHub** for the latest release (pre-releases included, until 1.0), shows its notes, and when it is newer than the running version offers this platform's file to download (the MSI, the APK, the .deb, then the bare binary). The page asks, from the viewer's browser or app, when the page is opened, at most hourly: the node itself still doesn't talk to GitHub, and installing stays the user's step. Self-updating (ADR-0028) is shown below it only where it is set up.
+- The first release, v0.1.0, has no `manifest.json`: the project key isn't made yet, and public nodes don't fetch updates by themselves.

@@ -5,3 +5,5 @@ crates/vork-core/test-vectors/*.py text eol=lf
 clients/packaging/** text eol=lf
 clients/android/gradlew text eol=lf
 clients/haiku/** text eol=lf
+*.ico binary
+*.png binary

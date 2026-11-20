@@ -1,0 +1,112 @@
+<!--
+  vØrk the network for Windows as one MSI (ADR-0029): the node as a service,
+  wintun.dll, and the vork-net window with its tray icon. Built by
+  build-msi.ps1 with WiX 5; storage isn't part of it.
+
+  Install:    double-click, or  msiexec /i vork-<version>.msi /qn
+  Uninstall:  Apps & features, or  msiexec /x vork-<version>.msi
+  The node's identity and settings (%ProgramData%\vork) are never removed.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:fire="http://wixtoolset.org/schemas/v4/wxs/firewall"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Package Name="vØrk" Manufacturer="vØrk" Version="$(Version)" Language="1033" Codepage="65001" Scope="perMachine"
+           UpgradeCode="{4F0B2D7E-9C31-4E8A-A6B5-2D7C1E9F3A84}">
+    <SummaryInformation Description="vØrk: your own private network between your devices" />
+    <MajorUpgrade Schedule="afterInstallInitialize" AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer vØrk is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Icon Id="vork.ico" SourceFile="$(sys.SOURCEFILEDIR)vork.ico" />
+    <Property Id="ARPPRODUCTICON" Value="vork.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/vooteleaer/vork" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+    <!-- The window is closed by the install itself (CloseWindow), not by asking. -->
+    <Property Id="MSIRESTARTMANAGERCONTROL" Value="Disable" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="vork">
+        <Component Id="Node" Bitness="always64">
+          <File Id="vork.exe" Source="$(Files)\vork.exe" KeyPath="yes">
+            <fire:FirewallException Id="NodeUdp" Name="vØrk" Description="vØrk: the node's UDP" Protocol="udp" Scope="any" Profile="all" IgnoreFailure="yes" />
+          </File>
+          <ServiceInstall Name="vork" DisplayName="vØrk" Description="Serverless, identity-addressed network over WireGuard"
+                          Type="ownProcess" Start="auto" ErrorControl="normal" Account="LocalSystem"
+                          Arguments="service-run --config &quot;[CommonAppDataFolder]vork\vork.toml&quot;">
+            <!-- A self-update ends the node to be started again (ADR-0028). -->
+            <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart"
+                                RestartServiceDelayInSeconds="5" ResetPeriodInDays="1" />
+          </ServiceInstall>
+          <ServiceControl Id="Node" Name="vork" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+          <!-- A self-update's leftover, and the old installer's (vork-setup.exe). -->
+          <RemoveFile Id="Previous" Name="vork.exe.previous" On="both" />
+          <RemoveFile Id="OldSetup" Name="vork-setup.exe" On="install" />
+          <!-- The programs carry no version resource, and Windows Installer
+               keeps an unversioned file changed since it was made (one an
+               earlier installer or a self-update wrote): they are removed
+               first, so this package's are always the ones in place. -->
+          <RemoveFile Id="OldNode" Name="vork.exe" On="install" />
+          <RemoveFile Id="OldWindow" Name="vork-net.exe" On="install" />
+          <RemoveFile Id="OldWintun" Name="wintun.dll" On="install" />
+          <RemoveRegistryKey Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\vork" Action="removeOnInstall" />
+          <Environment Id="Path" Name="PATH" Value="[INSTALLFOLDER]" Part="last" System="yes" Action="set" Permanent="no" />
+        </Component>
+        <Component Id="Wintun" Bitness="always64">
+          <File Id="wintun.dll" Source="$(Files)\wintun.dll" KeyPath="yes" />
+        </Component>
+        <Component Id="Window" Bitness="always64">
+          <File Id="vork_net.exe" Source="$(Files)\vork-net.exe" KeyPath="yes">
+            <Shortcut Id="StartMenu" Directory="ProgramMenuFolder" Name="vØrk" Description="vØrk: your devices, the network, the firewall"
+                      WorkingDirectory="INSTALLFOLDER" Advertise="no" Icon="vork.ico" />
+          </File>
+          <!-- The window, in the tray, at every user's login. -->
+          <RegistryValue Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="vork" Type="string"
+                         Value="&quot;[INSTALLFOLDER]vork-net.exe&quot; --hidden" />
+        </Component>
+        <Component Id="Licenses" Bitness="always64">
+          <File Id="LICENSE_vork.txt" Source="$(Files)\LICENSE-vork.txt" KeyPath="yes" />
+        </Component>
+        <Component Id="WintunLicense" Bitness="always64">
+          <File Id="LICENSE_wintun.txt" Source="$(Files)\LICENSE-wintun.txt" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="vØrk">
+      <ComponentRef Id="Node" />
+      <ComponentRef Id="Wintun" />
+      <ComponentRef Id="Window" />
+      <ComponentRef Id="Licenses" />
+      <ComponentRef Id="WintunLicense" />
+    </Feature>
+
+    <!-- The window is closed before its files are replaced or removed. -->
+    <!-- Before the files-in-use check, as the user whose window it is. -->
+    <SetProperty Id="WixQuietExecCmdLine" Value="&quot;[System64Folder]taskkill.exe&quot; /F /IM vork-net.exe" Before="CloseWindow" Sequence="execute" />
+    <CustomAction Id="CloseWindow" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec" Execute="immediate" Return="ignore" />
+    <!-- A node set up by hand or by the old installer: its service is replaced by this one's. -->
+    <SetProperty Id="OldService" Value="&quot;[System64Folder]sc.exe&quot; delete vork" Before="OldService" Sequence="execute" />
+    <CustomAction Id="OldService" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec" Execute="deferred" Impersonate="no" Return="ignore" />
+    <!-- A new node: its configuration and identity, with the interface on. An existing one is left as it is. -->
+    <SetProperty Id="InitNode" Value="&quot;[INSTALLFOLDER]vork.exe&quot; init --if-missing --tun vork --config &quot;[CommonAppDataFolder]vork\vork.toml&quot;" Before="InitNode" Sequence="execute" />
+    <CustomAction Id="InitNode" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec" Execute="deferred" Impersonate="no" Return="check" />
+    <InstallExecuteSequence>
+      <Custom Action="CloseWindow" Before="InstallValidate" />
+      <Custom Action="OldService" After="StopServices" Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED" />
+      <Custom Action="InitNode" After="InstallFiles" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+    </InstallExecuteSequence>
+
+    <!-- One page (the licence), and the window opened at the end. -->
+    <UI>
+      <ui:WixUI Id="WixUI_Minimal" />
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="OpenWindow"
+               Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
+    </UI>
+    <WixVariable Id="WixUILicenseRtf" Value="$(License)" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Open vØrk" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <Property Id="WixShellExecTarget" Value="[#vork_net.exe]" />
+    <CustomAction Id="OpenWindow" BinaryRef="Wix4UtilCA_X64" DllEntry="WixShellExec" Impersonate="yes" />
+  </Package>
+</Wix>
