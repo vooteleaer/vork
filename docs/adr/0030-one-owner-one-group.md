@@ -21,3 +21,7 @@ ADR-0024 links two devices with both sides agreeing and left open whether linkin
 - Clock skew decides only races between a link and an unlink of the same device a few minutes apart.
 - Unlink tombstones are kept; a group has at most a few hundred entries (512 taken from a message).
 - Nodes from before this decision ignore `/vork/devices`; they are linked to the group's new devices only once they run a build that has it.
+
+## Addendum: the map of the owner's network
+
+The dashboard's map shows only the owner's devices and how they reach each other. Every 30 s a node asks each device, in a session where it identified, how that device reaches the others (`/vork/paths`): directly, or through which neighbor and in how many hops. A device answers only the owner's devices. The map draws a relay as a small grey point and, when a path has more hops than the relay, the nodes between that aren't known as one "?" point. A device that doesn't answer yet (an older build) is drawn as this node sees it.

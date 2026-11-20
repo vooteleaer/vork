@@ -138,7 +138,7 @@ vork web-link
 
 It prints a private link to open in your browser. The dashboard uses its own certificate, so the browser asks once; `vork web-link` shows the fingerprint to compare it with. Where to get the link on each kind of device, and how to make a new key: [the dashboard's key](docs/install.md#the-dashboard-in-a-browser-its-key).
 
-<p align="center"><img src="docs/images/dashboard.png" alt="The vØrk dashboard: throughput, devices online, neighbors and relayed traffic; a traffic graph for the last hour; and a map of the node's connections." width="860"></p>
+<p align="center"><img src="docs/images/dashboard.png" alt="The vØrk dashboard: throughput, devices online, neighbors and relayed traffic; and a map of your devices and how they reach each other: directly, through a relay, or through nodes not known here." width="860"></p>
 
 It shows traffic, connections and the log, and lets you pair devices, open firewall ports, choose an exit node and check for updates:
 

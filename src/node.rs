@@ -73,6 +73,9 @@ const LINK_CODE_TTL: Duration = Duration::from_secs(600);
 const GROUP_PATH: &str = "/vork/devices";
 /// A device that heard the group is told it again this often anyway.
 const GROUP_AGAIN: Duration = Duration::from_secs(1800);
+/// How a device reaches the owner's other devices, asked by the dashboard's map.
+const PATHS_PATH: &str = "/vork/paths";
+const PATHS_AGAIN: Duration = Duration::from_secs(30);
 
 /// Counters for the dashboard: totals since start (Cell: counted where the node
 /// only reads itself, as in send_raw), and a sample every 5 s for an hour.
@@ -559,6 +562,8 @@ pub struct Node {
     group_sent: HashMap<String, (Instant, u64)>,
     /// The group a device took: when, and which revision.
     group_heard: HashMap<String, (Instant, u64)>,
+    /// How each device reaches the others, as it last told us: when asked, when answered, the answer.
+    device_paths: HashMap<Hash, (Instant, Option<(Instant, serde_json::Value)>)>,
     /// Names asked lately (logged once a minute each).
     dns_seen: HashMap<(String, u16), Instant>,
     /// IPv4 aliases for nodes (ADR-0021), and the conversations programs
@@ -805,6 +810,7 @@ impl Node {
             exit_answers: None,
             group_sent: HashMap::new(),
             group_heard: HashMap::new(),
+            device_paths: HashMap::new(),
             dns_seen: HashMap::new(),
             aliases,
             v4_flows: HashMap::new(),
@@ -1234,6 +1240,7 @@ impl Node {
                         last_links = Instant::now();
                         self.send_links();
                         self.send_group();
+                        self.ask_paths();
                         self.update_tick();
                         // A session to the exit node kept open, so whether it works is known before traffic needs it.
                         // (One this node opened: its paths are probed, so their state is known.)
@@ -3241,6 +3248,14 @@ impl Node {
                     }
                     return;
                 }
+                if path == PATHS_PATH && for_client.is_none() {
+                    if let (Some(dest), true) = (s.peer_hash, status == STATUS_OK) {
+                        if let (Some(e), Ok(v)) = (self.device_paths.get_mut(&dest), serde_json::from_slice(&m[6..])) {
+                            e.1 = Some((Instant::now(), v));
+                        }
+                    }
+                    return;
+                }
                 // A link message arrived: off the outbox.
                 if path == LINK_PATH && for_client.is_none() {
                     if let Some(dest) = s.peer_hash {
@@ -3415,6 +3430,14 @@ impl Node {
             "/vork/echo" => (STATUS_OK, body.to_vec()),
             "/vork/link" => self.on_link_message(_sid, body),
             GROUP_PATH => self.on_group_message(_sid, body),
+            // How this node reaches the owner's devices, for the owner's devices only.
+            PATHS_PATH => {
+                if self.sessions.get(&_sid).and_then(|s| s.peer_identity).is_some_and(|w| self.is_device(&w)) {
+                    (STATUS_OK, self.paths_json().to_string().into_bytes())
+                } else {
+                    (STATUS_REFUSED, b"for the owner's devices".to_vec())
+                }
+            }
             // Releases, for the owner's devices only (ADR-0028).
             crate::update::PATH => {
                 let device = self.sessions.get(&_sid).and_then(|s| s.peer_identity).is_some_and(|w| self.is_device(&w));
@@ -4140,6 +4163,65 @@ impl Node {
         }
     }
 
+    /// Asks each of the owner's devices now and then how it reaches the others,
+    /// so the map can draw the owner's whole network, relays included.
+    fn ask_paths(&mut self) {
+        self.device_paths.retain(|d, _| self.cfg.devices.contains(d));
+        for d in self.cfg.devices.clone() {
+            if d == self.my_hash || self.device_paths.get(&d).is_some_and(|e| e.0.elapsed() < PATHS_AGAIN) {
+                continue;
+            }
+            let Some(&sid) = self.session_by_dest.get(&d) else { continue };
+            if self.link_identified.insert(sid) {
+                let me = self.me_arc.clone();
+                self.identify(sid, &me);
+            }
+            self.request(sid, PATHS_PATH, b"{}", None);
+            let old = self.device_paths.remove(&d).and_then(|e| e.1);
+            self.device_paths.insert(d, (Instant::now(), old));
+        }
+    }
+
+    /// How this node reaches each of the owner's devices it can: directly, or
+    /// through which neighbor (the path in use), with the names of those relays.
+    fn paths_json(&self) -> serde_json::Value {
+        let name = |h: &Hash| self.routes.get(h).and_then(|by| by.values().min_by_key(|r| r.hops)).and_then(|r| announced_name(&r.ann.app_data));
+        let mut paths = Vec::new();
+        let mut names = serde_json::Map::new();
+        for d in &self.cfg.devices {
+            if *d == self.my_hash {
+                continue;
+            }
+            let neighbor = self.neighbors.values().any(|n| n.up && n.hash == Some(*d));
+            let way = if neighbor {
+                Some((None, None, 1))
+            } else {
+                self.session_by_dest.get(d).or_else(|| self.ip_peer.get(d)).and_then(|sid| {
+                    let s = self.sessions.get(sid)?;
+                    s.paths
+                        .iter()
+                        .filter(|k| self.is_up(k.0))
+                        .filter_map(|k| Some((k, self.ends.get(k)?)))
+                        .min_by_key(|(k, e)| (!self.is_direct(*sid, **k), !e.acked, e.srtt.unwrap_or(Duration::MAX)))
+                        .map(|(k, e)| {
+                            let via = (!self.is_direct(*sid, *k)).then(|| self.neighbors.get(&k.0).and_then(|n| n.hash)).flatten();
+                            // Hops from here: 2 when the relay is the device's neighbor, more through nodes not known here.
+                            let hops = self.routes.get(d).and_then(|by| by.get(&k.0)).map_or(2, |r| r.hops);
+                            (via, e.srtt, hops)
+                        })
+                })
+            };
+            let Some((via, rtt, hops)) = way else { continue };
+            if let Some(v) = via {
+                if let Some(n) = name(&v) {
+                    names.insert(hex::encode(v), n.into());
+                }
+            }
+            paths.push(json!({ "to": hex::encode(d), "via": via.map(hex::encode), "rtt_ms": rtt.map(|t| t.as_millis() as u64), "hops": hops }));
+        }
+        json!({ "paths": paths, "names": names })
+    }
+
     /// The owner's group, from one of the owner's devices: a device it linked
     /// is linked here too, one it unlinked is unlinked here.
     fn on_group_message(&mut self, sid: u32, body: &[u8]) -> (u8, Vec<u8>) {
@@ -4468,6 +4550,11 @@ impl Node {
             },
             // Every node known by its announce, as Tailscale lists a tailnet's machines.
             "nodes": self.known_nodes(),
+            // The owner's network for the map: how this node and each device reach the others.
+            "map": {
+                "me": self.paths_json(),
+                "devices": self.device_paths.iter().filter_map(|(d, e)| e.1.as_ref().filter(|(t, _)| t.elapsed() < PATHS_AGAIN * 4).map(|(_, v)| (hex::encode(d), v.clone()))).collect::<serde_json::Map<_, _>>(),
+            },
             // The interface for ordinary programs (M2), if there is one: this node's address on it.
             "interface": self.tun.as_ref().map(|t| json!({ "name": t.name, "address": crate::tun::overlay(&self.my_hash).to_string() })),
             "ipv4": self.aliases.me.to_string(),
