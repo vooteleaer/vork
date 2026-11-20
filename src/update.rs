@@ -288,10 +288,17 @@ pub fn install(state: &Path, keys: &[[u8; 32]], exe: &Path) -> Result<Option<u32
     Ok(Some(manifest.build))
 }
 
-/// The build last put in place, if this binary isn't it (it didn't take: the
+/// The build last put in place, if this binary is older (it didn't take: the
 /// release's file isn't what its number says, or the old binary was started).
+/// A newer binary was installed some other way (an installer, by hand): the
+/// mark is forgotten, and self-updating goes on.
 pub fn failed_install(state: &Path) -> Option<u32> {
-    let b: u32 = std::fs::read_to_string(staging(state).join("installed")).ok()?.trim().parse().ok()?;
+    let mark = staging(state).join("installed");
+    let b: u32 = std::fs::read_to_string(&mark).ok()?.trim().parse().ok()?;
+    if b < build() {
+        let _ = std::fs::remove_file(&mark);
+        return None;
+    }
     (b != build()).then_some(b)
 }
 
