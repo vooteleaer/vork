@@ -112,6 +112,36 @@ Linking makes two devices each other's: they reach each other's services and nam
 
 An exit node sends a device's internet traffic out through home, for when you're on someone else's Wi-Fi. The exit is a Linux device of yours (a home server, a Raspberry Pi with the `.deb`): add `exit = true` to its `/etc/vork/vork.toml` and restart it. Then, on a phone or Windows PC: the dashboard's **Exit node** page, **Automatic** (the fastest of your exits). Your local network stays reachable directly; if the exit stops answering, the device goes back to its own connection.
 
+## The dashboard in a browser: its key
+
+Where the dashboard is a window of its own (the vØrk window on Windows and Linux, the Android app) or inside Home Assistant (**Open Web UI**), there's nothing to do: it talks to the node directly. On a machine without a screen (a server, a Raspberry Pi, a NAS) the node serves the dashboard to a browser instead, and every request to it carries a **key**, so being on the same network isn't enough to change the node.
+
+1. **Turn it on** (the Docker, TrueNAS, Home Assistant and Haiku setups already have): add `web = "0.0.0.0:8742"` to the node's `vork.toml` and restart the node. `0.0.0.0` lets any network reach the page (still only with the key); `127.0.0.1:8742` keeps it to that machine.
+2. **Get the link**, which carries the key after `#t=`:
+
+   | Where | How |
+   |---|---|
+   | Linux (`.deb` or bare node) | `sudo vork web-link` |
+   | Windows | `vork web-link` in a terminal opened as administrator |
+   | Docker, TrueNAS | `docker exec <container> /var/lib/vork/bin/vork web-link --config /var/lib/vork/vork.toml`, or the container's log (the node prints it at start) |
+   | Home Assistant | the add-on's **Log** tab (for a browser outside Home Assistant) |
+   | Haiku | **vØrk** in the Deskbar's Applications menu opens it |
+
+   It prints something like `https://my-server:8742/#t=3f9c…` and the certificate's SHA-256.
+3. **Open the link once.** The browser keeps the key for that address and takes it out of the address bar; from then on `https://my-server:8742/` is enough. The same dashboard at another address (its LAN IP, its `.vork` name, another browser) asks for the key again: paste the link, or just the key, into the page that asks.
+4. **The certificate:** the node makes its own, so the browser warns once. Compare the SHA-256 `vork web-link` printed with the one the browser shows (the padlock or the warning page's details), then accept. With a domain of your own you can give it a real one instead: `web_cert` and `web_key` in `vork.toml` (Let's Encrypt's `fullchain.pem` and `privkey.pem`); restart the node when they're renewed.
+
+**Keep the link private:** anyone who has it and can reach the page can change the node. If it got out, make a new key: stop the node, delete its `web.token`, start it again, and open the new link `vork web-link` prints. The old link stops working.
+
+| Where | `web.token` |
+|---|---|
+| Linux | `/var/lib/vork/web.token` |
+| Windows | `C:\ProgramData\vork\state\web.token` |
+| Docker, TrueNAS | `state/web.token` in the node's folder |
+| Home Assistant | `/data/state/web.token` in the add-on (or reinstall the add-on) |
+
+To make a browser forget the key, clear the page's site data.
+
 ## Updates
 
 The dashboard's **Updates** page shows the newest release and what's new in it, and offers this device's file when it's newer: install it over the old one, as above. Your settings and devices stay.
