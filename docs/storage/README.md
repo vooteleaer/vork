@@ -2,6 +2,9 @@
 
 > *Your files, photos and contacts on your own devices, encrypted, kept in sync and backed up by them, with no company in the middle.*
 
+> [!IMPORTANT]
+> **Not released yet.** vØrk's [releases](https://github.com/vooteleaer/vork/releases) hold the network only; vØrk storage and its apps aren't in them, and the files these documents name (`vork-setup-*.exe`, `vork-android-*.apk`, the storage `.deb`, the Flatpaks, the Haiku package) aren't published. For now storage is built from source (`crates/`), for testing.
+
 > [!WARNING]
 > **Status: a working prototype, not for data you can't afford to lose yet.** The storage formats may still change, and the encryption is waiting for an independent review. Keep another copy of anything important.
 

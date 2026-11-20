@@ -216,7 +216,7 @@ What's next is in the [roadmap](docs/04-roadmap.md).
 - [Technical overview](docs/technical-overview.md): the protocol layers, paths, test results and throughput measurements.
 - [Documentation](docs/README.md): vision, architecture, wire format, threat model, roadmap, open questions, and the design decisions (ADRs).
 - [Local API](docs/06-local-api.md): how applications talk to the node on their machine.
-- The repository also contains an experimental encrypted storage application built on vØrk (`crates/`, [docs/storage](docs/storage/README.md)).
+- The repository also contains an experimental encrypted storage application built on vØrk (`crates/`, [docs/storage](docs/storage/README.md)). It isn't in the releases yet: build it from source to try it.
 
 ## License
 

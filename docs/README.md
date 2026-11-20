@@ -10,7 +10,7 @@
 | [04-roadmap](04-roadmap.md) | milestones with scope, approach and acceptance tests |
 | [05-open-questions](05-open-questions.md) | decisions still to make |
 | [06-local-api](06-local-api.md) | how applications use the machine's node: frames, endpoint |
-| [storage/](storage/README.md) | vØrk storage (experimental): its own documents and ADRs |
+| [storage/](storage/README.md) | vØrk storage (experimental, not released yet): its own documents and ADRs |
 
 ## Decisions (ADRs)
 

@@ -4,11 +4,14 @@ Everything the apps do goes through `vorkd`'s local API ([native API](07-api.md)
 
 ## Installing
 
+> [!IMPORTANT]
+> **Not released yet:** vØrk's releases hold the network only. The storage packages below aren't published (and `packaging/deb/build-deb.sh` and the Windows MSI now build the network alone); build storage from source, below.
+
 vØrk storage runs on Linux, Windows, Android and Haiku. The daemon, `vorkd`, attaches to the machine's vØrk node through its local API (`/var/lib/vork/api.sock` for the system node, else `~/.local/state/vork/api.sock`; `VORK_API` names another), and reconnects by itself when the node restarts. Every package below brings the node.
 
 **Debian, Ubuntu, Raspberry Pi OS (amd64, arm64):** install a `vork_*.deb` (built by `packaging/deb/build-deb.sh`) with `sudo apt install ./vork_*.deb`. It runs the vØrk node as a system service (`vork status`) and starts `vorkd` in every user's session; see `/usr/share/doc/vork/README.Debian`. It needs glibc 2.31 or newer: Debian 11, Ubuntu 20.04 and 22.04, elementary OS 6 and 7, Raspberry Pi OS bullseye and later. The GTK apps (vork-desktop, Photos, Map, Contacts, Calendar) as .deb need GTK 4.12 and libadwaita 1.4 (Debian 13, Ubuntu 24.04); on older systems use their Flatpaks.
 
-**Windows 10 and 11:** run `vork-setup-*.exe` (built by `packaging\windows\build-setup.ps1`). It installs for the current user, no administrator needed: the programs in `%LOCALAPPDATA%\Programs\vork`, `vork` on the PATH, and a utility in the notification area, started at login, which starts the vØrk node and `vorkd` on it. Uninstall from Apps & features; your data stays.
+**Windows 10 and 11:** run `vork-setup-*.exe` (storage's own installer, not published and not in this repository's packaging now). It installs for the current user, no administrator needed: the programs in `%LOCALAPPDATA%\Programs\vork`, `vork` on the PATH, and a utility in the notification area, started at login, which starts the vØrk node and `vorkd` on it. Uninstall from Apps & features; your data stays.
 
 **From source:**
 

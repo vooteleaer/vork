@@ -1,5 +1,8 @@
 # Getting started: two devices and the apps
 
+> [!IMPORTANT]
+> **Not released yet.** This guide is for vØrk storage's test builds. vØrk's [releases](https://github.com/vooteleaer/vork/releases) hold the network only: the storage installers named below aren't published, and the `.deb`, `.msi` and `.apk` there are the network's, without storage. To set up the network, see the [README](../../README.md).
+
 This walks you through trying vØrk storage on two of your own devices, then the apps on top of it. It takes about half an hour. Everything here is a **test release**: use copies of your photos and documents, not the only ones.
 
 You'll need two devices: a computer (Windows or Linux) and a phone (Android), or two computers. Haiku works too.
