@@ -11,8 +11,16 @@
 # - for another release, VORK_RELEASE and VORK_SHA256 (from its SHA256SUMS);
 #   on an ARM machine, vork-linux-aarch64 and its SHA-256.
 # The node's settings are then in that folder's vork.toml (restart after
-# editing). Its dashboard: add web = "0.0.0.0:8742" there, restart, and run
-#   docker exec vork /var/lib/vork/bin/vork web-link --config /var/lib/vork/vork.toml
+# editing). Its dashboard is on VORK_WEB (HTTPS; TrueNAS shows a Web UI
+# button for it); the private link to open it with comes from
+#   docker exec <container> /var/lib/vork/bin/vork web-link --config /var/lib/vork/vork.toml
+# Leave VORK_WEB empty for no dashboard.
+x-portals:
+  - name: Web UI
+    scheme: https
+    host: 0.0.0.0
+    port: 30742
+    path: /
 services:
   vork:
     image: alpine:3.20
@@ -27,6 +35,7 @@ services:
       VORK_RELEASE: v0.1.0
       VORK_FILE: vork-linux-x86_64
       VORK_SHA256: e8cc198a2c0642f956d2aa58e8d4c111dbf6913290d3a9456a4d09e63447c677
+      VORK_WEB: "[::]:30742"    # the dashboard, IPv4 and IPv6 (a high port, as TrueNAS asks of apps)
     volumes:
       - /mnt/tank/apps/vork:/var/lib/vork
     command:
@@ -44,4 +53,8 @@ services:
         fi
         C=/var/lib/vork/vork.toml
         [ -e "$$C" ] || "$$B" init --config "$$C" --tun vork0
+        if [ -n "$$VORK_WEB" ] && ! grep -q '^web *=' "$$C"; then
+          sed -i "s|^# web = .*|web = \"$$VORK_WEB\"|" "$$C"
+          grep -q '^web *=' "$$C" || echo "web = \"$$VORK_WEB\"" >> "$$C"
+        fi
         exec "$$B" run --config "$$C"
