@@ -128,6 +128,8 @@
   .seg button.on { background: var(--panel2); color: var(--text); }
   header.top .mlogo { display: none; width: 30px; height: 30px; border-radius: 8px; background: linear-gradient(135deg, var(--accent), var(--violet)); place-items: center; color: #fff; font-size: 15px; font-weight: 700; flex: none; }
   #pagesel { display: none; font-size: 16px; font-weight: 600; padding: 6px 10px; min-width: 0; max-width: 60vw; }
+  /* Devices: side by side only when the table has room; else pairing first. */
+  @media (max-width: 1400px) { .devgrid { grid-template-columns: minmax(0, 1fr); } .devgrid > .pair { order: -1; } }
   @media (max-width: 1100px) { .g4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .g21, .g3 { grid-template-columns: minmax(0, 1fr); } }
   @media (max-width: 1000px) {
     /* The devices as cards (a phone, also on its side): name and connection, then the addresses, Unlink at the side. */
@@ -430,7 +432,7 @@ function pDevices() {
   const devs = S.settings?.devices || [], k = byAddr(), sess = Object.fromEntries((M?.sessions || []).filter((s) => s.peer).map((s) => [s.peer, s]));
   const pending = S.links?.pending || [];
   return `
-  <div class="grid g21">
+  <div class="grid g21 devgrid">
     <div class="card">
       <div class="card-head"><div><h2>Your devices</h2><div class="sub">They reach this node's services and each other's; names resolve as <span class="mono">name.vork</span></div></div></div>
       ${devs.length ? `<table class="devtab"><thead><tr><th>Device</th><th>Connection</th><th>IPv4</th><th>Hostname</th><th class="num">RTT</th><th class="num">Traffic</th><th></th></tr></thead><tbody>
@@ -439,10 +441,10 @@ function pDevices() {
         <td>${reachOf(n)}</td><td class="mono">${esc((n && n.dns) || dnsName(nm, a))}${cp((n && n.dns) || dnsName(nm, a))}</td>
         <td class="num">${s?.rtt_ms != null ? s.rtt_ms.toFixed(0) + " ms" : "–"}</td><td class="num small">${s ? `↓${bytes(s.rx)} ↑${bytes(s.tx)}` : "–"}</td>
         <td class="num"><button class="btn danger sm" data-unlink="${a}">Unlink</button></td></tr>`; }).join("")}
-      </tbody></table>` : `<div class="empty">No devices yet: pair one on the right.</div>`}
+      </tbody></table>` : `<div class="empty">No devices yet: pair one with a code.</div>`}
       ${pending.length ? `<div class="sub" style="margin-top:14px">Waiting for the other side: ${pending.map((p) => `${esc(nameOf(p.address))} <button class="link" data-unlink="${p.address}">cancel</button>`).join(", ")}</div>` : ""}
     </div>
-    <div class="card">
+    <div class="card pair">
       <h2>Pair a device</h2><div class="sub">Scan the code with the vØrk app on the other device, or open its link there.</div>
       ${code ? `<div class="row" style="justify-content:center"><canvas class="qr" id="qr" width="472" height="472"></canvas></div>
         <div class="field"><span class="k">Link</span><span class="mono small" style="word-break:break-all">${esc(code.uri)}</span>${cp(code.uri)}</div>
