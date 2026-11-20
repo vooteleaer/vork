@@ -97,6 +97,8 @@ vork link 'vork-link:c3c7…'
 
 That's it: the two are now each other's devices. To link without a code, run `vork link <address>`. The other side then sees a request (`vork requests`) and decides (`vork allow` / `vork dismiss`). `vork unlink` undoes a link.
 
+If the new device can't reach the one that made the link (it's elsewhere, behind a router with no open port), give it a connection first: in its dashboard, **Settings → Connections**, add `host:port` of a node of yours that is reachable from the internet (the one with an open port), then use the link again.
+
 > [!TIP]
 > Your devices are one group: link a new device to any one of them and it's linked to all of them. A phone linked to the home server sees the laptop that was linked there before, and the laptop sees the phone. Unlinking a device on any of them unlinks it everywhere.
 
