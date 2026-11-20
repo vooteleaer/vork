@@ -99,6 +99,16 @@ That's it: the two are now each other's devices. To link without a code, run `vo
 
 If the new device can't reach the one that made the link (it's elsewhere, behind a router with no open port), give it a connection first: in its dashboard, **Settings → Connections**, add `host:port` of a node of yours that is reachable from the internet (the one with an open port), then use the link again.
 
+#### Public nodes to start from
+
+If none of your own nodes is reachable from the internet yet, you can start from a public one: add it under **Settings → Connections** (or `peers` in `vork.toml`). It only helps your devices find each other and relays for them; it can't read your traffic or reach your devices' services, and nothing joins it unless you add it.
+
+| Node |
+|---|
+| `88.196.217.196:51821` |
+
+Once your devices are linked and reach each other, you can remove it.
+
 > [!TIP]
 > Your devices are one group: link a new device to any one of them and it's linked to all of them. A phone linked to the home server sees the laptop that was linked there before, and the laptop sees the phone. Unlinking a device on any of them unlinks it everywhere.
 
