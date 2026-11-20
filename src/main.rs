@@ -44,6 +44,12 @@ enum Cmd {
         /// Where to write it (default: /etc/vork/vork.toml as root, ~/.config/vork/vork.toml, or %ProgramData%\vork\vork.toml).
         #[arg(long)]
         config: Option<PathBuf>,
+        /// Do nothing, successfully, when the file is already there (an installer's upgrade).
+        #[arg(long)]
+        if_missing: bool,
+        /// Turn the interface on, with this name (`tun = "…"`).
+        #[arg(long)]
+        tun: Option<String>,
     },
     /// Create an identity (Ed25519 + X25519) and print its address and WireGuard key.
     Keygen {
@@ -552,9 +558,13 @@ fn main() -> Result<()> {
 #[tokio::main]
 async fn network_main() -> Result<()> {
     match Cli::parse().cmd {
-        Cmd::Init { config: path } => {
+        Cmd::Init { config: path, if_missing, tun } => {
             let (default_cfg, default_state) = config::default_paths();
             let path = path.unwrap_or(default_cfg.clone());
+            if if_missing && path.exists() {
+                println!("{} exists; left as it is", path.display());
+                return Ok(());
+            }
             // Next to a custom config file, keep everything together, written
             // relative to the file so the directory can be moved.
             let (state, written_state) = if path == default_cfg {
@@ -563,6 +573,11 @@ async fn network_main() -> Result<()> {
                 (path.parent().unwrap_or(Path::new(".")).join("state"), PathBuf::from("state"))
             };
             config::write_sample(&path, &written_state.join("node.key"), &written_state)?;
+            if let Some(name) = tun {
+                let text = std::fs::read_to_string(&path)?;
+                let line = format!("tun = {}", toml::Value::String(name));
+                std::fs::write(&path, text.replacen("# tun = \"vork0\"", &line, 1))?;
+            }
             std::fs::create_dir_all(&state)?;
             let id = load_or_create_key(&state.join("node.key"))?;
             println!("wrote {}", path.display());
