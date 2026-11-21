@@ -108,7 +108,7 @@ Your devices then reach Home Assistant at `http://homeassistant.vork:8123`. The 
 pkgman install ./vork-<version>-1-x86_64.hpkg
 ```
 
-The node starts at the next login (or now: `/boot/system/apps/vork/vork-node &` in Terminal). Its dashboard is **vØrk** in the Deskbar's Applications menu. Haiku has no IPv6: from 0.3.0 the node's interface is IPv4 only, so programs there reach your devices at their `198.18.x.x` addresses (shown in the dashboard), not by `.vork` name; 0.2.0's package has no interface.
+The node starts at the next login (or now: `/boot/system/apps/vork/vork-node &` in Terminal). Its dashboard is **vØrk** in the Deskbar's Applications menu. Haiku has no IPv6: the node's interface is IPv4 only, so programs there reach your devices at their `198.18.x.x` addresses (shown in the dashboard), not by `.vork` name.
 
 ## Link your devices
 
