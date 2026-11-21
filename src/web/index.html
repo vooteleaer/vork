@@ -120,7 +120,8 @@
   .log { font-family: var(--mono); font-size: 12.5px; line-height: 1.6; max-height: 70vh; overflow: auto; }
   .log div { padding: 1px 0; border-bottom: 1px solid color-mix(in srgb, var(--line) 50%, transparent); white-space: pre-wrap; word-break: break-word; }
   .log .w { color: var(--warn); } .log time { color: var(--faint); margin-right: 10px; }
-  .topo svg { width: 100%; height: auto; display: block; }
+  .topo svg { width: 100%; height: auto; display: block; user-select: none; }
+  .topo g[data-i] { cursor: grab; touch-action: none; }
   .topo text { font: 11.5px Inter, system-ui, sans-serif; fill: var(--text); paint-order: stroke; stroke: var(--panel); stroke-width: 4px; stroke-linejoin: round; }
   .topo .lbl2 { fill: var(--dim); font-size: 10.5px; }
   .seg { display: inline-flex; border: 1px solid var(--line2); border-radius: 8px; overflow: hidden; }
@@ -310,7 +311,8 @@ const C = () => { const c = getComputedStyle(document.documentElement); return {
 // ---- topology: the owner's devices and the links between them ----
 // Every device tells how it reaches the others (directly or through which
 // relay); the map draws those links, with relays as small grey points.
-function topology() {
+function topology() { return '<div id="topo"></div>'; }
+function topoGraph() {
   const c = C(), mine = S.address, devs = S.settings?.devices || [];
   const nodes = {}, edges = {};
   const node = (a, o) => (nodes[a] = Object.assign(nodes[a] || { a }, o));
@@ -334,37 +336,191 @@ function topology() {
       else link(p.via, p.to);
     }
   }
-  const list = Object.values(nodes), E = Object.values(edges);
-  // A small force layout, the same every time: points on a circle, then
-  // linked points pull together and all push apart.
-  // As wide as its card, so names stay readable on a phone and a wide screen.
-  const W = Math.round(Math.max(340, Math.min(1200, ($(".content")?.clientWidth || innerWidth) - 48))), H = W < 600 ? 360 : 500, u = W / 420;
-  list.sort((p, q) => (q.me - p.me) || (p.relay - q.relay) || p.a.localeCompare(q.a));
-  list.forEach((n, i) => { const t = 2 * Math.PI * i / list.length; n.x = Math.cos(t) * 100 * u; n.y = Math.sin(t) * 100 * u; });
-  for (let it = 0; it < 300; it++) {
-    const f = list.map(() => [0, 0]);
-    list.forEach((p, i) => list.forEach((q, j) => { if (i >= j) return; let dx = p.x - q.x, dy = p.y - q.y, d2 = dx * dx + dy * dy + .01, k = 6000 * u * u / d2; f[i][0] += dx * k / Math.sqrt(d2); f[i][1] += dy * k / Math.sqrt(d2); f[j][0] -= dx * k / Math.sqrt(d2); f[j][1] -= dy * k / Math.sqrt(d2); }));
-    E.forEach(([p, q]) => { const i = list.indexOf(nodes[p]), j = list.indexOf(nodes[q]), dx = list[j].x - list[i].x, dy = list[j].y - list[i].y, d = Math.sqrt(dx * dx + dy * dy) || 1, k = (d - (nodes[p].relay || nodes[q].relay ? 70 : 110) * Math.min(u, 1.8)) * .1; f[i][0] += dx / d * k; f[i][1] += dy / d * k; f[j][0] -= dx / d * k; f[j][1] -= dy / d * k; });
-    list.forEach((n, i) => { n.x += Math.max(-8 * u, Math.min(8 * u, f[i][0] - n.x * .01)); n.y += Math.max(-8 * u, Math.min(8 * u, f[i][1] - n.y * .01)); });
-  }
-  // Fitted into the box, with room for the labels.
-  const xs = list.map((n) => n.x), ys = list.map((n) => n.y), x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
-  const sc = Math.min((W - 140) / Math.max(1, x1 - x0), (H - 90) / Math.max(1, y1 - y0), 1.4);
-  list.forEach((n) => { n.x = W / 2 + (n.x - (x0 + x1) / 2) * sc; n.y = H / 2 - 4 + (n.y - (y0 + y1) / 2) * sc; });
-  let s = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet"><defs><linearGradient id="gme" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="${c.a}"/><stop offset="1" stop-color="${c.v}"/></linearGradient></defs>`;
-  E.forEach(([p, q]) => { const r = nodes[p].relay || nodes[q].relay; s += `<line x1="${nodes[p].x}" y1="${nodes[p].y}" x2="${nodes[q].x}" y2="${nodes[q].y}" stroke="${r ? "var(--dim)" : c.a}" stroke-width="${r ? 1.4 : 2}" ${r ? 'stroke-dasharray="5 4"' : ""} opacity=".85"/>`; });
-  list.forEach((n) => {
-    const r = n.me ? 26 : n.unknown ? 11 : n.relay ? 8 : 17, col = n.away ? "var(--line2)" : n.relay ? "var(--dim)" : c.a, ly = n.y + r + 13;
-    s += `<g><title>${n.unknown ? esc(n.name) + " node(s) not known here" : esc(n.name) + (n.relay ? " (relay)" : "")}</title>`;
-    if (n.me) s += `<circle cx="${n.x}" cy="${n.y}" r="${r}" fill="url(#gme)"/><svg x="${n.x - 15}" y="${n.y - 16}" width="30" height="30" viewBox="0 0 64 64"><g fill="none" stroke="#fff" stroke-width="3.6" stroke-linecap="round"><path d="M32 36V21.3M32 36L19.3 43.3M32 36L44.7 43.3"/><circle cx="32" cy="15" r="5.6"/><circle cx="13.8" cy="46.5" r="5.6"/><circle cx="50.2" cy="46.5" r="5.6"/></g><circle cx="32" cy="36" r="9" fill="#fff"/></svg>`;
-    else s += `<circle cx="${n.x}" cy="${n.y}" r="${r}" fill="var(--panel2)" stroke="${col}" stroke-width="2" ${n.away || n.unknown ? 'stroke-dasharray="3 3"' : ""}/>`;
-    if (n.unknown) s += `<text x="${n.x}" y="${n.y + 4.5}" text-anchor="middle" style="font-weight:700;fill:var(--dim)">?</text>`;
-    s += `<text x="${n.x}" y="${ly}" text-anchor="middle" ${n.relay ? 'class="lbl2"' : 'style="font-weight:600"'}>${esc(n.name)}</text>`;
-    if (n.away) s += `<text class="lbl2" x="${n.x}" y="${ly + 13}" text-anchor="middle">away</text>`;
-    s += "</g>";
+  return { nodes, edges };
+}
+
+// The map keeps its points between refreshes and moves them with a small
+// physics simulation: linked points pull together, all push apart. A point or
+// link no longer told about fades and stays 30 s before it goes. Points can be
+// dragged.
+const TOPO = { nodes: new Map(), edges: new Map(), src: null, svg: null, raf: 0, alpha: 0, view: null, W: 0, H: 0, u: 1, drag: null, order: [] };
+const LINGER = 30000;
+const stillMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+function topoUpdate() {
+  const T = TOPO, now = Date.now(), g = topoGraph(), first = !T.nodes.size;
+  let changed = false;
+  const E = Object.entries(g.edges), around = (a) => E.map(([, [p, q]]) => (p === a ? q : q === a ? p : null)).map((b) => b && T.nodes.get(b)).find(Boolean);
+  Object.values(g.nodes).forEach((n, i, all) => {
+    let o = T.nodes.get(n.a);
+    if (!o) {
+      // A new point starts on a circle (the first time) or next to one it's linked to.
+      const nb = first ? null : around(n.a), t = first ? 2 * Math.PI * i / all.length : Math.random() * 2 * Math.PI, r = first ? 100 * T.u : 30 * T.u;
+      o = { x: (nb ? nb.x : 0) + Math.cos(t) * r, y: (nb ? nb.y : 0) + Math.sin(t) * r, vx: 0, vy: 0 };
+      T.nodes.set(n.a, o); changed = true;
+    }
+    Object.assign(o, { me: false, device: false, relay: false, unknown: false, away: false }, n, { seen: now, gone: false });
   });
-  if (list.length < 2) s += `<text x="${W / 2}" y="${H / 2 + 70}" text-anchor="middle" class="lbl2">No linked devices yet</text>`;
-  return s + "</svg>";
+  for (const [a, o] of T.nodes) if (o.seen !== now) {
+    if (o.device || o.me || now - o.seen > LINGER) { T.nodes.delete(a); changed = true; } else o.gone = true;
+  }
+  for (const [k, [p, q]] of E) { if (!T.edges.has(k)) changed = true; T.edges.set(k, { p, q, seen: now, gone: false }); }
+  for (const [k, e] of T.edges) if (e.seen !== now) {
+    if (now - e.seen > LINGER || !T.nodes.has(e.p) || !T.nodes.has(e.q)) { T.edges.delete(k); changed = true; } else e.gone = true;
+  }
+  if (first) topoSettle(); else if (changed) T.alpha = 1;
+}
+// The first layout is worked out at once: from a few starts, the one with the
+// fewest crossing links (a start on a circle can leave links tangled).
+function topoSettle() {
+  const T = TOPO, L = [...T.nodes.values()], E = [...T.edges.values()].map((e) => [T.nodes.get(e.p), T.nodes.get(e.q)]);
+  const cross = () => {
+    let n = 0;
+    const side = (a, b, c) => Math.sign((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x));
+    for (let i = 0; i < E.length; i++) for (let j = i + 1; j < E.length; j++) {
+      const [a, b] = E[i], [c, d] = E[j];
+      if (a === c || a === d || b === c || b === d) continue;
+      if (side(a, b, c) !== side(a, b, d) && side(c, d, a) !== side(c, d, b)) n++;
+    }
+    return n;
+  };
+  let seed = 7, best = null;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  for (let t = 0; t < 8 && best?.n !== 0; t++) {
+    L.forEach((o, i) => { const a = t ? rnd() * 2 * Math.PI : 2 * Math.PI * i / L.length, r = (t ? 40 + rnd() * 80 : 100) * T.u; o.x = Math.cos(a) * r; o.y = Math.sin(a) * r; o.vx = o.vy = 0; });
+    T.alpha = 1;
+    for (let k = 0; k < 400; k++) { topoTick(); T.alpha = Math.max(.34, T.alpha * .995); }
+    const n = cross();
+    if (!best || n < best.n) best = { n, at: L.map((o) => [o.x, o.y]) };
+  }
+  L.forEach((o, i) => { [o.x, o.y] = best.at[i]; o.vx = o.vy = 0; });
+  T.alpha = 0; T.view = null;
+}
+function topoBuild() {
+  const T = TOPO, c = C(), eg = T.svg.querySelector(".e"), ng = T.svg.querySelector(".n");
+  const E = [...T.edges.values()];
+  eg.innerHTML = E.map((e) => {
+    const r = T.nodes.get(e.p).relay || T.nodes.get(e.q).relay;
+    return `<line stroke="${r ? "var(--dim)" : c.a}" stroke-width="${r ? 1.4 : 2}" ${r ? 'stroke-dasharray="5 4"' : ""} opacity="${e.gone ? .3 : .85}"/>`;
+  }).join("");
+  E.forEach((e, i) => (e.el = eg.children[i]));
+  T.order = [...T.nodes.values()];
+  ng.innerHTML = T.order.map((n, i) => {
+    const r = n.me ? 26 : n.unknown ? 11 : n.relay ? 8 : 17, col = n.away ? "var(--line2)" : n.relay ? "var(--dim)" : c.a, ly = r + 13;
+    let s = `<g data-i="${i}" opacity="${n.gone ? .35 : 1}"><title>${n.unknown ? esc(n.name) + " node(s) not known here" : esc(n.name) + (n.relay ? " (relay)" : "")}${n.gone ? " · not seen lately" : ""}</title>`;
+    if (n.me) s += `<circle r="${r}" fill="url(#gme)"/><svg x="-15" y="-16" width="30" height="30" viewBox="0 0 64 64"><g fill="none" stroke="#fff" stroke-width="3.6" stroke-linecap="round"><path d="M32 36V21.3M32 36L19.3 43.3M32 36L44.7 43.3"/><circle cx="32" cy="15" r="5.6"/><circle cx="13.8" cy="46.5" r="5.6"/><circle cx="50.2" cy="46.5" r="5.6"/></g><circle cx="32" cy="36" r="9" fill="#fff"/></svg>`;
+    else s += `<circle r="${r}" fill="var(--panel2)" stroke="${col}" stroke-width="2" ${n.away || n.unknown ? 'stroke-dasharray="3 3"' : ""}/>`;
+    if (n.unknown) s += `<text y="4.5" text-anchor="middle" style="font-weight:700;fill:var(--dim)">?</text>`;
+    s += `<text y="${ly}" text-anchor="middle" ${n.relay ? 'class="lbl2"' : 'style="font-weight:600"'}>${esc(n.name)}</text>`;
+    if (n.away) s += `<text class="lbl2" y="${ly + 13}" text-anchor="middle">away</text>`;
+    return s + "</g>";
+  }).join("");
+  T.order.forEach((n, i) => (n.el = ng.children[i]));
+  T.svg.querySelectorAll("stop").forEach((s, i) => s.setAttribute("stop-color", i ? c.v : c.a));
+  const empty = T.svg.querySelector(".empty");
+  empty.setAttribute("x", T.W / 2); empty.setAttribute("y", T.H / 2 + 70);
+  empty.textContent = T.nodes.size < 2 ? "No linked devices yet" : "";
+}
+// One step: forces become speeds, damped, so points glide to rest.
+function topoTick() {
+  const T = TOPO, L = [...T.nodes.values()], u = T.u, F = L.map(() => [0, 0]), idx = new Map(L.map((o, i) => [o, i]));
+  for (let i = 0; i < L.length; i++) for (let j = i + 1; j < L.length; j++) {
+    let dx = L[i].x - L[j].x, dy = L[i].y - L[j].y;
+    if (!dx && !dy) { dx = Math.random() - .5; dy = Math.random() - .5; }
+    const d2 = dx * dx + dy * dy + .01, k = 6000 * u * u / d2 / Math.sqrt(d2);
+    F[i][0] += dx * k; F[i][1] += dy * k; F[j][0] -= dx * k; F[j][1] -= dy * k;
+  }
+  for (const e of T.edges.values()) {
+    const p = T.nodes.get(e.p), q = T.nodes.get(e.q), i = idx.get(p), j = idx.get(q);
+    const dx = q.x - p.x, dy = q.y - p.y, d = Math.sqrt(dx * dx + dy * dy) || 1;
+    const k = (d - (p.relay || q.relay ? 70 : 110) * Math.min(u, 1.8)) * (e.gone ? .03 : .1);
+    F[i][0] += dx / d * k; F[i][1] += dy / d * k; F[j][0] -= dx / d * k; F[j][1] -= dy / d * k;
+    // A point lying on a link it isn't part of would look like two links: it moves off.
+    L.forEach((o, m) => {
+      if (o === p || o === q) return;
+      const t = ((o.x - p.x) * dx + (o.y - p.y) * dy) / (d * d);
+      if (t <= 0 || t >= 1) return;
+      let ox = o.x - (p.x + dx * t), oy = o.y - (p.y + dy * t), od = Math.sqrt(ox * ox + oy * oy);
+      if (od < .5) { ox = -dy / d; oy = dx / d; od = 1; }
+      const room = 36 * u;
+      if (od < room) { const f = (room - od) * .3; F[m][0] += ox / od * f; F[m][1] += oy / od * f; }
+    });
+  }
+  // Cooling: after a change the forces fade, so the points come to rest.
+  let fast = 0;
+  const lim = 6 * u, heat = .25 * Math.min(1, 3 * T.alpha);
+  L.forEach((o, i) => {
+    if (T.drag?.o === o) { o.vx = o.vy = 0; return; }
+    o.vx = Math.max(-lim, Math.min(lim, (o.vx + (F[i][0] - o.x * .01) * heat) * .72));
+    o.vy = Math.max(-lim, Math.min(lim, (o.vy + (F[i][1] - o.y * .01) * heat) * .72));
+    o.x += o.vx; o.y += o.vy;
+    fast = Math.max(fast, Math.abs(o.vx) + Math.abs(o.vy));
+  });
+  return fast > .02 * u;
+}
+// Points onto the box: the view follows them smoothly, with room for the labels.
+function topoRender(snap) {
+  const T = TOPO, L = [...T.nodes.values()];
+  if (!L.length) return true;
+  const xs = L.map((n) => n.x), ys = L.map((n) => n.y), x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const want = { sc: Math.min((T.W - 140) / Math.max(1, x1 - x0), (T.H - 90) / Math.max(1, y1 - y0), 1.4), cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 };
+  const v = T.view, k = snap || !v || T.drag ? (T.drag && v ? 0 : 1) : .08;
+  T.view = v && k < 1 ? { sc: v.sc + (want.sc - v.sc) * k, cx: v.cx + (want.cx - v.cx) * k, cy: v.cy + (want.cy - v.cy) * k } : want;
+  const w = T.view, X = (o) => (T.W / 2 + (o.x - w.cx) * w.sc).toFixed(1), Y = (o) => (T.H / 2 - 4 + (o.y - w.cy) * w.sc).toFixed(1);
+  // A dragged point may leave the view for a moment; the view catches up when it's let go.
+  for (const o of L) o.el?.setAttribute("transform", `translate(${X(o)},${Y(o)})`);
+  for (const e of T.edges.values()) {
+    const p = T.nodes.get(e.p), q = T.nodes.get(e.q);
+    e.el?.setAttribute("x1", X(p)); e.el?.setAttribute("y1", Y(p)); e.el?.setAttribute("x2", X(q)); e.el?.setAttribute("y2", Y(q));
+  }
+  return Math.abs(want.sc - w.sc) < .002 * want.sc && Math.abs(want.cx - w.cx) * w.sc < .3 && Math.abs(want.cy - w.cy) * w.sc < .3;
+}
+function topoLoop() {
+  const T = TOPO;
+  T.raf = 0;
+  if (!T.svg?.isConnected) return;
+  const moving = topoTick(), settled = topoRender();
+  T.alpha *= .99;
+  if (T.drag || ((moving || !settled) && T.alpha > .01)) T.raf = requestAnimationFrame(topoLoop);
+}
+function topoMount() {
+  const T = TOPO, box = $("#topo");
+  if (!box) return;
+  // As wide as its card, so names stay readable on a phone and a wide screen.
+  const W = Math.round(Math.max(340, Math.min(1200, ($(".content")?.clientWidth || innerWidth) - 48))), H = W < 600 ? 360 : 500;
+  if (!T.svg) {
+    const c = C();
+    box.innerHTML = `<svg preserveAspectRatio="xMidYMid meet"><defs><linearGradient id="gme" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="${c.a}"/><stop offset="1" stop-color="${c.v}"/></linearGradient></defs><g class="e"></g><g class="n"></g><text class="empty lbl2" text-anchor="middle"></text></svg>`;
+    T.svg = box.firstChild;
+    topoDrag(T.svg);
+  } else box.appendChild(T.svg);
+  if (W !== T.W) { T.W = W; T.H = H; T.u = W / 420; T.svg.setAttribute("viewBox", `0 0 ${W} ${H}`); T.view = null; }
+  if (T.src !== S) {
+    T.src = S;
+    topoUpdate();
+    topoBuild();
+    if (stillMotion()) { for (let i = 0; i < 400 && topoTick(); i++); T.alpha = 0; }
+  }
+  topoRender(stillMotion());
+  if (T.alpha > .01 && !T.raf) T.raf = requestAnimationFrame(topoLoop);
+}
+// Dragging a point: it follows the pointer, the others make room.
+function topoDrag(svg) {
+  const T = TOPO, at = (e) => {
+    const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(svg.getScreenCTM().inverse()), w = T.view;
+    return [w.cx + (p.x - T.W / 2) / w.sc, w.cy + (p.y - T.H / 2 + 4) / w.sc];
+  };
+  svg.addEventListener("pointerdown", (e) => {
+    const g = e.target.closest("g[data-i]"), o = g && T.order[+g.dataset.i];
+    if (!o || !T.view) return;
+    T.drag = { o, id: e.pointerId }; svg.setPointerCapture(e.pointerId); e.preventDefault();
+    if (!T.raf) T.raf = requestAnimationFrame(topoLoop);
+  });
+  svg.addEventListener("pointermove", (e) => {
+    if (T.drag?.id !== e.pointerId) return;
+    [T.drag.o.x, T.drag.o.y] = at(e); T.alpha = Math.max(T.alpha, .5);
+  });
+  const up = (e) => { if (T.drag?.id === e.pointerId) { T.drag = null; T.alpha = Math.max(T.alpha, .5); } };
+  svg.addEventListener("pointerup", up); svg.addEventListener("pointercancel", up);
 }
 
 // ---- pages ----
@@ -418,6 +574,7 @@ function addrFields(v4, v6, nm, a) {
 }
 function chartsDashboard() {
   const h = M?.history || [], c = C();
+  topoMount();
   chart("ch-traffic", [{ name: "Received", color: c.a, data: rates(h, "rx"), fill: true }, { name: "Sent", color: c.v, data: rates(h, "tx"), fill: true }], bits, { min: 1000 });
   chart("ch-tun", [{ name: "In", color: c.ok, data: rates(h, "tun_in"), fill: true }, { name: "Out", color: c.w, data: rates(h, "tun_out"), fill: true }], bits, { min: 1000 });
 }
