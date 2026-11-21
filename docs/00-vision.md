@@ -27,7 +27,7 @@ It is meant to be:
 |---|---|---|
 | L3 Applications | native API (identity + service) and overlay IPv6 for existing software | in use: the TUN interface, `.vork` names, IPv4, exit nodes, the local API |
 | L2 Islands | closed groups inside the open network | proposed (an owner's devices are one group today, ADR-0030) |
-| L0 Network | identities, links, announces, paths, relaying, NAT traversal | prototype, in daily use; v0.3.0 released |
+| L0 Network | identities, links, announces, paths, relaying, NAT traversal | prototype, in daily use; v0.3.1 released |
 
 ## Non-goals
 
