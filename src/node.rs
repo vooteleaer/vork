@@ -290,6 +290,15 @@ struct PathEnd {
 struct Session {
     /// Last sent or received on (idle ones close, SESSION_IDLE).
     active: Instant,
+    /// Last received on: a session nothing came in on for SESSION_IDLE is
+    /// dead, even with its stream still trying to send.
+    heard: Instant,
+    /// This end of the session, by a random number of its own: told to the
+    /// far end with acknowledgments and WHO, so it can tell a restart (a new
+    /// number) from a session that only just began (the same one).
+    inc: u32,
+    /// The far end's number, once it told it.
+    peer_inc: Option<u32>,
     /// Bytes of its messages, each way.
     rx_bytes: u64,
     tx_bytes: u64,
@@ -365,6 +374,9 @@ impl Session {
             direct_considered: false,
             direct_key: None,
             active: Instant::now(),
+            heard: Instant::now(),
+            inc: rand_u64() as u32 | 1,
+            peer_inc: None,
             rx_bytes: 0,
             tx_bytes: 0,
         }
@@ -2631,9 +2643,18 @@ impl Node {
         if self.cfg.update_keys.is_empty() || crate::update::target() == "android" {
             return;
         }
-        if let Some((_, t)) = &self.update {
+        if let Some((step, t)) = &self.update {
             if t.elapsed() < Duration::from_secs(60) {
                 return;
+            }
+            // A session whose stream couldn't deliver the request in a minute is
+            // stuck: let go of it (if this end opened it); the next try opens a new one.
+            let sid = match step {
+                UpdateStep::Asked(s, _) | UpdateStep::Getting(s, _, _) => *s,
+            };
+            if self.sessions.get(&sid).is_some_and(|s| s.peer_hash.is_some() && s.looped.is_none() && !s.stream.idle()) {
+                log(format!("session {sid:08x}: its stream delivered nothing in a minute; opening a new one"));
+                self.close_session(sid);
             }
             self.update = None;
             self.update_note("no answer from the release node; trying again in a minute".into());
@@ -2823,18 +2844,22 @@ impl Node {
         }
     }
 
-    /// Closes sessions with nothing sent or received for `idle` and nothing in flight.
+    /// Closes sessions with nothing sent or received for `idle` and nothing in
+    /// flight, and dead ones: nothing received for `idle` while something
+    /// waits to be delivered or answered (the far end restarted and opened a
+    /// new one, or is gone; the stream would resend forever).
     fn close_idle_sessions(&mut self, idle: Duration) {
         let keep = self.cfg.exit_via;
         let gone: Vec<u32> = self
             .sessions
             .iter()
             .filter(|(sid, s)| {
-                s.active.elapsed() >= idle
+                let quiet = s.active.elapsed() >= idle
                     && s.stream.idle()
                     && s.waiting.is_empty()
-                    && s.looped.is_none()
-                    && !(keep.is_some() && self.session_by_dest.get(&keep.unwrap()) == Some(sid))
+                    && !(keep.is_some() && self.session_by_dest.get(&keep.unwrap()) == Some(sid));
+                let dead = s.heard.elapsed() >= idle && (!s.stream.idle() || !s.waiting.is_empty());
+                s.looped.is_none() && (quiet || dead)
             })
             .map(|(sid, _)| *sid)
             .collect();
@@ -2874,7 +2899,9 @@ impl Node {
         self.who_asked.insert(sid, now);
         // With where this end's stream stands: 0 tells the other end this one started afresh.
         let mut body = vec![APP_WHO];
-        body.extend_from_slice(&self.sessions.get(&sid).map_or(0, |s| s.stream.received()).to_be_bytes());
+        let s = self.sessions.get(&sid);
+        body.extend_from_slice(&s.map_or(0, |s| s.stream.received()).to_be_bytes());
+        body.extend_from_slice(&s.map_or(0, |s| s.inc).to_be_bytes());
         self.send_app(sid, &body);
     }
 
@@ -3018,6 +3045,7 @@ impl Node {
     fn on_app(&mut self, sid: u32, key: (u32, u64), body: &[u8]) {
         if let Some(s) = self.sessions.get_mut(&sid) {
             s.active = Instant::now();
+            s.heard = s.active;
             s.rx_bytes += body.len() as u64;
         }
         // The session works: offer a direct link, once, if this peer may have
@@ -3058,8 +3086,23 @@ impl Node {
                 // behind bytes it will never see. Whatever was in flight is sent again
                 // by those who sent it (link messages are, from their outbox).
                 let theirs = body.get(1..5).map(|b| u32::from_be_bytes(b.try_into().unwrap()));
+                let their_inc = body.get(5..9).map(|b| u32::from_be_bytes(b.try_into().unwrap()));
                 if let Some(s) = self.sessions.get_mut(&sid) {
-                    if theirs == Some(0) && s.stream.sent() > 0 {
+                    // Not every WHO at 0 is a restart: a far end that only just took the
+                    // session asks before anything reached it in order too, and starting
+                    // over then would put the two ends' streams out of step for good. Its
+                    // number tells: a new one is a restart, the same one isn't. With none
+                    // known yet (it never acknowledged anything), nothing it had can be
+                    // lost, unless an older version, without numbers, acknowledged.
+                    let restarted = match (s.peer_inc, their_inc) {
+                        (Some(k), Some(i)) => k != i,
+                        (None, Some(_)) => s.stream.acked() > 0,
+                        (_, None) => true,
+                    };
+                    if their_inc.is_some() {
+                        s.peer_inc = their_inc;
+                    }
+                    if theirs == Some(0) && s.stream.sent() > 0 && restarted {
                         s.stream = Stream::default();
                         log(format!("session {sid:08x}: the other end started afresh; so does this end's stream"));
                         // Link messages lost in flight go again now, not at the next round,
@@ -3089,8 +3132,11 @@ impl Node {
                 let seq = u32::from_be_bytes(body[1..5].try_into().unwrap());
                 // This end has nothing yet and the other starts mid-way: it kept a session
                 // this end lost (a restart here). Asked who it is, it starts its stream over.
+                // The segment isn't kept: it's of the stream the other end had, which
+                // starts over, and kept it would take the place of the new one's.
                 if seq > 0 && self.sessions.get(&sid).is_some_and(|s| s.stream.received() == 0) {
                     self.ask_who(sid);
+                    return;
                 }
                 let msgs = {
                     let Some(s) = self.sessions.get_mut(&sid) else { return };
@@ -3115,8 +3161,14 @@ impl Node {
                     .take(n)
                     .map(|c| (u32::from_be_bytes(c[..4].try_into().unwrap()), u32::from_be_bytes(c[4..].try_into().unwrap())))
                     .collect();
+                // After the ranges: the far end's number (older versions send none).
+                let at = 6 + 8 * ranges.len();
+                let inc = (ranges.len() == n).then(|| body.get(at..at + 4)).flatten().map(|b| u32::from_be_bytes(b.try_into().unwrap()));
                 if let Some(s) = self.sessions.get_mut(&sid) {
                     s.stream.on_ack(next, &ranges, Instant::now());
+                    if s.peer_inc.is_none() {
+                        s.peer_inc = inc;
+                    }
                 }
                 self.flush(sid);
             }
@@ -3138,6 +3190,7 @@ impl Node {
     fn flush(&mut self, sid: u32) {
         let Some(s) = self.sessions.get_mut(&sid) else { return };
         let outs = s.stream.poll(Instant::now());
+        let inc = s.inc;
         for o in outs {
             let body = match o {
                 stream::Out::Seg { seq, data } => {
@@ -3155,6 +3208,7 @@ impl Node {
                         b.extend_from_slice(&start.to_be_bytes());
                         b.extend_from_slice(&end.to_be_bytes());
                     }
+                    b.extend_from_slice(&inc.to_be_bytes());
                     b
                 }
             };

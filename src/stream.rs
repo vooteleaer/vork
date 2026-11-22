@@ -119,6 +119,11 @@ impl Stream {
         self.next_seq
     }
 
+    /// Segments the other end acknowledged so far, in order.
+    pub fn acked(&self) -> u32 {
+        self.una
+    }
+
     /// Nothing left to send or to be acknowledged.
     pub fn idle(&self) -> bool {
         self.pending.is_empty() && self.inflight.is_empty() && self.ack_due.is_none()

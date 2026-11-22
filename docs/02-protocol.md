@@ -140,7 +140,8 @@ The session carries IPv4/UDP datagrams to port 4799 framed as in §2, with an ap
 | 4 | bench: `seq[8]` then padding |
 | 5 | IPv6 packet between overlay addresses (M2): the whole packet, as a datagram |
 | 8 | stream segment: `seq[4]` then up to 1180 bytes |
-| 9 | stream acknowledgment: `next[4]` `count[1]` then `count` (≤ 8) ranges `start[4]` `end[4]` |
+| 9 | stream acknowledgment: `next[4]` `count[1]` then `count` (≤ 8) ranges `start[4]` `end[4]`, then `inc[4]` (this end's number, below; older versions send none) |
+| 10 | who are you: `received[4]` (where this end's stream stands) `inc[4]`; the far end identifies again |
 
 Bytes 1–4 are a stand-in; ping, bench and candidates move into a control service later.
 
@@ -151,6 +152,8 @@ Bytes 1–4 are a stand-in; ping, bench and candidates move into a control servi
 Segments 8 and 9 make a reliable, ordered byte stream per session, for messages too big or too important for single packets:
 - The receiver acknowledges everything before `next` and up to 8 ranges `[start, end)` received past it, at once after a gap or a duplicate, else every second segment or after 10 ms. It keeps at most 8192 segments past `next`.
 - The sender keeps a congestion window (start 16 segments, slow start, then +1 per window; halved on loss, at most once per window). A segment is lost when 3 later segments arrived, or when a segment sent later than it was acknowledged. With nothing acknowledged for two round trips it resends its newest segment (tail probe); with nothing for a retransmission timeout (2 × variance + round trip, 200 ms to 10 s, doubling) it resends what is out and starts from 2 segments.
+- **A restart of the far end.** Each end of a session picks a random number `inc` when it takes the session, and sends it with every acknowledgment and WHO. An end that receives a segment past 0 with nothing received yet drops it and asks WHO (once a second at most). The other end starts its stream over (both ways; requests in flight are asked again) only when the WHO says `received` 0 and comes with an `inc` other than the one it knew, or with one while it knew none but had something acknowledged (by a version without numbers), or without one (an older version). A WHO at 0 with the same number is a far end that hasn't received anything yet, not a restart: starting over then would put the two streams out of step for good.
+- A session nothing was received on for 15 minutes closes, even with something still to deliver.
 - The stream carries messages: `length[4]` then the message (at most 32 MiB + 1 KiB). The message's first byte is its kind:
 
 | Kind | Message |
