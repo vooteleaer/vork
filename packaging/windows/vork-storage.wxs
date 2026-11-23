@@ -73,8 +73,11 @@
     <!-- Installed: running at once, not only from the next login. -->
     <CustomAction Id="StartStorage" FileRef="vork_storage_run.exe" ExeCommand="" Execute="immediate" Return="asyncNoWait" />
     <InstallExecuteSequence>
-      <Custom Action="StopStorage" Before="EndStorage" Condition="Installed OR WIX_UPGRADE_DETECTED" />
-      <Custom Action="EndStorage" Before="RemoveExistingProducts" Condition="Installed OR WIX_UPGRADE_DETECTED" />
+      <!-- After RemoveExistingProducts, which must come first (an older
+           version's removal runs these itself): an upgrade, a repair, a
+           removal, or programs left running by hand. -->
+      <Custom Action="StopStorage" After="RemoveExistingProducts" />
+      <Custom Action="EndStorage" After="StopStorage" />
       <Custom Action="Unregister" After="EndStorage" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
       <Custom Action="StartStorage" After="InstallFinalize" Condition="NOT REMOVE~=&quot;ALL&quot;" />
     </InstallExecuteSequence>
