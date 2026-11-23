@@ -23,7 +23,7 @@ use crate::tree::{self, Node, Tree, QUERY_DIR};
 /// How long the kernel may cache entries and attributes, and how often the
 /// tree is re-read from the daemon (other members' writes show up after this).
 const TTL: Duration = Duration::from_secs(1);
-const XATTR_PREFIX: &str = "user.retifs.";
+const XATTR_PREFIX: &str = "user.vork.";
 /// Without a change notice, the library is re-read at least this often.
 const RESYNC: Duration = Duration::from_secs(30);
 /// `user.retifs.local`: computed, whether a file's content is on this device.
@@ -91,7 +91,7 @@ pub fn mount(store: &Path, ns: &str, mountpoint: &Path, wait: Duration, via: Opt
         wait,
         changed: watch(store, ns, via),
     };
-    let opts = [MountOption::FSName(format!("retifs:{ns}")), MountOption::Subtype("vork".into()), MountOption::DefaultPermissions];
+    let opts = [MountOption::FSName(format!("vork:{ns}")), MountOption::Subtype("vork".into()), MountOption::DefaultPermissions];
     fuser::mount2(fs, mountpoint, &opts).map_err(|e| e.to_string())
 }
 

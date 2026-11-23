@@ -12,7 +12,7 @@
 //!
 //! ```text
 //! record   = { "attrs": { key: value, … }, "blocks": [ [cid (bin 33), seed (bin 32), size], … ], "id": bin 16 }
-//! snapshot = { "records": [ record, … sorted by id, unique ], "retifs": "ns-snapshot/1" }
+//! snapshot = { "records": [ record, … sorted by id, unique ], "vork": "ns-snapshot/1" }
 //! value    = nil | bool | int (i64) | float (f64) | str | bin | [ value, … ]
 //! ```
 //! A snapshot is stored as an ordinary file (manifest, sealed chunks): one
@@ -124,7 +124,7 @@ impl Snapshot {
         for r in &self.records {
             r.write(&mut out);
         }
-        write_str(&mut out, "retifs");
+        write_str(&mut out, "vork");
         write_str(&mut out, SNAPSHOT_TAG);
         out
     }
@@ -139,7 +139,7 @@ impl Snapshot {
         for _ in 0..n {
             records.push(read_record(&mut r)?);
         }
-        if r.str()? != "retifs" || r.str()? != SNAPSHOT_TAG || !r.0.is_empty() {
+        if r.str()? != "vork" || r.str()? != SNAPSHOT_TAG || !r.0.is_empty() {
             return Err(RecordError::Malformed("not a library snapshot"));
         }
         let snap = Snapshot::new(records)?;

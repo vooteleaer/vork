@@ -30,7 +30,7 @@ fn main() -> glib::ExitCode {
     let hidden = std::env::args().any(|a| a == "--hidden");
     // A vØrk storage: link (the desktop entry handles x-scheme-handler/vork):
     // opened in the running instance, if there is one.
-    let link = std::env::args().find(|a| a.starts_with("retifs:"));
+    let link = std::env::args().find(|a| a.starts_with("vork:"));
     let app = adw::Application::builder().application_id(APP_ID).flags(gio::ApplicationFlags::HANDLES_OPEN).build();
     // The Flatpak asks to start at login, into the tray (the .deb has an
     // autostart entry instead).
@@ -58,7 +58,7 @@ fn main() -> glib::ExitCode {
         me.window.present();
         for f in files {
             let uri = f.uri().to_string();
-            if uri.starts_with("retifs:") {
+            if uri.starts_with("vork:") {
                 ask_add_namespace(&me, Some(me.window.clone().upcast()), true, &uri);
             }
         }

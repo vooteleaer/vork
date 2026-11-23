@@ -101,7 +101,7 @@ impl Status {
 /// label). None of them: a generic library.
 pub const PURPOSES: [(&str, &str); 4] = [("contacts", "Contacts"), ("calendar", "Calendar"), ("photos", "Photos"), ("files", "Files")];
 /// The record that says what a library is for (ADR-0032).
-pub const LIBRARY_TYPE: &str = "retifs.library";
+pub const LIBRARY_TYPE: &str = "vork.library";
 /// What leaving a library says: one joined, and one made on this device.
 pub const LEAVE: &str = "Its records go from this device. Others who have it keep theirs; you can join it again.";
 pub const LEAVE_OWN: &str = "It was made on this device. Its records go from here; members on other devices keep theirs and can still use it. If no other device has it, it's gone for good.";
@@ -270,7 +270,7 @@ impl Daemon {
         // A map (ADR-0028): its index held whole (its tiles' records, small),
         // so a tile is found here at once; its tiles fetched as looked at.
         // Anything else lazily.
-        let map = l.has.iter().any(|(t, _)| t == "application/x-vnd.retifs.tileset" || t == "application/vnd.mapbox-vector-tile");
+        let map = l.has.iter().any(|(t, _)| t == "application/x-vnd.vork.tileset" || t == "application/vnd.mapbox-vector-tile");
         self.request(&mut c, Request::NsJoin { ns: name.clone(), address: l.address.clone(), from: vec![l.node.clone()], lazy: !map })?;
         if map {
             self.request(&mut c, Request::NsKeep { ns: name.clone(), mode: "rules".into() })?;
@@ -537,7 +537,7 @@ impl Daemon {
                         AttrValue::Str(s) if key == k => Some(s.clone()),
                         _ => None,
                     });
-                    if let (Some(name), Some(node)) = (get("name"), get("retifs:node")) {
+                    if let (Some(name), Some(node)) = (get("name"), get("vork:node")) {
                         contacts.insert(node.to_lowercase(), name);
                     }
                 }
@@ -693,7 +693,7 @@ impl Daemon {
                 }
             }
         }
-        if let Response::Records { records } = self.request(&mut c, Request::Query { ns: ns.into(), terms: vec!["type=retifs.calendar".into()], at: None })? {
+        if let Response::Records { records } = self.request(&mut c, Request::Query { ns: ns.into(), terms: vec!["type=vork.calendar".into()], at: None })? {
             if !records.is_empty() {
                 out.push("calendar".into());
             }
@@ -751,7 +751,7 @@ impl Daemon {
             "invite" => Request::InviteAccept { ns: name.into(), link: text.into() },
             _ => match l.ns_address() {
                 Some(address) => Request::NsJoin { ns: name.into(), address, from: l.params_named("from").map(String::from).collect(), lazy: false },
-                None => return Err(format!("a retifs:{} link, not a library", l.kind)),
+                None => return Err(format!("a vork:{} link, not a library", l.kind)),
             },
         };
         let mut c = self.client()?;

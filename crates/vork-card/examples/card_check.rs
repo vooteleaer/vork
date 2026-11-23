@@ -15,7 +15,7 @@ fn main() {
     let id = card.public_identity().unwrap_or_else(|e| panic!("{e}"));
     println!("public      {}", hex::encode(id.bytes()));
     println!("identity    {}", hex::encode(id.hash()));
-    println!("retifs.node {}", hex::encode(id.destination("retifs.node")));
+    println!("vork.node {}", hex::encode(id.destination("vork.node")));
 
     // Signing: a packet-sized message, checked against the card's public key.
     card.verify_pin(&pin, PinUse::Sign).unwrap_or_else(|e| panic!("{e}"));

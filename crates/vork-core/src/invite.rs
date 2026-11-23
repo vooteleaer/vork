@@ -24,7 +24,7 @@ use crate::{
     record::{canonical, write_array_len, write_bin, write_int, write_map_len, write_str, Reader, RecordError, Value},
 };
 
-const ID_LABEL: &[u8] = b"retifs/v1/invite";
+const ID_LABEL: &[u8] = b"vork-storage/v1/invite";
 
 /// The length of a redemption request.
 pub const REDEEM_LEN: usize = 32 + 32 + 16 + 32;

@@ -54,7 +54,7 @@ class CalendarSyncAdapter(context: Context) : AbstractThreadedSyncAdapter(contex
 /**
  * vork calendars (ADR-0024, vork-calendar's events) in the system's
  * Calendar, under the "vork" account: a calendar per library that is one
- * (holding events, a `retifs.calendar` record, or made for it, ADR-0032),
+ * (holding events, a `vork.calendar` record, or made for it, ADR-0032),
  * owned if this device may write it, else read only. An event's _SYNC_ID is
  * its record id, SYNC_DATA1 a hash of its values as last synced, so a change
  * on either side is seen, as for contacts (ContactsSync): the phone's edit

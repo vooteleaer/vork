@@ -585,7 +585,7 @@ mod tests {
         let k = Known { public: [1; 64], name_hash: [2; 10], hops: 3, app_data: vec![4, 5] };
         let to = vec![
             ToNode::Hello { version: 1 },
-            ToNode::Register { req: 7, secret: [9; 64], name: "retifs.node".into() },
+            ToNode::Register { req: 7, secret: [9; 64], name: "vork.node".into() },
             ToNode::Announce { dest: [1; 16], app_data: vec![1, 2, 3] },
             ToNode::Recall { req: 1, dest: [2; 16] },
             ToNode::Find { req: 1, dest: [2; 16], timeout_ms: 500 },

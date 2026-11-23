@@ -47,11 +47,11 @@ pub const RECEIPT_LEN: usize = 1 + ID_LEN + 32 + 8 + 64 + 64;
 pub const PROVE_LEN: usize = 16;
 
 const HEADER_LEN: usize = 1 + ID_LEN + 32 + 8 + 1 + 2;
-const KEY_SALT: &[u8] = b"retifs/v1/lease-key";
-const LEASE_LABEL: &[u8] = b"retifs/v1/lease";
-const RENEW_LABEL: &[u8] = b"retifs/v1/renew";
-const RECEIPT_LABEL: &[u8] = b"retifs/v1/receipt";
-const PROVE_LABEL: &[u8] = b"retifs/v1/prove";
+const KEY_SALT: &[u8] = b"vork-storage/v1/lease-key";
+const LEASE_LABEL: &[u8] = b"vork-storage/v1/lease";
+const RENEW_LABEL: &[u8] = b"vork-storage/v1/renew";
+const RECEIPT_LABEL: &[u8] = b"vork-storage/v1/receipt";
+const PROVE_LABEL: &[u8] = b"vork-storage/v1/prove";
 
 pub type LeaseId = [u8; ID_LEN];
 
@@ -296,7 +296,7 @@ pub fn node_destination(public_key: &[u8; 64]) -> [u8; 16] {
 /// The `retifs.node` address of the identity with this (truncated) hash: who
 /// an identified link's requester is, in the form `vork ping` shows.
 pub fn node_destination_of(identity_hash: &[u8; 16]) -> [u8; 16] {
-    let name_hash = &Sha256::digest(b"retifs.node")[..10];
+    let name_hash = &Sha256::digest(b"vork.node")[..10];
     Sha256::digest([name_hash, identity_hash.as_slice()].concat())[..16].try_into().unwrap()
 }
 

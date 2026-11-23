@@ -1464,7 +1464,7 @@ fn leave_now(d: &Daemon, ns: &str) -> Result<usize, String> {
 const DELETED_GRACE_MS: u64 = 30 * 24 * 3600 * 1000;
 /// The record whose `type` says a library was deleted, counted only from a
 /// writer holding `grant` (ADR-0034).
-const LIBRARY_DELETED: &str = "retifs.deleted";
+const LIBRARY_DELETED: &str = "vork.deleted";
 
 /// Library `ns` was deleted (by this node or, as merged, by another member
 /// holding `grant`): hidden now, not announced, its content let go; left
@@ -1528,7 +1528,7 @@ fn forget_files_of(d: &Daemon, ns: &str, checkpoint: bool) -> Result<usize, Stri
 /// `readers` (readers' nodes that keep some of it and said so, with proof).
 /// Members then sync with the readers and ask both, so a file is found
 /// while the node that placed it is away.
-const HOLDERS_TYPE: &str = "retifs.holders";
+const HOLDERS_TYPE: &str = "vork.holders";
 /// How often a node's holders record is brought up to date.
 const HOLDERS_EVERY: Duration = Duration::from_secs(600);
 /// How often a reader listed already says again that it keeps a library.
@@ -2253,9 +2253,9 @@ async fn serve(store: Arc<SlabStore>, identity: node::IdentitySecret, endpoint: 
         libvork::set_starting(&wait_store, "waiting for the vØrk node", None, now_ms());
     })
     .await;
-    let dest_hash = net.register(identity, node::NODE_NAME).await.expect("registering retifs.node");
-    let lib_hash = net.register(identity, node::LIBRARY_NAME).await.expect("registering retifs.library");
-    let keyring_hash = net.register(identity, node::KEYRING_NAME).await.expect("registering retifs.keyring");
+    let dest_hash = net.register(identity, node::NODE_NAME).await.expect("registering vork.node");
+    let lib_hash = net.register(identity, node::LIBRARY_NAME).await.expect("registering vork.library");
+    let keyring_hash = net.register(identity, node::KEYRING_NAME).await.expect("registering vork.keyring");
     let _ = net.announce(
         dest_hash,
         &vork_core::announce::node_app_data(args.announce_s, args.site.as_deref().map(vork_core::announce::site_tag), args.hold_limit != Some(0)),
@@ -2427,7 +2427,7 @@ async fn serve(store: Arc<SlabStore>, identity: node::IdentitySecret, endpoint: 
             });
         })
         .expect("network events thread");
-    println!("serving {} chunks as retifs.node <{}>", store.len().unwrap_or(0), daemon.node_hex);
+    println!("serving {} chunks as vork.node <{}>", store.len().unwrap_or(0), daemon.node_hex);
     println!("local API at {endpoint}");
     println!("device name for keep tags and rules: {}", args.device);
 
@@ -3928,7 +3928,7 @@ async fn handle(d: &Daemon, req: Request) -> Result<Response, String> {
             writable(&ns)?;
             let l = libvork::link::Link::parse(&link)?;
             if l.kind != "invite" {
-                return Err(format!("a retifs:{} link isn't an invitation", l.kind));
+                return Err(format!("a vork:{} link isn't an invitation", l.kind));
             }
             let inv = Invitation::from_text(&l.what).map_err(|e| format!("not a valid invitation: {e}"))?;
             if inv.expires < now_ms() {
@@ -5565,9 +5565,9 @@ async fn fetch_range(d: &Daemon, file: &FileRef, range: Option<std::ops::Range<u
 /// The local name of the user's keyring library (ADR-0033).
 const KEYRING: &str = "keyring";
 /// The keyring's record holding the locator, which tags its announces.
-const RECOVERY_TYPE: &str = "retifs.recovery";
+const RECOVERY_TYPE: &str = "vork.recovery";
 /// A keyring record naming one of the user's libraries.
-const KEYRING_LIBRARY_TYPE: &str = "retifs.library";
+const KEYRING_LIBRARY_TYPE: &str = "vork.library";
 
 /// The locator the keyring holds, if this node keeps one.
 fn keyring_locator(d: &Daemon) -> Option<vork_core::recovery::Locator> {
@@ -5667,7 +5667,7 @@ async fn recovery_create(d: &Daemon) -> Result<Response, String> {
 /// The `retifs.keyring` destination of the identity with this hash.
 fn keyring_destination_of(identity_hash: &[u8; 16]) -> PeerId {
     use sha2::Digest;
-    let name_hash = &sha2::Sha256::digest(b"retifs.keyring")[..10];
+    let name_hash = &sha2::Sha256::digest(b"vork.keyring")[..10];
     sha2::Sha256::digest([name_hash, identity_hash.as_slice()].concat())[..16].try_into().expect("16 bytes")
 }
 
@@ -6177,7 +6177,7 @@ async fn commit_session(d: &Daemon, s: &WriteSession, attrs: Vec<(String, AttrVa
     }
     let reader = SessionReader { pieces: pieces.into(), spool: s.spool.try_clone().map_err(|e| e.to_string())?, base: s.base, store: d.store.clone() };
     let store = d.store.clone();
-    let record = format!("retifs-record/{}/{}", s.ns, hex(&s.id));
+    let record = format!("vork-record/{}/{}", s.ns, hex(&s.id));
     let file = tokio::task::spawn_blocking(move || -> Result<FileRef, String> {
         let secret = secret(&store, false, Some(&record));
         let opts = manifest::WriteOpts { stable_padding: true, ..Default::default() };
@@ -6207,7 +6207,7 @@ async fn commit_session(d: &Daemon, s: &WriteSession, attrs: Vec<(String, AttrVa
 /// versions dedup against each other) and keeps it placed.
 async fn store_content(d: &Daemon, ns: &str, id: &RecordId, data: Vec<u8>) -> Result<FileRef, String> {
     let store = d.store.clone();
-    let secret_name = format!("retifs-record/{ns}/{}", hex(id));
+    let secret_name = format!("vork-record/{ns}/{}", hex(id));
     let file = tokio::task::spawn_blocking(move || store_file(&store, &data, false, false, Some(&secret_name), manifest::WriteOpts::default()))
         .await
         .map_err(|e| e.to_string())??;

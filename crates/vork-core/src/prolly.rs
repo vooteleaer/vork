@@ -28,7 +28,7 @@ use crate::{
 pub const FANOUT: u32 = 32;
 /// A node is closed once its entries reach this many bytes (well under a chunk).
 pub const MAX_NODE: usize = 64 * 1024;
-const LABEL: &[u8] = b"retifs/v1/prolly";
+const LABEL: &[u8] = b"vork-storage/v1/prolly";
 
 /// A tree's root node.
 pub type Root = (Cid, Seed);

@@ -661,7 +661,7 @@ Covered ({}): {}", covered.len(), if covered.is_empty() { "none".into() } else {
                     let what = rest.first().cloned().unwrap_or_else(|| usage());
                     let (address, mut from) = match libvork::link::Link::parse(&what) {
                         Ok(link) => (
-                            link.ns_address().unwrap_or_else(|| fail(format!("a retifs:{} link isn't a library", link.kind))),
+                            link.ns_address().unwrap_or_else(|| fail(format!("a vork:{} link isn't a library", link.kind))),
                             link.params_named("from").map(String::from).collect::<Vec<_>>(),
                         ),
                         Err(_) => (what, Vec::new()),
@@ -813,7 +813,7 @@ Covered ({}): {}", covered.len(), if covered.is_empty() { "none".into() } else {
                 }
                 "list" => {
                     let source = rest.first().cloned().unwrap_or_else(|| usage());
-                    let req = libvork::Request::Query { ns: source, terms: vec!["type=retifs.share".into()], at: None };
+                    let req = libvork::Request::Query { ns: source, terms: vec!["type=vork.share".into()], at: None };
                     let records = client.records(req).await.unwrap_or_else(|e| fail(e));
                     for r in &records {
                         let get = |k: &str| r.attrs.iter().find(|(key, _)| key == k).map(|(_, v)| v);
@@ -880,7 +880,7 @@ Covered ({}): {}", covered.len(), if covered.is_empty() { "none".into() } else {
                     let what = rest.get(1).cloned().unwrap_or_else(|| usage());
                     let node = match libvork::link::Link::parse(&what) {
                         Ok(l) if l.kind == "node" => l.what,
-                        Ok(l) => fail(format!("a retifs:{} link isn't a node", l.kind)),
+                        Ok(l) => fail(format!("a vork:{} link isn't a node", l.kind)),
                         Err(_) => what,
                     };
                     add_contact(&mut client, &name, &node).await;
@@ -998,7 +998,7 @@ Covered ({}): {}", covered.len(), if covered.is_empty() { "none".into() } else {
                 return;
             }
             let Some(address) = link.ns_address() else {
-                println!("a retifs:{} link ({}); this version of vork opens library links", link.kind, link.what);
+                println!("a vork:{} link ({}); this version of vork opens library links", link.kind, link.what);
                 for (k, v) in &link.params {
                     println!("  {k} = {v}");
                 }
@@ -1364,7 +1364,7 @@ async fn contacts(client: &mut libvork::Client) -> Vec<(String, String, String)>
             _ => None,
         })
     };
-    let mut out: Vec<_> = records.iter().filter_map(|r| Some((s(r, "name")?, s(r, "retifs:node")?, r.id.clone()))).collect();
+    let mut out: Vec<_> = records.iter().filter_map(|r| Some((s(r, "name")?, s(r, "vork:node")?, r.id.clone()))).collect();
     out.sort();
     out
 }
@@ -1372,7 +1372,7 @@ async fn contacts(client: &mut libvork::Client) -> Vec<(String, String, String)>
 /// Adds (or renames) a contact for `node` in `me`.
 async fn add_contact(client: &mut libvork::Client, name: &str, node: &str) {
     if !is_node(node) {
-        fail(format!("{node} isn't a node address (32 hex digits) or a retifs:node link"));
+        fail(format!("{node} isn't a node address (32 hex digits) or a vork:node link"));
     }
     if is_node(name) {
         fail("a contact's name can't look like a node address");
@@ -1387,7 +1387,7 @@ async fn add_contact(client: &mut libvork::Client, name: &str, node: &str) {
         None => {
             let mut attrs = attrs;
             attrs.push(("type".into(), libvork::AttrValue::Str(libvork::types::PERSON.into())));
-            attrs.push(("retifs:node".into(), libvork::AttrValue::Str(node.into())));
+            attrs.push(("vork:node".into(), libvork::AttrValue::Str(node.into())));
             libvork::Request::RecordCreate { ns: ME.into(), attrs, data: None }
         }
     };

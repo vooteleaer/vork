@@ -29,7 +29,7 @@ fn case_with(name: &str, scheme: Value, secret: &ConvergenceSecret, data: &[u8],
 }
 
 fn text(len: usize) -> Vec<u8> {
-    b"retifs keeps your data encrypted, redundant and yours. ".iter().cycle().take(len).copied().collect()
+    b"vork storage keeps your data encrypted, redundant and yours. ".iter().cycle().take(len).copied().collect()
 }
 
 fn main() {
@@ -45,7 +45,7 @@ fn main() {
 
     let cases = vec![
         case("public-empty", json!({"type": "public"}), &public, b""),
-        case("public-short", json!({"type": "public"}), &public, b"hello retifs"),
+        case("public-short", json!({"type": "public"}), &public, b"hello vork"),
         case("public-class-1k-full", json!({"type": "public"}), &public, &pattern(955, 1)),
         case("public-class-2k-first", json!({"type": "public"}), &public, &pattern(956, 1)),
         case("public-20000", json!({"type": "public"}), &public, &pattern(20_000, 2)),
@@ -56,7 +56,7 @@ fn main() {
     ];
 
     let doc = json!({
-        "construction": "retifs chunk encryption v1 (ADR-0008, proposed); frame = encoding u8 || u32_be len || payload || zero fill",
+        "construction": "vØrk storage chunk encryption v1 (ADR-0008, proposed); frame = encoding u8 || u32_be len || payload || zero fill",
         "cid": "0x01 || SHA-256(ciphertext)",
         "cases": cases,
     });

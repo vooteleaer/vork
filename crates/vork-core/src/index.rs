@@ -52,14 +52,14 @@ pub type Token = [u8; TOKEN_LEN];
 /// A record ID under its token's key.
 pub type Entry = [u8; 16];
 
-const TOKEN_SALT: &[u8] = b"retifs/v1/index-token";
-const SEARCH_SALT: &[u8] = b"retifs/v1/index-search";
-const ENTRY_SALT: &[u8] = b"retifs/v1/index-entry";
-const WRITER_SALT: &[u8] = b"retifs/v1/index-writer";
-const STATE_SALT: &[u8] = b"retifs/v1/index-state";
-const QUERY_LABEL: &[u8] = b"retifs/v1/index-query";
+const TOKEN_SALT: &[u8] = b"vork-storage/v1/index-token";
+const SEARCH_SALT: &[u8] = b"vork-storage/v1/index-search";
+const ENTRY_SALT: &[u8] = b"vork-storage/v1/index-entry";
+const WRITER_SALT: &[u8] = b"vork-storage/v1/index-writer";
+const STATE_SALT: &[u8] = b"vork-storage/v1/index-state";
+const QUERY_LABEL: &[u8] = b"vork-storage/v1/index-query";
 /// A record with `type` = this declares which keys are searchable.
-pub const SETTINGS_TYPE: &str = "retifs.index";
+pub const SETTINGS_TYPE: &str = "vork.index";
 /// The settings record's attribute listing the keys (a list of strings;
 /// `prefix:*` matches every key starting with `prefix:`).
 pub const SETTINGS_KEYS: &str = "keys";

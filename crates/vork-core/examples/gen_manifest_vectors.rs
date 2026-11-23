@@ -94,7 +94,7 @@ fn main() {
     let mut cases = Vec::new();
     for (name, scheme, secret, (data, bytes), opts) in [
         ("inline-empty", &pub_scheme, &public, raw(b""), padded),
-        ("inline-short", &pub_scheme, &public, raw(b"hello retifs"), padded),
+        ("inline-short", &pub_scheme, &public, raw(b"hello vork"), padded),
         ("inline-max", &pub_scheme, &public, pat(manifest::INLINE_MAX, 5), padded),
         ("one-chunk", &pub_scheme, &public, pat(manifest::INLINE_MAX + 1, 5), padded),
         ("padded-leaf", &pub_scheme, &public, pat(padded_len(110_000, 6), 6), padded),
@@ -104,8 +104,8 @@ fn main() {
         cases.push(case(name, scheme.clone(), secret, data, &bytes, opts));
     }
     let doc = json!({
-        "construction": "retifs manifest v1 (ADR-0009, proposed): nodes sealed like chunks (ADR-0008); node = 0x01 || kind || u16_be n || body; leaf entry = cid(33) || seed(32) || u32_be len; internal entry = cid(33) || seed(32) || u64_be span; inline = n bytes of data (root only, n <= inline_max)",
-        "padding": "data chunks padded to PADME(count) with pieces HMAC-SHA256 counter mode under HMAC-SHA256(secret, 'retifs/v1/pad' || digest || u64_be index), digest = SHA-256(data chunk CIDs in order), or 32 zero bytes with stable padding; piece length = max_piece",
+        "construction": "vØrk storage manifest v1 (ADR-0009, proposed): nodes sealed like chunks (ADR-0008); node = 0x01 || kind || u16_be n || body; leaf entry = cid(33) || seed(32) || u32_be len; internal entry = cid(33) || seed(32) || u64_be span; inline = n bytes of data (root only, n <= inline_max)",
+        "padding": "data chunks padded to PADME(count) with pieces HMAC-SHA256 counter mode under HMAC-SHA256(secret, 'vork-storage/v1/pad' || digest || u64_be index), digest = SHA-256(data chunk CIDs in order), or 32 zero bytes with stable padding; piece length = max_piece",
         "inline_max": manifest::INLINE_MAX,
         "max_piece": vork_core::chunker::MAX_SIZE,
         "writer_policy": { "fanout": manifest::FANOUT, "chunker": "FastCDC 2020, 8 KiB min, 12 KiB avg, max_piece max (not part of the format)" },

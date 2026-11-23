@@ -26,9 +26,9 @@ pub const PROOF_LEN: usize = 16;
 /// Proof placeholder for published / blind requests.
 pub const NO_PROOF: [u8; PROOF_LEN] = [0; PROOF_LEN];
 
-const SERVE_SALT: &[u8] = b"retifs/v1/serve";
-const GET_LABEL: &[u8] = b"retifs/v1/get";
-const HAVE_LABEL: &[u8] = b"retifs/v1/have";
+const SERVE_SALT: &[u8] = b"vork-storage/v1/serve";
+const GET_LABEL: &[u8] = b"vork-storage/v1/get";
+const HAVE_LABEL: &[u8] = b"vork-storage/v1/have";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ChunkToken(pub [u8; 32]);

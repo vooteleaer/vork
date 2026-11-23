@@ -76,7 +76,7 @@ fn main() {
     let snap = Snapshot::new(vec![r2.clone(), r1.clone()]).unwrap();
 
     let doc = json!({
-        "construction": "retifs records v1 (ADR-0016, decision 2: canonical msgpack, proposed)",
+        "construction": "vØrk storage records v1 (ADR-0016, decision 2: canonical msgpack, proposed)",
         "values": values.iter().map(|v| json!({"value": tagged(v), "encoded": hex::encode(encode_value(v))})).collect::<Vec<_>>(),
         "records": [record_json(&r1), record_json(&r2)],
         "snapshot": hex::encode(snap.encode()),

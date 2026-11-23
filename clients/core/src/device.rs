@@ -336,7 +336,7 @@ pub const SERVICES: &[(&str, &str)] = &[("vorkd", "vork daemon"), ("vork", "vØr
 /// On Haiku: launch_daemon jobs of the user's (`~/config/settings/launch/vork`,
 /// or a package's `data/user_launch`), started at login.
 #[cfg(target_os = "haiku")]
-pub const SERVICES: &[(&str, &str)] = &[("x-vnd.retifs-daemon", "vork daemon"), ("x-vnd.vork-node", "vØrk network")];
+pub const SERVICES: &[(&str, &str)] = &[("x-vnd.vork-storage-daemon", "vork daemon"), ("x-vnd.vork-node", "vØrk network")];
 
 /// The service vØrk storage itself runs as.
 pub const VORKD: &str = SERVICES[0].0;
@@ -417,7 +417,7 @@ pub fn service_state(job: &str) -> Option<String> {
 #[cfg(target_os = "haiku")]
 fn job_program(job: &str) -> Option<(&'static str, PathBuf, PathBuf)> {
     match job {
-        "x-vnd.retifs-daemon" => Some(("vorkd", install_dir().join("bin/vorkd"), install_dir().join("bin/vorkd"))),
+        "x-vnd.vork-storage-daemon" => Some(("vorkd", install_dir().join("bin/vorkd"), install_dir().join("bin/vorkd"))),
         NODE_JOB => Some(("vork", install_dir().join("bin/vork"), install_dir().join("bin/vork"))),
         _ => None,
     }
@@ -1158,7 +1158,7 @@ log = \"info\"
 
     #[test]
     fn launch_roster_info() {
-        let running = "Details: BMessage(0x0) {\n        name = string(\"x-vnd.retifs-daemon\", 20 bytes)\n        running = bool(true)\n        launched = bool(true)\n";
+        let running = "Details: BMessage(0x0) {\n        name = string(\"x-vnd.vork-storage-daemon\", 20 bytes)\n        running = bool(true)\n        launched = bool(true)\n";
         assert!(job_running(running));
         assert!(!job_running(&running.replace("running = bool(true)", "running = bool(false)")));
     }

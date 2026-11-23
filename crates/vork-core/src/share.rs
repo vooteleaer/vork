@@ -20,11 +20,11 @@ use sha2::Sha256;
 
 use crate::{channel::NsId, record::RecordId, record::Value};
 
-const SHARE_RECORD_SALT: &[u8] = b"retifs/v1/share-record";
-const WRITEBACK_SALT: &[u8] = b"retifs/v1/share-writeback";
+const SHARE_RECORD_SALT: &[u8] = b"vork-storage/v1/share-record";
+const WRITEBACK_SALT: &[u8] = b"vork-storage/v1/share-writeback";
 
 /// The `type` of a share's definition record, kept in the source library.
-pub const DEFINITION_TYPE: &str = "retifs.share";
+pub const DEFINITION_TYPE: &str = "vork.share";
 
 /// The ID of `source`'s copy in the share library `share`.
 pub fn record_id(source: &RecordId, share: &NsId) -> RecordId {

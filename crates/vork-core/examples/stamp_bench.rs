@@ -4,7 +4,7 @@
 use std::time::Instant;
 
 fn main() {
-    let material = b"retifs/v1/stamp benchmark material".to_vec();
+    let material = b"vork-storage/v1/stamp benchmark material".to_vec();
     let t = Instant::now();
     let wb = vork_core::stamp::workblock(&material);
     println!("workblock: {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);

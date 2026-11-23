@@ -15,15 +15,15 @@ use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 use vork_api::{Client, Event, Known};
 
-pub const APP_NAME: &str = "retifs";
+pub const APP_NAME: &str = "vork";
 /// A node serving storage requests.
-pub const NODE_NAME: &str = "retifs.node";
+pub const NODE_NAME: &str = "vork.node";
 /// A node that only asks.
-pub const CLIENT_NAME: &str = "retifs.client";
+pub const CLIENT_NAME: &str = "vork.client";
 /// The node's public libraries (ADR-0029).
-pub const LIBRARY_NAME: &str = "retifs.library";
+pub const LIBRARY_NAME: &str = "vork.library";
 /// A node keeping the user's keyring (ADR-0033).
-pub const KEYRING_NAME: &str = "retifs.keyring";
+pub const KEYRING_NAME: &str = "vork.keyring";
 
 /// An identity's secret: X25519 secret ‖ Ed25519 seed (the storage and vØrk key file).
 pub type IdentitySecret = [u8; 64];

@@ -225,6 +225,6 @@ mod tests {
             ed25519: hex::decode("bb3e8a8c6af96b39a9a94894604fd0a5cc6bbe7a2a404cad8a92e37190970f63").unwrap().try_into().unwrap(),
         };
         assert_eq!(hex::encode(id.hash()), "12e9125e209f8c0f67acc1fe70b9e4f1");
-        assert_eq!(hex::encode(id.destination("retifs.node")), "258d3c394d3376c4662048ca83bd2f2d");
+        assert_eq!(hex::encode(id.destination("vork.node")), "258d3c394d3376c4662048ca83bd2f2d");
     }
 }

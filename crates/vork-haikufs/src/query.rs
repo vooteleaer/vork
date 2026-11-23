@@ -352,7 +352,7 @@ mod tests {
             ("lat", AttrValue::Float(58.378)),
             ("capital", AttrValue::Bool(false)),
             ("find", AttrValue::List(vec![AttrValue::Str("tartu".into()), AttrValue::Str("tartumaa".into())])),
-            ("BEOS:TYPE", AttrValue::Str("application/x-vnd.retifs.place".into())),
+            ("BEOS:TYPE", AttrValue::Str("application/x-vnd.vork.place".into())),
         ]))
     }
 
@@ -369,7 +369,7 @@ mod tests {
         assert!(!q(r#"(population>100000)||(capital==true)"#));
         assert!(q(r#"!(city=="Tallinn")"#));
         assert!(q(r#"(city!="Tallinn")"#));
-        assert!(q(r#"((name=="Tartu")||(name=="Tallinn"))&&(BEOS:TYPE=="application/x-vnd.retifs.place")"#));
+        assert!(q(r#"((name=="Tartu")||(name=="Tallinn"))&&(BEOS:TYPE=="application/x-vnd.vork.place")"#));
         // Missing attributes: only != matches.
         assert!(!q(r#"(author=="x")"#));
         assert!(q(r#"(author!="x")"#));
@@ -399,8 +399,8 @@ mod tests {
 
     #[test]
     fn pushdown_terms() {
-        let e = parse(r#"(city=="Tartu")&&(population>=50000)&&(name=="*tar*")&&(BEOS:TYPE=="application/x-vnd.retifs.place")&&(street=="Rüü*")"#).unwrap();
-        assert_eq!(pushdown(&e), vec!["city=\"Tartu\"", "type=\"application/x-vnd.retifs.place\"", "street^=Rüü"]);
+        let e = parse(r#"(city=="Tartu")&&(population>=50000)&&(name=="*tar*")&&(BEOS:TYPE=="application/x-vnd.vork.place")&&(street=="Rüü*")"#).unwrap();
+        assert_eq!(pushdown(&e), vec!["city=\"Tartu\"", "type=\"application/x-vnd.vork.place\"", "street^=Rüü"]);
         // Numbers, quoted or not, are compared by type in vØrk storage: not narrowed.
         assert!(pushdown(&parse(r#"(population=="91407")&&(lat>58)"#).unwrap()).is_empty());
         // Nothing under || or !.

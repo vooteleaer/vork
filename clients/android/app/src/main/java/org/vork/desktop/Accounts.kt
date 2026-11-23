@@ -25,9 +25,9 @@ import org.json.JSONArray
  */
 object Accounts {
     const val TYPE = "org.vork"
-    const val BOOK = "org.retifs.addressbook"
+    const val BOOK = "org.vork.storage.addressbook"
     /** Address books of an earlier version: removed. */
-    private const val OLD_READ_ONLY_BOOK = "org.retifs.addressbook.ro"
+    private const val OLD_READ_ONLY_BOOK = "org.vork.storage.addressbook.ro"
     /** An address book's user data: "1" if its library may be written here. */
     const val WRITABLE = "writable"
     val ACCOUNT = Account("vork", TYPE)

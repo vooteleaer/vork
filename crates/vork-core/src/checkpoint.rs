@@ -5,8 +5,8 @@
 //! checkpoint = { "control":  [ [ stamp, op ], … ],                     every control operation, by stamp
 //!                "frontier": [ [ writer (bin 32), seq, time_ms, commit cid (bin 33) ], … ],   by writer
 //!                "high":     nil | stamp,                              the highest data stamp seen
-//!                "retifs":   "ns-checkpoint/1",
-//!                "state":    nil | [ root cid (bin 33), root seed (bin 32) ] }   Prolly tree of stamped records
+//!                "state":    nil | [ root cid (bin 33), root seed (bin 32) ],   Prolly tree of stamped records
+//!                "vork":     "ns-checkpoint/1" }
 //! ```
 //! A checkpoint is a cache of a deterministic function: the state after each
 //! writer's commits up to its frontier, without the tombstones that frontier
@@ -26,7 +26,7 @@ use crate::{
 };
 
 pub const CHECKPOINT_TAG: &str = "ns-checkpoint/1";
-const STATE_LABEL: &[u8] = b"retifs/v1/state";
+const STATE_LABEL: &[u8] = b"vork-storage/v1/state";
 
 /// How far a checkpoint covers one writer's chain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,8 +156,6 @@ impl Checkpoint {
             None => out.push(0xc0),
             Some(s) => write_stamp(&mut out, s),
         }
-        write_str(&mut out, "retifs");
-        write_str(&mut out, CHECKPOINT_TAG);
         write_str(&mut out, "state");
         match &self.state {
             None => out.push(0xc0),
@@ -167,6 +165,8 @@ impl Checkpoint {
                 write_bin(&mut out, &seed.0);
             }
         }
+        write_str(&mut out, "vork");
+        write_str(&mut out, CHECKPOINT_TAG);
         out
     }
 
@@ -207,9 +207,6 @@ impl Checkpoint {
             return Err(bad("checkpoint fields"));
         }
         let high = read_opt_stamp(&mut r)?;
-        if r.str()? != "retifs" || r.str()? != CHECKPOINT_TAG {
-            return Err(bad("not a checkpoint"));
-        }
         if r.str()? != "state" {
             return Err(bad("checkpoint fields"));
         }
@@ -224,6 +221,9 @@ impl Checkpoint {
             let seed = Seed(r.bin()?.try_into().map_err(|_| bad("root seed"))?);
             Some((cid, seed))
         };
+        if r.str()? != "vork" || r.str()? != CHECKPOINT_TAG {
+            return Err(bad("not a checkpoint"));
+        }
         if !r.0.is_empty() {
             return Err(bad("trailing bytes"));
         }

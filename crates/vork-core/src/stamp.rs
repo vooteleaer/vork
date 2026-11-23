@@ -18,7 +18,7 @@ use crate::lease::Lease;
 pub const STAMP_LEN: usize = 32;
 /// As LXMF's `WORKBLOCK_EXPAND_ROUNDS`.
 pub const WORKBLOCK_ROUNDS: u32 = 3000;
-const LABEL: &[u8] = b"retifs/v1/stamp";
+const LABEL: &[u8] = b"vork-storage/v1/stamp";
 
 pub type Stamp = [u8; STAMP_LEN];
 
@@ -97,7 +97,7 @@ mod tests {
 
     #[test]
     fn generated_stamps_are_valid_for_their_material_only() {
-        let (a, b) = (b"retifs/v1/stamp lease a".to_vec(), b"retifs/v1/stamp lease b".to_vec());
+        let (a, b) = (b"vork-storage/v1/stamp lease a".to_vec(), b"vork-storage/v1/stamp lease b".to_vec());
         let stamp = generate(&a, 8);
         assert!(valid(&workblock(&a), &stamp, 8));
         assert!(!valid(&workblock(&b), &stamp, 8), "not for another lease");

@@ -28,7 +28,7 @@ fn main() {
     use sha2::Digest;
 
     let doc = json!({
-        "construction": "retifs leases v1 (ADR-0010/0011, decision 6, proposed)",
+        "construction": "vØrk storage leases v1 (ADR-0010/0011, decision 6, proposed)",
         "namespace_key": hex::encode(namespace_key),
         "lease_id": hex::encode(lease_id),
         "lease_signer": hex::encode(key.public()),

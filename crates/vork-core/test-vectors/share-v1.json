@@ -1,33 +1,33 @@
 {
-  "about": "ADR-0021: a share copy's record ID = HKDF-SHA256(ikm = source record ID, salt = \"retifs/v1/share-record\", info = ns_id of the share)[0..16]; a member's addition written back to the source = HKDF-SHA256(ikm = the member's record ID, salt = \"retifs/v1/share-writeback\", info = ns_id of the share)[0..16] (source_record stands for the member's record there); ns_id = SHA-256(\"retifs/v1/ns\" || share writer)[0..16]",
+  "about": "ADR-0021: a share copy's record ID = HKDF-SHA256(ikm = source record ID, salt = \"vork-storage/v1/share-record\", info = ns_id of the share)[0..16]; a member's addition written back to the source = HKDF-SHA256(ikm = the member's record ID, salt = \"vork-storage/v1/share-writeback\", info = ns_id of the share)[0..16] (source_record stands for the member's record there); ns_id = SHA-256(\"vork-storage/v1/ns\" || share writer)[0..16]",
   "cases": [
     {
-      "share_ns_id": "f8b3895e3b70d1b575b6f622723b6545",
-      "share_record": "cf019cf7aa93c19e04e09ea568f540ee",
+      "share_ns_id": "61bfaebbaa875e0057e54088ace3a84b",
+      "share_record": "8b23d614f048c9e8006cc1f9800b8ecd",
       "share_writer": "c86b8e82d64ff7ec813d314d40d2660291ac95316cebb78b9acd4454221818c3",
       "source_record": "2687130feb5bcfb04c8c1dc786789861",
-      "writeback_record": "4e1afde79ca829bc53433cacf10a6bf5"
+      "writeback_record": "587ad23f71e22fa19f9e90c1883965de"
     },
     {
-      "share_ns_id": "f8b3895e3b70d1b575b6f622723b6545",
-      "share_record": "6119b7e17df7a2b462ab3eac2047cf75",
+      "share_ns_id": "61bfaebbaa875e0057e54088ace3a84b",
+      "share_record": "75caab0f3eb725b5b3996350dd7764d4",
       "share_writer": "c86b8e82d64ff7ec813d314d40d2660291ac95316cebb78b9acd4454221818c3",
       "source_record": "36a301f0cbf26f296ac4a031ff967d5c",
-      "writeback_record": "312109cd629627985d3b1b0070e31f96"
+      "writeback_record": "4715ea5f8f349ba5235762bb7ad9d524"
     },
     {
-      "share_ns_id": "99d30dec6930aa349b379224c0ba3612",
-      "share_record": "b2ec84ee9d6be7a5c82bfb3f82840db3",
+      "share_ns_id": "76e70bdb9bca10c3d8a240fee4a1766a",
+      "share_record": "bab472560a89cae6214378e5b7f30b4e",
       "share_writer": "371c9d645a546b483e66515d7a7776af376a84251f4602b38b2134c4dc55bfed",
       "source_record": "aad4606bac1654ec07724d76943dbf89",
-      "writeback_record": "407154bb31f9b2a2b5bcc19c51a8d49c"
+      "writeback_record": "d2061ff11c832bab8fcc5ad13dd810d8"
     },
     {
-      "share_ns_id": "99d30dec6930aa349b379224c0ba3612",
-      "share_record": "d46635cde327a27137b92f8522237eb9",
+      "share_ns_id": "76e70bdb9bca10c3d8a240fee4a1766a",
+      "share_record": "0ab0e418d68920a68a078756adb521a2",
       "share_writer": "371c9d645a546b483e66515d7a7776af376a84251f4602b38b2134c4dc55bfed",
       "source_record": "e4731fca22e4167ae0956f96066cfd57",
-      "writeback_record": "3880296e762d65749341277db40fae39"
+      "writeback_record": "b2512e215b2d089e65538dc4b20b515b"
     }
   ]
 }

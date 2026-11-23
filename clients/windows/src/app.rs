@@ -187,7 +187,7 @@ pub fn run() {
     let show = std::env::args().any(|a| a == "--show");
     // A `vork:` link opened elsewhere (the URL protocol the installer
     // registers runs `--open "%1"`).
-    let link = std::env::args().find(|a| a.starts_with("retifs:"));
+    let link = std::env::args().find(|a| a.starts_with("vork:"));
     unsafe {
         // One instance: started again, the running one shows its window (and
         // gets the link, if one was opened).
@@ -852,7 +852,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             if data.dwData == COPY_LINK && !data.lpData.is_null() {
                 let text = std::slice::from_raw_parts(data.lpData as *const u16, data.cbData as usize / 2);
                 let link = String::from_utf16_lossy(text);
-                if link.starts_with("retifs:") {
+                if link.starts_with("vork:") {
                     open(hwnd);
                     crate::libraries::open_link(hwnd, &link);
                 }

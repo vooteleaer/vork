@@ -63,7 +63,7 @@
             <intent-filter><action android:name="android.net.VpnService" /></intent-filter>
         </service>
         <service android:name=".AccessService" android:exported="true">
-            <intent-filter><action android:name="org.retifs.action.ACCESS" /></intent-filter>
+            <intent-filter><action android:name="org.vork.storage.action.ACCESS" /></intent-filter>
         </service>
         <activity
             android:name=".AccessActivity"
@@ -71,7 +71,7 @@
             android:theme="@android:style/Theme.Material.Dialog.NoActionBar"
             android:excludeFromRecents="true">
             <intent-filter>
-                <action android:name="org.retifs.action.LET_IN" />
+                <action android:name="org.vork.storage.action.LET_IN" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>

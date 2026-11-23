@@ -23,7 +23,7 @@ use sha2::{Digest, Sha256};
 
 use crate::channel::{self, NsId};
 
-const SALT: &[u8] = b"retifs/v1/recovery";
+const SALT: &[u8] = b"vork-storage/v1/recovery";
 const LIST: &str = include_str!("bip39-english.txt");
 
 /// Words in a recovery kit.

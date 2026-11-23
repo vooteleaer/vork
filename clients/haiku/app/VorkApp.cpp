@@ -52,8 +52,8 @@
 
 #include "vork_desktop.h"
 
-static const char* kSignature = "application/x-vnd.retifs-desktop";
-static const char* kDaemonJob = "x-vnd.retifs-daemon";
+static const char* kSignature = "application/x-vnd.vork-storage-desktop";
+static const char* kDaemonJob = "x-vnd.vork-storage-daemon";
 static const char* kReplicantName = "vork";
 
 enum {
@@ -1437,13 +1437,13 @@ private:
 			BString type = pair.GetString("0", "");
 			int64 n = (int64)pair.GetDouble("1", 0);
 			BString word;
-			if (type == "application/x-vnd.retifs.tileset")
+			if (type == "application/x-vnd.vork.tileset")
 				word = "map";
 			else if (type == "application/vnd.mapbox-vector-tile")
 				word << n << " map tiles";
-			else if (type == "application/x-vnd.retifs.place")
+			else if (type == "application/x-vnd.vork.place")
 				word << n << " places";
-			else if (type == "application/x-vnd.retifs.address")
+			else if (type == "application/x-vnd.vork.address")
 				word << n << " addresses";
 			else if (type.StartsWith("image/"))
 				word << n << " photos";

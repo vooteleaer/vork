@@ -221,7 +221,7 @@ fn main() {
 
     let doc = json!({
         "checkpoint": checkpoint_vector(),
-        "description": "retifs Prolly trees v1 (ADR-0018). Stamped records are canonical msgpack; a tree's nodes are sealed (ADR-0008) under `secret` with the personal scheme. Entry keys: SHA-256(u32_be(i) ‖ 12 zero bytes)[..16]; small values: msgpack str \"value <i>\"; large values: msgpack bin 16 of 4000 bytes equal to i mod 256.",
+        "description": "vØrk storage Prolly trees v1 (ADR-0018). Stamped records are canonical msgpack; a tree's nodes are sealed (ADR-0008) under `secret` with the personal scheme. Entry keys: SHA-256(u32_be(i) ‖ 12 zero bytes)[..16]; small values: msgpack str \"value <i>\"; large values: msgpack bin 16 of 4000 bytes equal to i mod 256.",
         "fanout": prolly::FANOUT,
         "max_node": prolly::MAX_NODE,
         "secret": hex::encode(secret_bytes),

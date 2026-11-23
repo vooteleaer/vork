@@ -28,7 +28,7 @@ type HmacSha256 = Hmac<Sha256>;
 type Enc = cbc::Encryptor<Aes256>;
 type Dec = cbc::Decryptor<Aes256>;
 
-const CHUNK_SALT: &[u8] = b"retifs/v1/chunk";
+const CHUNK_SALT: &[u8] = b"vork-storage/v1/chunk";
 
 /// Ciphertext sizes: 512 B … 256 KiB. 512 B carries a commit or a small
 /// operations file in one chunk, halving small writes on slow links (decided 2026-10-20).

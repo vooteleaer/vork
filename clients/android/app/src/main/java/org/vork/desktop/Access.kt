@@ -109,7 +109,7 @@ object Access {
     }
 }
 
-/** The service other apps bind (action `org.retifs.action.ACCESS`) to get connections. */
+/** The service other apps bind (action `org.vork.storage.action.ACCESS`) to get connections. */
 class AccessService : Service() {
     override fun onBind(intent: Intent?): IBinder = object : Binder() {
         override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
@@ -147,7 +147,7 @@ class AccessService : Service() {
 
 /**
  * Asks the user to let an app in (started by that app for a result, action
- * `org.retifs.action.LET_IN`): which libraries it may use, and whether it
+ * `org.vork.storage.action.LET_IN`): which libraries it may use, and whether it
  * may change them. Extras: `for` (a purpose, ADR-0032: the libraries made
  * for it are ticked), `write` (whether it asks to change them), `why` (its
  * own words). Started again, it changes what the app has.

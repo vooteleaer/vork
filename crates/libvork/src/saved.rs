@@ -16,7 +16,7 @@ use crate::{AttrValue, Client, Request, Response};
 
 /// The user's own library: contacts, saved queries, settings.
 pub const ME: &str = "me";
-pub const TYPE: &str = "retifs.query";
+pub const TYPE: &str = "vork.query";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SavedQuery {
@@ -144,7 +144,7 @@ pub async fn remove(c: &mut Client, name: &str) -> Result<(), String> {
 
 /// A favorite library's record type (in `me`, so every device of the
 /// user's has it): `library`, its creator key; apps list favorites first.
-pub const FAVORITE_TYPE: &str = "retifs.favorite";
+pub const FAVORITE_TYPE: &str = "vork.favorite";
 
 /// The favorite libraries: their creator keys, with their records' IDs.
 pub async fn favorites(c: &mut Client) -> Vec<(String, String)> {
@@ -181,7 +181,7 @@ pub async fn set_favorite(c: &mut Client, ns: &str, on: bool) -> Result<(), Stri
 /// `retifs:writer`, the writer key (hex), names a member whose node isn't
 /// known. Apps show it with the key's fingerprint words, never instead of
 /// them, and decide nothing by it.
-pub const NICKNAME_TYPE: &str = "retifs.nickname";
+pub const NICKNAME_TYPE: &str = "vork.nickname";
 
 /// One nickname record.
 #[derive(Debug, Clone, PartialEq)]
@@ -204,7 +204,7 @@ pub async fn nicknames(c: &mut Client) -> Vec<Nickname> {
                 Some(AttrValue::Str(s)) if !s.is_empty() => Some(s.clone()),
                 _ => None,
             };
-            Some(Nickname { name: text("name")?, node: text("retifs:node").map(|n| n.to_lowercase()), writer: text("retifs:writer").map(|w| w.to_lowercase()), id: r.id.clone() })
+            Some(Nickname { name: text("name")?, node: text("vork:node").map(|n| n.to_lowercase()), writer: text("vork:writer").map(|w| w.to_lowercase()), id: r.id.clone() })
         })
         .collect()
 }
@@ -236,11 +236,11 @@ pub async fn set_nickname(c: &mut Client, writer: &str, node: Option<&str>, name
     }
     let mut attrs = vec![
         ("type".to_string(), AttrValue::Str(NICKNAME_TYPE.into())),
-        ("retifs:writer".to_string(), AttrValue::Str(writer)),
+        ("vork:writer".to_string(), AttrValue::Str(writer)),
         ("name".to_string(), AttrValue::Str(name.into())),
     ];
     if let Some(n) = node {
-        attrs.push(("retifs:node".to_string(), AttrValue::Str(n)));
+        attrs.push(("vork:node".to_string(), AttrValue::Str(n)));
     }
     err(c.call(Request::RecordCreate { ns: ME.into(), attrs, data: None }).await).map(|_| ())
 }

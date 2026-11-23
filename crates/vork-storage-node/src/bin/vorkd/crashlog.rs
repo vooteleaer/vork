@@ -336,7 +336,7 @@ mod tests {
     #[test]
     fn names() {
         assert_eq!(parse_name("1794531656384-panic-vorkd.txt"), Some((1_794_531_656_384, "panic".into(), "vorkd".into())));
-        assert_eq!(parse_name("1-app_crash-org.retifs.music.txt"), Some((1, "app_crash".into(), "org.retifs.music".into())));
+        assert_eq!(parse_name("1-app_crash-org.vork.storage.music.txt"), Some((1, "app_crash".into(), "org.vork.storage.music".into())));
         assert_eq!(clean("app-crash"), "app_crash");
         assert_eq!(clean(""), "unknown");
     }

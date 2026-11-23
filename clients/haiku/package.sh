@@ -53,7 +53,7 @@ cat >> "$STAGE/data/user_launch/vork" <<'EOF'
 # with the desktop, once the Deskbar runs. At top level it started before
 # app_server, and a login sometimes never got its desktop (2026-11-09).
 target desktop {
-	job x-vnd.retifs-deskbar {
+	job x-vnd.vork-storage-deskbar {
 		launch /boot/system/apps/vork/vork --deskbar
 		requires x-vnd.Be-TSKB
 	}
@@ -72,7 +72,7 @@ the formats still change, keep no data in it you can't lose.
 Includes the vØrk node, the vork daemon and commands, and the status and \
 settings utility with its Deskbar icon. Both start at login as launch_daemon \
 jobs; the store is ~/config/var/vork."
-packager		"vork <https://github.com/vooteleaer/retifs>"
+packager		"vork <https://github.com/vooteleaer/vork>"
 vendor			"vork"
 licenses {
 	"MIT"
@@ -93,7 +93,7 @@ requires {
 	lib:libstdc++
 }
 urls {
-	"https://github.com/vooteleaer/retifs"
+	"https://github.com/vooteleaer/vork"
 }
 EOF
 

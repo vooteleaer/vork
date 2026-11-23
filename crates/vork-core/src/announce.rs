@@ -35,7 +35,7 @@ pub type SiteTag = [u8; 8];
 /// The tag of site `name`.
 pub fn site_tag(name: &str) -> SiteTag {
     let mut h = Sha256::new();
-    h.update(b"retifs.site\0");
+    h.update(b"vork.site\0");
     h.update(name.trim().to_lowercase().as_bytes());
     h.finalize()[..8].try_into().expect("8 bytes")
 }
@@ -194,7 +194,7 @@ pub const ABOUT_MIN: usize = 24;
 /// the order is the publisher's to choose: the most telling first).
 pub fn library_app_data(l: &LibraryAnnounce) -> Vec<u8> {
     let mut l = l.clone();
-    l.has.retain(|(t, _)| !t.starts_with("retifs."));
+    l.has.retain(|(t, _)| !t.starts_with("vork."));
     l.has.truncate(HAS_MAX);
     loop {
         let out = encode_library(&l);
@@ -318,7 +318,7 @@ mod tests {
         assert_eq!(node_announce_s(&node_app_data(86_400, None, true)), Some(86_400));
         // Without a site, as before sites.
         assert_eq!(node_app_data(600, None, true), [0x82, 0xaa, b'a', b'n', b'n', b'o', b'u', b'n', b'c', b'e', b'_', b's', 0xcd, 0x02, 0x58, 0xa1, b'v', 0x01]);
-        assert_eq!(node_announce_s(b"retifs/v0"), None);
+        assert_eq!(node_announce_s(b"vork-storage/v0"), None);
         assert_eq!(node_announce_s(&node_app_data(0, None, true)), None);
         assert_eq!(node_announce_s(&[]), None);
     }
@@ -368,7 +368,7 @@ mod tests {
             writer: [1; 32],
             read_key: [2; 32],
             fmt: LIBRARY_FMT,
-            has: vec![("application/vnd.mapbox-vector-tile".into(), 95332), ("application/x-vnd.retifs.tileset".into(), 1)],
+            has: vec![("application/vnd.mapbox-vector-tile".into(), 95332), ("application/x-vnd.vork.tileset".into(), 1)],
             bounds: Some([20.85, 57.49, 28.22, 60.0]),
             seq: 191,
             node: Some([9; 16]),
@@ -384,8 +384,8 @@ mod tests {
         let about = library_announce(&library_app_data(&wordy)).unwrap().1.unwrap().about;
         assert!(about.ends_with('…') && !about.ends_with(" …") && wordy.about.starts_with(about.trim_end_matches('…')), "{about}");
         // vØrk storage' own records aren't listed.
-        let own = LibraryAnnounce { has: vec![("application/x-vnd.retifs.place".into(), 5), ("retifs.placement".into(), 1)], ..l.clone() };
-        assert_eq!(library_announce(&library_app_data(&own)).unwrap().1.unwrap().has, vec![("application/x-vnd.retifs.place".to_string(), 5)]);
+        let own = LibraryAnnounce { has: vec![("application/x-vnd.vork.place".into(), 5), ("vork.placement".into(), 1)], ..l.clone() };
+        assert_eq!(library_announce(&library_app_data(&own)).unwrap().1.unwrap().has, vec![("application/x-vnd.vork.place".to_string(), 5)]);
         let small = LibraryAnnounce { has: l.has[..1].to_vec(), ..l.clone() };
         assert_eq!(library_announce(&library_app_data(&small)), Some((1, Some(small))));
         // Too long: cut, still read.
@@ -410,7 +410,7 @@ mod tests {
         write_str(&mut other, "v");
         write_int(&mut other, 2);
         assert_eq!(library_announce(&other), None);
-        assert_eq!(library_announce(b"retifs/v0"), None);
+        assert_eq!(library_announce(b"vork-storage/v0"), None);
     }
 
     #[test]

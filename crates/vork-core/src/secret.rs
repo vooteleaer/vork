@@ -3,9 +3,9 @@
 use hkdf::Hkdf;
 use sha2::{Digest, Sha256};
 
-const PUBLIC_LABEL: &[u8] = b"retifs/v1/public";
-const RESTRICTED_SALT: &[u8] = b"retifs/v1/restricted";
-const RECORD_SALT: &[u8] = b"retifs/v1/record";
+const PUBLIC_LABEL: &[u8] = b"vork-storage/v1/public";
+const RESTRICTED_SALT: &[u8] = b"vork-storage/v1/restricted";
+const RECORD_SALT: &[u8] = b"vork-storage/v1/record";
 
 /// Keys the per-chunk seed: `seed = HMAC-SHA256(secret, frame)`.
 #[derive(Clone, PartialEq, Eq)]
