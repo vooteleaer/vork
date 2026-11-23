@@ -410,12 +410,24 @@ fn local_path(out: &std::path::Path, path: &str) -> Option<PathBuf> {
             continue;
         }
         let clean: String = part.chars().map(|c| if c.is_control() || "<>:\"|?*".contains(c) { '_' } else { c }).collect();
-        let clean = clean.trim_end_matches(['.', ' ']).to_string();
+        let mut clean = clean.trim_end_matches(['.', ' ']).to_string();
         if clean.is_empty() {
             continue;
         }
+        // A name of at most 180 characters (file systems take 255 bytes),
+        // its extension kept.
+        if clean.chars().count() > 180 {
+            let ext = std::path::Path::new(&clean).extension().map(|e| format!(".{}", e.to_string_lossy())).filter(|e| e.len() <= 12).unwrap_or_default();
+            let stem: String = clean.chars().take(180 - ext.chars().count()).collect();
+            clean = format!("{}{ext}", stem.trim_end_matches(['.', ' ']));
+        }
         p.push(clean);
         any = true;
+    }
+    // Windows: past 260 characters a path needs its long form.
+    #[cfg(windows)]
+    if p.as_os_str().len() > 240 && p.is_absolute() && !p.as_os_str().to_string_lossy().starts_with(r"\\?\") {
+        p = PathBuf::from(format!(r"\\?\{}", p.display()));
     }
     any.then_some(p)
 }
