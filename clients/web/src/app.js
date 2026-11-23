@@ -12,7 +12,8 @@ function fromHash() {
   if (["announces", "join", "new", "reports", "node", "network", "settings"].includes(h)) return { kind: h };
   return { kind: "node" };
 }
-let selected = fromHash();
+// In the vØrk dashboard each page opens on its own view (its menu is the dashboard's).
+let selected = window.VORK_VIEW ? { kind: window.VORK_VIEW } : fromHash();
 window.addEventListener("hashchange", () => { selected = fromHash(); render(); });
 
 const $ = (id) => document.getElementById(id);
@@ -182,8 +183,33 @@ function updateLive() {
   for (const e of v.querySelectorAll("[data-live-show]")) e.style.display = l[e.dataset.liveShow] ? "" : "none";
 }
 
+// Back to the list of libraries (in the dashboard, where there's no menu beside).
+function backToLibraries(v) {
+  if (inDashboard) v.append(el("p", {}, el("button", { class: "flat", style: "padding-left:0", onclick: () => { selected = { kind: "libraries" }; render(); } }, "← Libraries")));
+}
+
 const views = {
+  // The libraries on this node, one row each (the dashboard's Libraries page).
+  async libraries(v) {
+    v.append(el("div", { class: "row" },
+      el("h2", { class: "grow", style: "margin:0" }, "Libraries"),
+      el("button", { onclick: () => { selected = { kind: "join" }; render(); } }, "Join with link"),
+      el("button", { class: "primary", onclick: () => { selected = { kind: "new" }; render(); } }, "New library")));
+    const list = libraries();
+    if (!list.length) {
+      v.append(el("p", { class: "dim" }, status && status.up ? "No libraries yet: make one, or join one with a link or from Announces." : "vork isn't answering."));
+      return;
+    }
+    v.append(el("div", { class: "card list", style: "margin-top:12px" }, list.map((l) =>
+      el("div", { class: "row", style: "cursor:pointer;margin:0", onclick: () => { selected = { kind: "library", ns: l.name }; render(); } },
+        l.favorite ? el("span", { class: "star" }, "★") : null,
+        el("span", { class: "grow" }, el("strong", {}, l.name), " ", el("span", { class: "dim" }, [l.public ? "public" : "private", l.access].filter(Boolean).join(" · "))),
+        el("span", { class: "dim" }, l.records !== undefined ? `${l.records} records` : ""),
+        el("span", { class: "dim" }, "›")))));
+  },
+
   async library(v, ns) {
+    backToLibraries(v);
     const l = libraries().find((x) => x.name === ns);
     if (!l) { v.append(el("p", {}, "No library ", ns, " here any more.")); return; }
     const writable = l.access !== "read only";
@@ -317,6 +343,7 @@ const views = {
   },
 
   async join(v) {
+    backToLibraries(v);
     v.append(el("h2", {}, "Join with a link"), el("p", { class: "sub" }, "A library's link or an invitation (vork:…)."));
     const link = el("input", { class: "wide", placeholder: "vork:…" });
     v.append(el("div", { class: "card" }, link, el("div", { class: "row" },
@@ -326,6 +353,7 @@ const views = {
   },
 
   async new(v) {
+    backToLibraries(v);
     v.append(el("h2", {}, "New library"), el("p", { class: "sub" }, "Made on this node: its keys are made here."));
     const name = el("input", { placeholder: "name" });
     const purpose = el("select", {}, ...["", "photos", "music", "contacts", "calendar", "maps"].map((p) => el("option", { value: p }, p || "generic")));
@@ -481,7 +509,7 @@ async function act(path, body, said, gone) {
   try {
     await post(path, body);
     toast(said);
-    if (gone) selected = { kind: "node" };
+    if (gone) selected = { kind: inDashboard ? "libraries" : "node" };
     await refresh();
   } catch (e) { toast(e.message); }
 }

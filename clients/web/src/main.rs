@@ -430,14 +430,28 @@ fn main() {
 const DASHBOARD_STYLE: &str = ":root { --side: var(--panel2); --fg: var(--text); --accent-fg: #fff; --good: var(--ok); --partly: var(--warn); --missing: var(--bad); --hover: rgba(127,127,127,.08); --sel: color-mix(in srgb, var(--accent) 16%, transparent); }
 body { background: transparent; }
 main { min-height: 0; }
-nav { background: transparent; border-right-color: var(--line); }
+nav { display: none; }
+section#view { padding: 4px 2px; }
 .card { background: var(--panel2); }
 input, select, textarea { background: var(--panel); }
 ";
 
-/// The page as the dashboard shows it: its styles (colours from the
-/// dashboard), its body without the header, and the script inline.
-fn dashboard_page() -> String {
+/// The pages in the dashboard's menu, under the application's own heading:
+/// (path, title, the page's view).
+const DASHBOARD_PAGES: [(&str, &str, &str); 5] = [
+    ("/libraries", "Libraries", "libraries"),
+    ("/announces", "Announces", "announces"),
+    ("/status", "Status", "node"),
+    ("/settings", "Settings", "settings"),
+    ("/reports", "Reports", "reports"),
+];
+
+/// Its icon in the dashboard's menu (the page /icon.svg).
+const ICON: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22c3a6"/><stop offset="1" stop-color="#4f8dff"/></linearGradient></defs><rect width="64" height="64" rx="18" fill="url(#g)"/><g fill="none" stroke="#fff" stroke-width="3.6" stroke-linecap="round"><ellipse cx="32" cy="19" rx="14" ry="5.5"/><path d="M18 19v26c0 3 6.3 5.5 14 5.5S46 48 46 45V19"/><path d="M18 32c0 3 6.3 5.5 14 5.5S46 35 46 32"/></g></svg>"##;
+
+/// The page as the dashboard shows it, opened on `view`: its styles (colours
+/// from the dashboard), its body without the header, and the script inline.
+fn dashboard_page(view: &str) -> String {
     let style = PAGE.split_once("<style>").and_then(|(_, r)| r.split_once("</style>")).map(|(s, _)| s).unwrap_or_default();
     // The page's own colours (light and dark) go: the dashboard gives its own.
     let style = match (style.find(":root {"), style.find("* { box-sizing")) {
@@ -446,7 +460,8 @@ fn dashboard_page() -> String {
     };
     let main = PAGE.split_once("<main>").and_then(|(_, r)| r.split_once("</main>")).map(|(m, _)| m).unwrap_or_default();
     format!(
-        "<style>{style}{DASHBOARD_STYLE}</style><main>{main}</main><div id=\"toast\"></div><script>{}</script>",
+        "<style>{style}{DASHBOARD_STYLE}</style><main>{main}</main><div id=\"toast\"></div><script>window.VORK_VIEW = {};\n{}</script>",
+        serde_json::to_string(view).unwrap(),
         SCRIPT.replace("</script", "<\\/script")
     )
 }
@@ -454,8 +469,14 @@ fn dashboard_page() -> String {
 /// A page or a call from the dashboard: the page, or an API call (a body
 /// means a POST, as the page's `post` sends one).
 fn dashboard_answer(path: &str, body: &[u8]) -> Vec<u8> {
+    if path == "/icon.svg" {
+        return ICON.as_bytes().to_vec();
+    }
+    if let Some((_, _, view)) = DASHBOARD_PAGES.iter().find(|(p, _, _)| *p == path) {
+        return dashboard_page(view).into_bytes();
+    }
     if path == "/" {
-        return dashboard_page().into_bytes();
+        return dashboard_page("libraries").into_bytes();
     }
     if !path.starts_with("/api/") {
         return json!({ "error": "no such page" }).to_string().into_bytes();
@@ -472,7 +493,8 @@ fn dashboard(endpoint: &str) {
         loop {
             match vork_api::Client::connect(endpoint).await {
                 Ok((client, mut events)) => {
-                    match client.pages("storage", "Storage", vec![("/".into(), "Storage".into())]) {
+                    let pages = DASHBOARD_PAGES.iter().map(|(p, t, _)| (p.to_string(), t.to_string())).collect();
+                    match client.pages("storage", "Storage", pages) {
                         Ok(()) => println!("vork-web: pages in the vØrk dashboard (node at {endpoint})"),
                         Err(e) => eprintln!("vork-web: {e}"),
                     }
@@ -524,7 +546,9 @@ mod tests {
 
     #[test]
     fn dashboard_page_is_whole() {
-        let p = dashboard_page();
+        let p = dashboard_page("libraries");
+        assert!(p.contains("window.VORK_VIEW = \"libraries\""));
+        assert!(ICON.starts_with("<svg"));
         assert!(!p.contains("<header>"), "the dashboard has the header");
         assert!(!p.contains("--fg: #"), "colours come from the dashboard");
         assert!(p.contains("<main>") && p.contains("id=\"nav\"") && p.contains("function render()"));
