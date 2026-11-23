@@ -39,13 +39,22 @@ function toast(text) {
   toast.timer = setTimeout(() => (t.style.display = "none"), 4000);
 }
 
+// In the vØrk node's dashboard (vork-web --dashboard) the page asks through
+// it: a call with a body is a POST.
+const inDashboard = !!window.vork;
 async function get(path) {
+  if (inDashboard) return JSON.parse((await vork.call(path)).body);
   const r = await fetch(path, { credentials: "same-origin" });
   if (r.status === 401) { location.reload(); throw new Error("not paired"); }
   return r.json();
 }
 
 async function post(path, body) {
+  if (inDashboard) {
+    const v = JSON.parse((await vork.call(path, JSON.stringify(body || {}))).body);
+    if (v && v.error) throw new Error(v.error);
+    return v;
+  }
   const r = await fetch(path, {
     method: "POST",
     credentials: "same-origin",
@@ -105,12 +114,14 @@ function renderNav() {
   nav.append(el("h2", {}, "This node"));
   nav.append(item({ kind: "reports" }, "Crash and trouble reports"));
   nav.append(item({ kind: "node" }, "Status"));
-  nav.append(item({ kind: "network" }, "vØrk network"));
+  // In the dashboard the node's own pages have the network.
+  if (!inDashboard) nav.append(item({ kind: "network" }, "vØrk network"));
   nav.append(item({ kind: "settings" }, "Settings"));
 }
 
 function renderHeader() {
   const dot = $("dot");
+  if (!dot) return; // in the dashboard: its header
   const up = status && status.up;
   dot.className = "dot " + (up ? "up" : "down");
   let text;
@@ -367,6 +378,8 @@ const views = {
         el("span", { class: "k" }, "Store limit"), el("span", {}, human(u.store_limit)),
         el("span", { class: "k" }, "Disk"), el("span", {}, `${human(u.disk_available)} free of ${human(u.disk_total)}`))));
     }
+    // In the dashboard its own pages show the network.
+    if (inDashboard) return;
     const r = await get("/api/network");
     v.append(el("div", { class: "card" }, el("h3", {}, "vØrk network"),
       el("p", {}, networkState(r), " ", el("button", { class: "flat", onclick: () => { selected = { kind: "network" }; render(); } }, "Connections and configuration"))));
@@ -476,7 +489,8 @@ async function act(path, body, said, gone) {
 let rendering = false;
 async function render() {
   const hash = selected.kind === "library" ? "library=" + encodeURIComponent(selected.ns) : selected.kind;
-  if (decodeURIComponent(location.hash.slice(1)) !== decodeURIComponent(hash)) history.replaceState(null, "", "#" + hash);
+  // In the dashboard the page has no address of its own (a sandboxed frame): the view is kept here only.
+  if (!inDashboard && decodeURIComponent(location.hash.slice(1)) !== decodeURIComponent(hash)) history.replaceState(null, "", "#" + hash);
   renderHeader();
   renderNav();
   if (rendering) return;

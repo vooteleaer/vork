@@ -4,6 +4,12 @@
 //!
 //!     vork-web [--listen ADDR:PORT] [--allow CIDR,…] [--host NAME,…] [--pairing] [--store DIR]
 //!     vork-web --pair-link            (prints the pairing link again)
+//!     vork-web --dashboard [ENDPOINT] (its pages in the vØrk node's dashboard instead)
+//!
+//! With `--dashboard` it serves nothing itself: it adds its pages to the
+//! machine's vØrk node's dashboard over the node's local API (`$VORK_API`, or
+//! the system node's), answers them there, and comes back when the node
+//! restarts. The dashboard decides who sees them (its owner).
 //!
 //! Who may use it is the installer's choice:
 //! - `--listen` (`VORK_WEB_LISTEN`, default `127.0.0.1:8741`) and `--allow`
@@ -368,10 +374,14 @@ fn main() {
             "--allow" => allow = args.next().expect("--allow CIDR,…"),
             "--store" => std::env::set_var("VORK_STORE", args.next().expect("--store DIR")),
             "--pair-link" => print_link = true,
+            "--dashboard" => {
+                let endpoint = args.next().unwrap_or_else(vork_api::default_endpoint);
+                return dashboard(&endpoint);
+            }
             "--pairing" => pairing = true,
             "--host" => hosts.extend(args.next().expect("--host NAME,…").split(',').map(|h| h.trim().to_string()).filter(|h| !h.is_empty())),
             "-h" | "--help" => {
-                println!("vork-web [--listen ADDR:PORT] [--allow CIDR,…] [--host NAME,…] [--pairing] [--store DIR] | --pair-link");
+                println!("vork-web [--listen ADDR:PORT] [--allow CIDR,…] [--host NAME,…] [--pairing] [--store DIR] | --pair-link | [--store DIR] --dashboard [ENDPOINT]");
                 return;
             }
             other => {
@@ -413,6 +423,86 @@ fn main() {
     }
 }
 
+// ---- in the vØrk node's dashboard ------------------------------------------------
+
+/// The dashboard's colours in place of the page's own, no header (the
+/// dashboard has one), and room as tall as the content only.
+const DASHBOARD_STYLE: &str = ":root { --side: var(--panel2); --fg: var(--text); --accent-fg: #fff; --good: var(--ok); --partly: var(--warn); --missing: var(--bad); --hover: rgba(127,127,127,.08); --sel: color-mix(in srgb, var(--accent) 16%, transparent); }
+body { background: transparent; }
+main { min-height: 0; }
+nav { background: transparent; border-right-color: var(--line); }
+.card { background: var(--panel2); }
+input, select, textarea { background: var(--panel); }
+";
+
+/// The page as the dashboard shows it: its styles (colours from the
+/// dashboard), its body without the header, and the script inline.
+fn dashboard_page() -> String {
+    let style = PAGE.split_once("<style>").and_then(|(_, r)| r.split_once("</style>")).map(|(s, _)| s).unwrap_or_default();
+    // The page's own colours (light and dark) go: the dashboard gives its own.
+    let style = match (style.find(":root {"), style.find("* { box-sizing")) {
+        (Some(a), Some(b)) if a < b => format!("{}{}", &style[..a], &style[b..]),
+        _ => style.to_string(),
+    };
+    let main = PAGE.split_once("<main>").and_then(|(_, r)| r.split_once("</main>")).map(|(m, _)| m).unwrap_or_default();
+    format!(
+        "<style>{style}{DASHBOARD_STYLE}</style><main>{main}</main><div id=\"toast\"></div><script>{}</script>",
+        SCRIPT.replace("</script", "<\\/script")
+    )
+}
+
+/// A page or a call from the dashboard: the page, or an API call (a body
+/// means a POST, as the page's `post` sends one).
+fn dashboard_answer(path: &str, body: &[u8]) -> Vec<u8> {
+    if path == "/" {
+        return dashboard_page().into_bytes();
+    }
+    if !path.starts_with("/api/") {
+        return json!({ "error": "no such page" }).to_string().into_bytes();
+    }
+    let (method, body) = if body.is_empty() { (Method::Get, Value::Null) } else { (Method::Post, serde_json::from_slice(body).unwrap_or(Value::Null)) };
+    let (v, _) = api_call(&method, path, &body);
+    v.to_string().into_bytes()
+}
+
+fn dashboard(endpoint: &str) {
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("a runtime");
+    rt.block_on(async {
+        let mut said = false;
+        loop {
+            match vork_api::Client::connect(endpoint).await {
+                Ok((client, mut events)) => {
+                    match client.pages("storage", "Storage", vec![("/".into(), "Storage".into())]) {
+                        Ok(()) => println!("vork-web: pages in the vØrk dashboard (node at {endpoint})"),
+                        Err(e) => eprintln!("vork-web: {e}"),
+                    }
+                    said = false;
+                    while let Some(ev) = events.recv().await {
+                        match ev {
+                            vork_api::Event::Page { token, path, body, .. } => {
+                                let c = client.clone();
+                                // Core calls block (some for seconds).
+                                tokio::task::spawn_blocking(move || {
+                                    let _ = c.respond(token, 0, dashboard_answer(&path, &body));
+                                });
+                            }
+                            vork_api::Event::Gone => break,
+                            _ => {}
+                        }
+                    }
+                    eprintln!("vork-web: the vØrk node went away; waiting for it");
+                }
+                Err(e) if !said => {
+                    eprintln!("vork-web: no vØrk node at {endpoint} ({e}); waiting for it");
+                    said = true;
+                }
+                Err(_) => {}
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -430,6 +520,16 @@ mod tests {
         assert!(Net::parse("0.0.0.0/0").unwrap().contains("8.8.8.8".parse().unwrap()));
         assert!(Net::parse("10.0.0.0/33").is_err());
         assert_eq!(parse_allow("127.0.0.1/8, ::1/128").unwrap().len(), 2);
+    }
+
+    #[test]
+    fn dashboard_page_is_whole() {
+        let p = dashboard_page();
+        assert!(!p.contains("<header>"), "the dashboard has the header");
+        assert!(!p.contains("--fg: #"), "colours come from the dashboard");
+        assert!(p.contains("<main>") && p.contains("id=\"nav\"") && p.contains("function render()"));
+        assert!(!p.contains("src=\"/app.js\""));
+        assert_eq!(p.matches("</script>").count(), 1, "the inline script ends once");
     }
 
     #[test]
