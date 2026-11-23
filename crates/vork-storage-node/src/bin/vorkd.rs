@@ -7781,6 +7781,7 @@ fn met(risk: f64, target: f64) -> bool {
 /// nor chunk order. Data goes by push, so readers' copies (cache, never
 /// served) can be placed too, and holders don't learn who sent it.
 async fn place_all(d: &Daemon) -> Result<(), String> {
+    let pass = Instant::now();
     // Silent for a day: gone (test nodes, replaced identities). Otherwise
     // they pile up as candidates, each costing a 20 s link attempt.
     if let Ok(n) = d.store.forget_silent_storage_nodes(now_ms(), |s| FORGET_SILENT_MS.max(10 * s.announce_s as u64 * 1000))
@@ -7852,6 +7853,9 @@ async fn place_all(d: &Daemon) -> Result<(), String> {
         println!("placement: {short} file(s) below their number of copies{site}: not enough storage nodes reachable now");
     }
     // Every holder at once: each over its own link, none waits for another.
+    if !plan.is_empty() {
+        println!("placement: planned {} file(s) for {} holder(s) in {:.1} s", plan.values().map(Vec::len).sum::<usize>(), plan.len(), pass.elapsed().as_secs_f64());
+    }
     let jobs = plan.into_iter().map(|(peer, files)| place_at(d, peer, files));
     for r in futures_util::future::join_all(jobs).await {
         r?;
@@ -8212,11 +8216,14 @@ async fn lease_to(
         served.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
         served.dedup();
         async move {
+            let t0 = Instant::now();
             match offer(d, link, peer, &l, sources).await? {
                 LeaseStatus::Accepted => {
+                    let offered = t0.elapsed().as_secs_f64();
                     d.store.record_own_lease(&l, peer, &served).map_err(|e| e.to_string())?;
+                    let t1 = Instant::now();
                     let (sent, _) = push(d, link, &l, Some(peer)).await.map_err(|e| format!("push: {e}"))?;
-                    println!("lease {}: pushed {sent} of {} chunk(s) to <{}>", hex(&l.id), l.entries.len(), hex(peer));
+                    println!("lease {}: pushed {sent} of {} chunk(s) to <{}> (offer {offered:.1} s, push {:.1} s)", hex(&l.id), l.entries.len(), hex(peer), t1.elapsed().as_secs_f64());
                     Ok(true)
                 }
                 LeaseStatus::NoRoom => Ok(false),

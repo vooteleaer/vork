@@ -20,7 +20,8 @@
 //! proves the seed, exactly like the owner would. When the last lease keeping
 //! a chunk expires, the flag and token go; a chunk with no other tier is removed.
 
-use redb::{ReadableTable, TableDefinition};
+use redb::{ReadableTable, ReadableTableMetadata, TableDefinition};
+use crate::{move_usage, Tier, INDEX, SLOT_SIZES};
 use vork_core::{
     lease::{Lease, LeaseId, Renewal, ID_LEN},
     ChunkToken, Cid,
@@ -174,11 +175,10 @@ impl SlabStore {
                     Accept::Conflict
                 });
             }
-            let mut held_chunks = 0u64;
-            for e in leases.iter()? {
-                let (_, v) = e?;
-                held_chunks += parse_held(v.value()).2.entries.len() as u64;
-            }
+            // Chunks held for others: one row per (chunk, lease), counted by the
+            // table itself (every lease decoded to count them made each offer
+            // slower than the one before: seconds with a few hundred leases).
+            let held_chunks = w.open_table(LEASE_CHUNKS)?.len()?;
             if (held_chunks + lease.entries.len() as u64) * LEASE_CHUNK_ESTIMATE > hold_limit {
                 return Ok(Accept::NoRoom);
             }
@@ -189,13 +189,24 @@ impl SlabStore {
                 chunks.insert([cid.as_bytes().as_slice(), id].concat().as_slice(), ())?;
                 serve.insert(cid.as_bytes().as_slice(), token.0.as_slice())?;
             }
-        }
-        w.commit()?;
-        for (cid, _) in &lease.entries {
-            if let Some(flags) = self.tier(cid)? {
-                self.set_tier(cid, flags | tier::SERVING)?;
+            // Chunks already here serve now: in the same transaction (one
+            // each made 1024 transactions per offer).
+            let mut index = w.open_table(INDEX)?;
+            let mut moved = Vec::new();
+            for (cid, _) in &lease.entries {
+                let key = cid.as_bytes().as_slice();
+                let Some((c, seg, slot, flags)) = index.get(key)?.map(|g| g.value()) else { continue };
+                if flags | tier::SERVING != flags {
+                    index.insert(key, (c, seg, slot, flags | tier::SERVING))?;
+                    moved.push((flags, c));
+                }
+            }
+            drop(index);
+            for (flags, c) in moved {
+                move_usage(&w, Tier::of(flags), Tier::of(flags | tier::SERVING), SLOT_SIZES[c as usize] as u64)?;
             }
         }
+        w.commit()?;
         Ok(Accept::Accepted)
     }
 
