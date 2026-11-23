@@ -72,7 +72,7 @@ use vork_storage_net::{
         decode_request, encode_bitmap, encode_lease_request, encode_prove, encode_prove_reply,
         encode_lease_status, LeaseRequest, LeaseStatus, ReceiptReply, GET_ENDPOINT, HAVE_ENDPOINT, LEASE_ENDPOINT,
         PROVE_ENDPOINT, RECEIPT_ENDPOINT, decode_bitmap, decode_put, encode_have, encode_put, HAVE_PREFIX, MAX_HAVE,
-        MAX_PUT, PUT_ENDPOINT, HEAD_ENDPOINT, API_ENDPOINT, MAX_QUERY_TOKENS, QUERY_ENDPOINT, INVITE_ENDPOINT,
+        MAX_HAVE_LARGE, MAX_PUT, MAX_PUT_BYTES, MAX_PUT_LARGE, PUT_ENDPOINT, HEAD_ENDPOINT, API_ENDPOINT, MAX_QUERY_TOKENS, QUERY_ENDPOINT, INVITE_ENDPOINT,
         READER_ENDPOINT, MAX_READER_PROOFS, GET_ITEM, encode_request,
     },
     seek::{pull_round, seek_round},
@@ -8236,7 +8236,12 @@ static DAMAGED: Mutex<std::collections::BTreeSet<Cid>> = Mutex::new(std::collect
 async fn push(d: &Daemon, link: LinkId, l: &Lease, peer: Option<&PeerId>) -> Result<(usize, usize), String> {
     let nonce = d.transport.link_nonce(link);
     let mut missing = Vec::new();
-    for batch in l.entries.chunks(MAX_HAVE) {
+    // Large requests first (a node since 2026-11-23 takes them); one that
+    // refuses them is an older node: the small ones of before, for the rest.
+    let mut large = true;
+    let mut i = 0;
+    while i < l.entries.len() {
+        let batch = &l.entries[i..(i + if large { MAX_HAVE_LARGE } else { MAX_HAVE }).min(l.entries.len())];
         let items: Vec<([u8; HAVE_PREFIX], [u8; 16])> = batch
             .iter()
             .map(|(cid, token)| {
@@ -8244,8 +8249,25 @@ async fn push(d: &Daemon, link: LinkId, l: &Lease, peer: Option<&PeerId>) -> Res
                 (prefix, token.have_proof(&nonce, &prefix))
             })
             .collect();
-        let bits = decode_bitmap(&d.ask(link, HAVE_ENDPOINT, encode_have(&items)).await?, batch.len()).map_err(|e| e.to_string())?;
+        let reply = match d.ask(link, HAVE_ENDPOINT, encode_have(&items)).await {
+            Ok(r) => r,
+            Err(_) if large && batch.len() > MAX_HAVE => {
+                large = false;
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
+        let bits = decode_bitmap(&reply, batch.len()).map_err(|e| e.to_string())?;
         missing.extend(batch.iter().zip(bits).filter(|(_, held)| !held).map(|((cid, _), _)| *cid));
+        i += batch.len();
+    }
+    if large {
+        match push_pipelined(d, link, l, peer, &missing).await {
+            Ok(r) => return Ok(r),
+            // Refused or broken: as before, one small batch at a time (what
+            // was taken already is only taken again).
+            Err(e) => eprintln!("lease {}: large pushes failed ({e}): small ones", hex(&l.id)),
+        }
     }
     // Start with full batches; on a timeout (slow or long paths), or a batch
     // too big for one request (large chunks: Reticulum's DataTooLarge), halve
@@ -8288,6 +8310,62 @@ async fn push(d: &Daemon, link: LinkId, l: &Lease, peer: Option<&PeerId>) -> Res
         }
         lacking += (end - at) - here;
         at = end;
+    }
+    Ok((sent, lacking))
+}
+
+/// Pushes in flight at once to one holder: the link is never idle waiting
+/// for an answer (one request at a time sent 16 small chunks per round
+/// trip: a few Mbit/s, 2026-11-23).
+const PUSH_IN_FLIGHT: usize = 4;
+
+/// Pushes `missing` in large batches (up to `MAX_PUT_LARGE` chunks and about
+/// `MAX_PUT_BYTES`), `PUSH_IN_FLIGHT` at a time.
+async fn push_pipelined(d: &Daemon, link: LinkId, l: &Lease, peer: Option<&PeerId>, missing: &[Cid]) -> Result<(usize, usize), String> {
+    use futures_util::stream::{FuturesUnordered, StreamExt};
+    let (mut sent, mut lacking) = (0usize, 0usize);
+    let mut flying = FuturesUnordered::new();
+    let send = |cts: Vec<Vec<u8>>| async move {
+        let t0 = Instant::now();
+        let bytes: u64 = cts.iter().map(|c| c.len() as u64).sum();
+        let n = cts.len();
+        let reply = d.ask(link, PUT_ENDPOINT, encode_put(&l.id, &cts)).await?;
+        if let Some(peer) = peer {
+            let _ = d.store.record_transfer(peer, bytes, t0.elapsed().as_millis() as u64);
+        }
+        Ok::<usize, String>(decode_bitmap(&reply, n).map_err(|e| e.to_string())?.iter().filter(|&&b| b).count())
+    };
+    let mut batch: Vec<Vec<u8>> = Vec::new();
+    let mut batch_bytes = 0usize;
+    for c in missing {
+        // A chunk here that doesn't hash to its address (damaged in the
+        // store) would only be refused: not sent, counted as not here.
+        let Some(ct) = d.store.fetch(c).ok().flatten() else {
+            lacking += 1;
+            continue;
+        };
+        if Cid::of(&ct) != *c {
+            if DAMAGED.lock().unwrap().insert(*c) {
+                eprintln!("chunk {c}: what's here doesn't match its address (damaged): not pushed");
+            }
+            lacking += 1;
+            continue;
+        }
+        if !batch.is_empty() && (batch.len() == MAX_PUT_LARGE || batch_bytes + ct.len() > MAX_PUT_BYTES) {
+            if flying.len() == PUSH_IN_FLIGHT {
+                sent += flying.next().await.unwrap()?;
+            }
+            flying.push(send(std::mem::take(&mut batch)));
+            batch_bytes = 0;
+        }
+        batch_bytes += ct.len();
+        batch.push(ct);
+    }
+    if !batch.is_empty() {
+        flying.push(send(batch));
+    }
+    while let Some(r) = flying.next().await {
+        sent += r?;
     }
     Ok((sent, lacking))
 }

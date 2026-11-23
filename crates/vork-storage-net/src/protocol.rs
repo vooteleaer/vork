@@ -53,6 +53,10 @@ pub const HAVE_ITEM: usize = HAVE_PREFIX + PROOF_LEN;
 /// 16 items = 384 B: a `have` request fits one link packet, so `have`
 /// requests can be pipelined on one link (docs/storage/recon/first-transfer.md).
 pub const MAX_HAVE: usize = 16;
+/// Over vØrk (sessions carry messages of megabytes): up to this many in one
+/// `have` request, which a node takes since 2026-11-23; to an older one,
+/// `MAX_HAVE`.
+pub const MAX_HAVE_LARGE: usize = 1024;
 
 pub const LEASE_ENDPOINT: &str = "/vork/lease";
 pub const RECEIPT_ENDPOINT: &str = "/vork/receipt";
@@ -82,6 +86,10 @@ pub const MAX_READER_PROOFS: usize = 8;
 pub const MAX_QUERY_TOKENS: usize = 16;
 /// 16 chunks of up to 16 KiB: one resource of about 256 KiB.
 pub const MAX_PUT: usize = 16;
+/// Over vØrk: up to this many chunks, and about `MAX_PUT_BYTES`, in one
+/// `put`, which a node takes since 2026-11-23; to an older one, `MAX_PUT`.
+pub const MAX_PUT_LARGE: usize = 256;
+pub const MAX_PUT_BYTES: usize = 8 << 20;
 
 /// Renewals or receipt requests per bundle.
 pub const MAX_BUNDLE: usize = 64;
@@ -182,8 +190,8 @@ pub fn encode_have(items: &[([u8; HAVE_PREFIX], Proof)]) -> Vec<u8> {
 }
 
 pub fn decode_have(bytes: &[u8]) -> Result<Vec<([u8; HAVE_PREFIX], Proof)>, ProtocolError> {
-    if bytes.is_empty() || !bytes.len().is_multiple_of(HAVE_ITEM) || bytes.len() / HAVE_ITEM > MAX_HAVE {
-        return Err(ProtocolError("have request needs 1..=16 items of prefix ‖ proof"));
+    if bytes.is_empty() || !bytes.len().is_multiple_of(HAVE_ITEM) || bytes.len() / HAVE_ITEM > MAX_HAVE_LARGE {
+        return Err(ProtocolError("have request needs 1..=1024 items of prefix ‖ proof"));
     }
     Ok(bytes
         .as_chunks::<HAVE_ITEM>()
@@ -462,14 +470,14 @@ pub fn decode_put(bytes: &[u8]) -> Result<(LeaseId, Vec<Vec<u8>>), ProtocolError
     while !rest.is_empty() {
         let (len, tail) = rest.split_first_chunk::<4>().ok_or(ProtocolError("truncated length"))?;
         let len = u32::from_be_bytes(*len) as usize;
-        if tail.len() < len || chunks.len() == MAX_PUT {
-            return Err(ProtocolError("put needs 1..=16 whole chunks"));
+        if tail.len() < len || chunks.len() == MAX_PUT_LARGE {
+            return Err(ProtocolError("put needs 1..=256 whole chunks"));
         }
         chunks.push(tail[..len].to_vec());
         rest = &tail[len..];
     }
     if chunks.is_empty() {
-        return Err(ProtocolError("put needs 1..=16 whole chunks"));
+        return Err(ProtocolError("put needs 1..=256 whole chunks"));
     }
     Ok((*id, chunks))
 }
@@ -520,7 +528,8 @@ mod tests {
         let chunks = vec![vec![1u8; 1024], vec![2u8; 4096]];
         assert_eq!(decode_put(&encode_put(&[7; 16], &chunks)).unwrap(), ([7; 16], chunks));
         assert!(decode_put(&[7; 16]).is_err(), "no chunks");
-        assert!(decode_put(&encode_put(&[7; 16], &vec![vec![0u8; 8]; MAX_PUT + 1])).is_err());
+        assert!(decode_put(&encode_put(&[7; 16], &vec![vec![0u8; 8]; MAX_PUT + 1])).is_ok(), "more than the old 16 since 2026-11-23");
+        assert!(decode_put(&encode_put(&[7; 16], &vec![vec![0u8; 8]; MAX_PUT_LARGE + 1])).is_err());
     }
 
     use super::*;
