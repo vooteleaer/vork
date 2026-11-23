@@ -2156,6 +2156,10 @@ impl Node {
                 let neighbor = self.neighbor_by_key.get(&best.ann.x_pub).is_some_and(|id| self.is_up(*id));
                 let session = self.session_by_dest.get(dest).or_else(|| self.ip_peer.get(dest));
                 let direct = session.and_then(|sid| self.sessions.get(sid).map(|s| (sid, s))).is_some_and(|(sid, s)| s.paths.iter().any(|k| self.is_direct(*sid, *k)));
+                // When it was last heard from: its newest announce (every 30 s), or a session with it.
+                let announced = by.values().map(|r| r.heard.elapsed()).min();
+                let in_session = self.sessions.values().filter(|s| s.peer_identity == Some(*dest) || s.peer_hash == Some(*dest)).map(|s| s.heard.elapsed()).min();
+                let seen = announced.into_iter().chain(in_session).min();
                 Some(json!({
                     "address": hex::encode(dest),
                     "name": announced_name(&best.ann.app_data),
@@ -2164,6 +2168,7 @@ impl Node {
                     "hops": best.hops,
                     "neighbor": neighbor,
                     "direct": direct || neighbor,
+                    "seen_s": seen.map(|d| d.as_secs()),
                     "lite": best.ann.flags & FLAG_RELAY == 0,
                     "device": self.cfg.devices.contains(dest),
                     // Its .vork name here (a number after it when another device shares its name).

@@ -219,6 +219,9 @@ function ago(s) { if (s == null) return "–"; if (s < 2) return "just now"; if 
 function dur(s) { const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60); return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`; }
 const nodes = () => S.nodes || [];
 const byAddr = () => Object.fromEntries(nodes().map((n) => [n.address, n]));
+// Heard from lately (it announces every 30 s): a route known isn't enough, it outlives the node by minutes.
+const ALIVE_S = 90;
+const alive = (n) => !!n && (n.seen_s == null || n.seen_s < ALIVE_S);
 const nameOf = (a) => { const n = byAddr()[a]; return (n && n.name) || short(a); };
 function toast(t, bad) { const e = $("#toast"); e.textContent = t; e.className = "toast" + (bad ? " bad" : ""); e.style.display = "block"; clearTimeout(e._t); e._t = setTimeout(() => (e.style.display = "none"), 3500); }
 async function copy(v) { if (APP) { APP.copy(v); return toast("Copied: " + v); } try { await navigator.clipboard.writeText(v); toast("Copied: " + v); } catch { toast(v); } }
@@ -317,7 +320,7 @@ function topoGraph() {
   const nodes = {}, edges = {};
   const node = (a, o) => (nodes[a] = Object.assign(nodes[a] || { a }, o));
   node(mine, { name: S.name || "this node", me: true, device: true });
-  devs.forEach((a) => { const n = byAddr()[a]; node(a, { name: (n && (n.dns || "").replace(/\.vork$/, "")) || (n && n.name) || short(a), device: true, away: !n }); });
+  devs.forEach((a) => { const n = byAddr()[a]; node(a, { name: (n && (n.dns || "").replace(/\.vork$/, "")) || (n && n.name) || short(a), device: true, away: !alive(n) }); });
   const link = (p, q) => { if (p === q) return; const k = p < q ? p + q : q + p; edges[k] = [p, q]; };
   const from = Object.assign({ [mine]: S.map?.me }, S.map?.devices || {});
   for (const [who, m] of Object.entries(from)) {
@@ -529,7 +532,7 @@ function kpi(label, value, foot, unit = "") { return `<div class="card kpi"><div
 function pDashboard() {
   const h = M?.history || [], c = C();
   const last = (k) => { const r = rates(h, k); return r.length ? r[r.length - 1].v : 0; };
-  const devs = S.settings?.devices || [], up = devs.filter((a) => byAddr()[a]).length;
+  const devs = S.settings?.devices || [], up = devs.filter((a) => alive(byAddr()[a])).length;
   const neighUp = (S.neighbors || []).filter((n) => n.up).length;
   const ex = S.exit;
   const blocked = (M?.blocked || []).length;
@@ -585,14 +588,14 @@ function requests() {
     <div class="row"><button class="btn" data-allow="${r.address}">Allow</button><button class="btn ghost" data-dismiss="${r.address}">Dismiss</button></div></div>`).join("");
 }
 // A link that's down needn't mean the node is: it's reached through others meanwhile.
-function linkRank(n) { return n.up ? 2 : n.address && byAddr()[n.address] ? 1 : 0; }
+function linkRank(n) { return n.up ? 2 : n.address && alive(byAddr()[n.address]) ? 1 : 0; }
 function linkState(n) {
   if (n.up) return '<span class="tag green">up</span>';
   const k = n.address && byAddr()[n.address];
-  if (k) return `<span class="tag amber" title="No direct link now: reached through other nodes (${k.hops} hops)">via relays</span>`;
+  if (alive(k)) return `<span class="tag amber" title="No direct link now: reached through other nodes (${k.hops} hops)">via relays</span>`;
   return n.address ? '<span class="tag" title="Not reached now, directly or through others">down</span>' : '<span class="tag" title="Dialed; no answer yet">trying</span>';
 }
-function reachOf(n) { if (!n) return `<span class="tag">away</span>`; return n.direct ? `<span class="tag green">direct</span>` : `<span class="tag amber">${n.hops} hop(s)</span>`; }
+function reachOf(n) { if (!n) return `<span class="tag red">offline</span>`; if (!alive(n)) return `<span class="tag red" title="Last heard ${ago(n.seen_s)} ago">offline · ${ago(n.seen_s)}</span>`; return n.direct ? `<span class="tag green">direct</span>` : `<span class="tag amber">${n.hops} hop(s)</span>`; }
 function pDevices() {
   const devs = S.settings?.devices || [], k = byAddr(), sess = Object.fromEntries((M?.sessions || []).filter((s) => s.peer).map((s) => [s.peer, s]));
   const pending = S.links?.pending || [];
@@ -602,7 +605,7 @@ function pDevices() {
       <div class="card-head"><div><h2>Your devices</h2><div class="sub">They reach this node's services and each other's; names resolve as <span class="mono">name.vork</span></div></div></div>
       ${devs.length ? `<table class="devtab"><thead><tr><th>Device</th><th>Connection</th><th>IPv4</th><th>Hostname</th><th class="num">RTT</th><th class="num">Traffic</th><th></th></tr></thead><tbody>
       ${devs.map((a) => { const n = k[a], s = sess[a], nm = (n && n.name) || short(a); const v4 = (n && n.ipv4) || derived4(a);
-        return `<tr><td><div class="row" style="gap:10px"><span class="dot ${n ? "ok" : ""}"></span><div><div class="name">${esc(nm)}</div><div class="muted small mono">${short(a)}${n?.exit ? ' · <span class="tag blue">exit</span>' : ""}</div></div></div></td>
+        return `<tr><td><div class="row" style="gap:10px"><span class="dot ${alive(n) ? "ok" : "bad"}"></span><div><div class="name">${esc(nm)}</div><div class="muted small mono">${short(a)}${n?.exit ? ' · <span class="tag blue">exit</span>' : ""}</div></div></div></td>
         <td>${reachOf(n)}</td><td class="mono">${v4 ? esc(v4) + cp(v4) : "–"}</td><td class="mono">${esc((n && n.dns) || dnsName(nm, a))}${cp((n && n.dns) || dnsName(nm, a))}</td>
         <td class="num">${s?.rtt_ms != null ? s.rtt_ms.toFixed(0) + " ms" : "–"}</td><td class="num small">${s ? `↓${bytes(s.rx)} ↑${bytes(s.tx)}` : "–"}</td>
         <td class="num"><button class="btn danger sm" data-unlink="${a}">Unlink</button></td></tr>`; }).join("")}
