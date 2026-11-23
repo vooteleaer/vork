@@ -4,7 +4,7 @@ Each milestone ends in something that runs and is measured (proto first). "Done 
 
 ## Where it stands (2026-11-20)
 
-vØrk replaces Tailscale on the author's own machines (a Linux server, a Windows PC, Android phones, a TrueNAS box), released as [v0.3.1](https://github.com/vooteleaer/vork/releases/tag/v0.3.1), a pre-release: installers for Windows (MSI), Android, Debian/Ubuntu, static Linux binaries, Haiku, and a Docker setup for NAS boxes and a Home Assistant add-on.
+vØrk replaces Tailscale on the author's own machines (a Linux server, a Windows PC, Android phones, a TrueNAS box), released as [v0.3.2](https://github.com/vooteleaer/vork/releases/tag/v0.3.2), a pre-release: installers for Windows (MSI), Android, Debian/Ubuntu, static Linux binaries, Haiku, and a Docker setup for NAS boxes and a Home Assistant add-on.
 
 Built since the prototype: the node as a service (M1); the TUN interface on Linux, Windows and Android with IPv6 sessions and IPv4 delivered as IPv4 (M2); `.vork` names, devices linked with consent and one group per owner, the walled-garden firewall (M3); exit nodes (Linux offers, Windows and Android use); reachability learned from others, LAN discovery and router port mapping; a dashboard on every platform (a window on the desktop, the Android app, the browser); self-updating with signed releases; the local API for applications (M9). Next: hardening (M4), Linux as an exit client, routing for big networks, a project release key.
 
