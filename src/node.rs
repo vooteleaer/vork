@@ -4098,12 +4098,15 @@ impl Node {
         let cmd = v.get("cmd").and_then(|c| c.as_str()).unwrap_or_default();
         // Looking is for any local user (the desktop window runs as one); the log
         // isn't, as it shows the dashboard's key.
-        if !matches!(cmd, "status" | "metrics") && !owner {
+        if !matches!(cmd, "status" | "metrics" | "page") && !owner {
             let how = if cfg!(unix) { format!(": add your user to operators in {}", self.cfg.config_path.as_ref().map_or("vork.toml".into(), |p| p.display().to_string())) } else { String::new() };
             return json!({ "error": format!("only the node's own user (or root) may do this{how}") }).to_string();
         }
         match Some(cmd) {
             Some("status") => self.status_json().to_string(),
+            // The dashboard itself: the vØrk window shows the node's own, so a
+            // node updated by itself brings its window's page along.
+            Some("page") => json!({ "page": crate::web::PAGE }).to_string(),
             // An application's pages out of the menu (one that's stopped).
             Some("app_forget") => match self.apps.forget(v["id"].as_str().unwrap_or_default()) {
                 Ok(()) => json!({ "ok": true }).to_string(),

@@ -12,8 +12,19 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 
-/// The dashboard, the same file the node serves.
+/// The dashboard as this window was built with it: shown only when the node
+/// doesn't give its own (one older than this window).
 const PAGE: &str = include_str!("../../../src/web/index.html");
+
+/// The node's own dashboard: it updates itself (ADR-0028), this window may not,
+/// and the page must fit the node it talks to.
+fn page() -> String {
+    ask(r#"{"cmd":"page"}"#)
+        .ok()
+        .and_then(|a| serde_json::from_str::<serde_json::Value>(&a).ok())
+        .and_then(|v| v["page"].as_str().map(str::to_string))
+        .unwrap_or_else(|| PAGE.to_string())
+}
 
 const USAGE: &str = "usage: vork-net [--config FILE] [--browser] [--hidden]
   --config FILE  the node's configuration (default: the system node's)
@@ -194,7 +205,7 @@ fn command_in(query: Option<&str>) -> Option<Vec<u8>> {
 /// The routes of the node's own dashboard server (`src/web.rs`).
 fn route(method: &str, path: &str, body: &[u8]) -> Answer {
     let line = match (method, path) {
-        ("GET", "/") | ("GET", "/index.html") => return answer(200, "text/html; charset=utf-8", PAGE),
+        ("GET", "/") | ("GET", "/index.html") => return answer(200, "text/html; charset=utf-8", page()),
         ("GET", "/api/status") => r#"{"cmd":"status"}"#.to_string(),
         ("GET", "/api/metrics") => r#"{"cmd":"metrics"}"#.to_string(),
         ("GET", "/api/log") => r#"{"cmd":"log"}"#.to_string(),

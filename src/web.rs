@@ -24,7 +24,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::control::Request;
 
-const PAGE: &str = include_str!("web/index.html");
+pub(crate) const PAGE: &str = include_str!("web/index.html");
 
 /// The dashboard's token: made once, kept in the state directory.
 pub fn token(dir: Option<&Path>) -> String {
