@@ -281,6 +281,25 @@ impl SlabStore {
         Ok(true)
     }
 
+    /// Stores the chunks of one push for lease `id` at once: those the lease
+    /// lists, in one transaction (one at a time cost a transaction and two
+    /// reads each). Returns which were taken.
+    pub fn lease_put(&self, id: &LeaseId, chunks: &[(Cid, Vec<u8>)]) -> Result<Vec<bool>, StoreError> {
+        let covered: Vec<bool> = {
+            let r = self.db.begin_read()?;
+            let t = r.open_table(LEASE_CHUNKS)?;
+            chunks
+                .iter()
+                .map(|(cid, _)| t.get([cid.as_bytes().as_slice(), id].concat().as_slice()).map(|v| v.is_some()))
+                .collect::<Result<_, _>>()?
+        };
+        let items: Vec<(Cid, Vec<u8>)> = chunks.iter().zip(&covered).filter(|(_, c)| **c).map(|((cid, ct), _)| (*cid, ct.clone())).collect();
+        if !items.is_empty() {
+            self.insert_batch(&items, tier::SERVING)?;
+        }
+        Ok(covered)
+    }
+
     /// Whether lease `id` lists `cid` (pushed chunks must belong to the lease they come with).
     pub fn lease_covers(&self, id: &LeaseId, cid: &Cid) -> Result<bool, StoreError> {
         let r = self.db.begin_read()?;

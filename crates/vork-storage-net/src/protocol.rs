@@ -4,7 +4,7 @@
 //! get request   = item × n          item = cid (33) ‖ proof (16)      1..=MAX_BATCH items
 //! get response  = entry × n         entry = 0x00 ‖ u32_be len ‖ ciphertext   (served)
 //!                                         | 0x01                              (not served)
-//! have request  = item × n          item = cid prefix (8) ‖ proof (16)  1..=MAX_HAVE items
+//! have request  = item × n          item = cid prefix (8) ‖ proof (16)  1..=MAX_HAVE items (1024)
 //! have response = bitmap (n bits)
 //!
 //! lease request    = 0x01 ‖ lease ‖ n (u8) ‖ source node (16) × n [‖ stamp (32)]   offer a lease (sources: where to pull)
@@ -20,7 +20,7 @@
 //! prove response   = (0x00 ‖ answer (16) | 0x01) × n
 //! head request     = ns_id (16)                                          latest head known (ADR-0015)
 //! head response    = head (258) | empty (unknown)
-//! put request      = lease_id (16) ‖ (u32_be len ‖ ciphertext) × n     1..=MAX_PUT chunks of that lease
+//! put request      = lease_id (16) ‖ (u32_be len ‖ ciphertext) × n     1..=MAX_PUT chunks of that lease (256)
 //! put response     = bitmap (n bits): stored
 //! reader request   = ns_id (16) ‖ (cid (33) ‖ get proof (16)) × n      1..=MAX_READER_PROOFS current commits (ADR-0035)
 //! reader response  = 0 noted | 1 not
@@ -50,13 +50,9 @@ pub const GET_ITEM: usize = CID_LEN + PROOF_LEN;
 pub const HAVE_ENDPOINT: &str = "/vork/have";
 pub const HAVE_PREFIX: usize = 8;
 pub const HAVE_ITEM: usize = HAVE_PREFIX + PROOF_LEN;
-/// 16 items = 384 B: a `have` request fits one link packet, so `have`
-/// requests can be pipelined on one link (docs/storage/recon/first-transfer.md).
-pub const MAX_HAVE: usize = 16;
-/// Over vØrk (sessions carry messages of megabytes): up to this many in one
-/// `have` request, which a node takes since 2026-11-23; to an older one,
-/// `MAX_HAVE`.
-pub const MAX_HAVE_LARGE: usize = 1024;
+/// Items in one `have` request: 24 KiB (a session carries messages of
+/// megabytes; Reticulum's one-packet 16 is gone).
+pub const MAX_HAVE: usize = 1024;
 
 pub const LEASE_ENDPOINT: &str = "/vork/lease";
 pub const RECEIPT_ENDPOINT: &str = "/vork/receipt";
@@ -84,11 +80,8 @@ pub const READER_ENDPOINT: &str = "/vork/reader";
 pub const MAX_READER_PROOFS: usize = 8;
 /// At most this many tokens per query.
 pub const MAX_QUERY_TOKENS: usize = 16;
-/// 16 chunks of up to 16 KiB: one resource of about 256 KiB.
-pub const MAX_PUT: usize = 16;
-/// Over vØrk: up to this many chunks, and about `MAX_PUT_BYTES`, in one
-/// `put`, which a node takes since 2026-11-23; to an older one, `MAX_PUT`.
-pub const MAX_PUT_LARGE: usize = 256;
+/// Chunks in one `put`, and about this many bytes (a sender keeps under it).
+pub const MAX_PUT: usize = 256;
 pub const MAX_PUT_BYTES: usize = 8 << 20;
 
 /// Renewals or receipt requests per bundle.
@@ -190,7 +183,7 @@ pub fn encode_have(items: &[([u8; HAVE_PREFIX], Proof)]) -> Vec<u8> {
 }
 
 pub fn decode_have(bytes: &[u8]) -> Result<Vec<([u8; HAVE_PREFIX], Proof)>, ProtocolError> {
-    if bytes.is_empty() || !bytes.len().is_multiple_of(HAVE_ITEM) || bytes.len() / HAVE_ITEM > MAX_HAVE_LARGE {
+    if bytes.is_empty() || !bytes.len().is_multiple_of(HAVE_ITEM) || bytes.len() / HAVE_ITEM > MAX_HAVE {
         return Err(ProtocolError("have request needs 1..=1024 items of prefix ‖ proof"));
     }
     Ok(bytes
@@ -470,7 +463,7 @@ pub fn decode_put(bytes: &[u8]) -> Result<(LeaseId, Vec<Vec<u8>>), ProtocolError
     while !rest.is_empty() {
         let (len, tail) = rest.split_first_chunk::<4>().ok_or(ProtocolError("truncated length"))?;
         let len = u32::from_be_bytes(*len) as usize;
-        if tail.len() < len || chunks.len() == MAX_PUT_LARGE {
+        if tail.len() < len || chunks.len() == MAX_PUT {
             return Err(ProtocolError("put needs 1..=256 whole chunks"));
         }
         chunks.push(tail[..len].to_vec());
@@ -528,8 +521,8 @@ mod tests {
         let chunks = vec![vec![1u8; 1024], vec![2u8; 4096]];
         assert_eq!(decode_put(&encode_put(&[7; 16], &chunks)).unwrap(), ([7; 16], chunks));
         assert!(decode_put(&[7; 16]).is_err(), "no chunks");
-        assert!(decode_put(&encode_put(&[7; 16], &vec![vec![0u8; 8]; MAX_PUT + 1])).is_ok(), "more than the old 16 since 2026-11-23");
-        assert!(decode_put(&encode_put(&[7; 16], &vec![vec![0u8; 8]; MAX_PUT_LARGE + 1])).is_err());
+        assert!(decode_put(&encode_put(&[7; 16], &vec![vec![0u8; 8]; MAX_PUT])).is_ok());
+        assert!(decode_put(&encode_put(&[7; 16], &vec![vec![0u8; 8]; MAX_PUT + 1])).is_err());
     }
 
     use super::*;
@@ -548,7 +541,8 @@ mod tests {
 
         let have = vec![([1u8; HAVE_PREFIX], [2u8; PROOF_LEN]), ([3; HAVE_PREFIX], [4; PROOF_LEN])];
         assert_eq!(decode_have(&encode_have(&have)).unwrap(), have);
-        assert!(encode_have(&vec![have[0]; MAX_HAVE]).len() <= 400, "a full have request fits one packet");
+        assert_eq!(decode_have(&encode_have(&vec![have[0]; MAX_HAVE])).unwrap().len(), MAX_HAVE);
+        assert!(decode_have(&encode_have(&vec![have[0]; MAX_HAVE + 1])).is_err());
         let bits = vec![true, false, true, true, false, false, false, false, true];
         assert_eq!(decode_bitmap(&encode_bitmap(&bits), bits.len()).unwrap(), bits);
     }

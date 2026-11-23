@@ -72,7 +72,7 @@ use vork_storage_net::{
         decode_request, encode_bitmap, encode_lease_request, encode_prove, encode_prove_reply,
         encode_lease_status, LeaseRequest, LeaseStatus, ReceiptReply, GET_ENDPOINT, HAVE_ENDPOINT, LEASE_ENDPOINT,
         PROVE_ENDPOINT, RECEIPT_ENDPOINT, decode_bitmap, decode_put, encode_have, encode_put, HAVE_PREFIX, MAX_HAVE,
-        MAX_HAVE_LARGE, MAX_PUT, MAX_PUT_BYTES, MAX_PUT_LARGE, PUT_ENDPOINT, HEAD_ENDPOINT, API_ENDPOINT, MAX_QUERY_TOKENS, QUERY_ENDPOINT, INVITE_ENDPOINT,
+        MAX_PUT, MAX_PUT_BYTES, PUT_ENDPOINT, HEAD_ENDPOINT, API_ENDPOINT, MAX_QUERY_TOKENS, QUERY_ENDPOINT, INVITE_ENDPOINT,
         READER_ENDPOINT, MAX_READER_PROOFS, GET_ITEM, encode_request,
     },
     seek::{pull_round, seek_round},
@@ -498,25 +498,21 @@ impl RequestEndpoint<Arc<Shared>> for PutEndpoint {
         let store = &context.state.store;
         // A refused chunk says why, once each (an owner pushes it again every round).
         static SAID: Mutex<std::collections::BTreeSet<Cid>> = Mutex::new(std::collections::BTreeSet::new());
-        let stored: Vec<bool> = chunks
-            .iter()
-            .map(|ct| {
-                let cid = Cid::of(ct);
-                let why = match store.lease_covers(&id, &cid) {
-                    Ok(true) => match store.lease_arrived(&cid, ct) {
-                        Ok(true) => return true,
-                        Ok(false) => "no lease here keeps it".to_string(),
-                        Err(e) => e.to_string(),
-                    },
-                    Ok(false) => format!("lease {} doesn't list it", hex(&id)),
-                    Err(e) => e.to_string(),
-                };
-                if SAID.lock().unwrap().insert(cid) {
-                    eprintln!("put: chunk {cid} ({} bytes) refused: {why}", ct.len());
-                }
-                false
-            })
-            .collect();
+        // All of the push at once: one transaction (a chunk at a time was the
+        // receiver's bottleneck).
+        let items: Vec<(Cid, Vec<u8>)> = chunks.into_iter().map(|ct| (Cid::of(&ct), ct)).collect();
+        let stored = match store.lease_put(&id, &items) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("put: {} chunk(s) for lease {} not stored: {e}", items.len(), hex(&id));
+                vec![false; items.len()]
+            }
+        };
+        for ((cid, ct), ok) in items.iter().zip(&stored) {
+            if !ok && SAID.lock().unwrap().insert(*cid) {
+                eprintln!("put: chunk {cid} ({} bytes) refused: lease {} doesn't list it", ct.len(), hex(&id));
+            }
+        }
         context.respond(encode_bitmap(&stored))
     }
 }
@@ -7855,7 +7851,17 @@ async fn place_all(d: &Daemon) -> Result<(), String> {
         let site = if d.site.is_some() { ", or none at another site" } else { "" };
         println!("placement: {short} file(s) below their number of copies{site}: not enough storage nodes reachable now");
     }
-    for (peer, files) in plan {
+    // Every holder at once: each over its own link, none waits for another.
+    let jobs = plan.into_iter().map(|(peer, files)| place_at(d, peer, files));
+    for r in futures_util::future::join_all(jobs).await {
+        r?;
+    }
+    Ok(())
+}
+
+/// Leases `files` to `peer` (one holder's part of a placement pass).
+async fn place_at(d: &Daemon, peer: PeerId, files: Vec<FileRef>) -> Result<(), String> {
+    {
         // Union of the files' chunks: shared chunks (versions) are listed once.
         let mut roots: HashMap<Cid, Vec<Cid>> = HashMap::new();
         let mut chunks: Vec<(Cid, ChunkToken)> = Vec::new();
@@ -7874,7 +7880,7 @@ async fn place_all(d: &Daemon) -> Result<(), String> {
         if let Some(room) = d.offers.lock().unwrap().get(&peer).copied().filter(|room| *room < need) {
             println!("placement: <{}> offers room for about {room} B, {need} B needed: not offering there", hex(&peer));
             d.store.avoid_storage_node(&peer, now_ms() + 3_600_000).map_err(|e| e.to_string())?;
-            continue;
+            return Ok(());
         }
         match lease_to(d, &peer, &sorted(&chunks), &roots, &[]).await {
             Ok(true) => println!(
@@ -8194,36 +8200,56 @@ async fn lease_to(
     roots: &HashMap<Cid, Vec<Cid>>,
     sources: &[PeerId],
 ) -> Result<bool, String> {
+    use futures_util::stream::{FuturesUnordered, StreamExt};
     let lane = d.lane_link(peer, PUSH_LANE).await?;
     let link = lane.link;
-    for part in chunks.chunks(lease::MAX_CHUNKS) {
+    // One lease: its stamp (computed on a thread of its own), the offer, the push.
+    let one = |part: &[(Cid, ChunkToken)]| {
         let mut id = [0u8; lease::ID_LEN];
         getrandom::fill(&mut id).expect("OS entropy");
         let l = d.sign_lease(id, now_s() + d.lease_term, part.to_vec());
         let mut served: Vec<Cid> = part.iter().flat_map(|(c, _)| roots.get(c).cloned().unwrap_or_default()).collect();
         served.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
         served.dedup();
-        match offer(d, link, peer, &l, sources).await {
-            Ok(LeaseStatus::Accepted) => {
-                d.store.record_own_lease(&l, peer, &served).map_err(|e| e.to_string())?;
-                match push(d, link, &l, Some(peer)).await {
-                    Ok((sent, _)) => println!("lease {}: pushed {sent} of {} chunk(s) to <{}>", hex(&l.id), l.entries.len(), hex(peer)),
-                    Err(e) => {
-                        d.drop_lane(peer, &lane, PUSH_LANE);
-                        return Err(format!("push: {e}"));
-                    }
+        async move {
+            match offer(d, link, peer, &l, sources).await? {
+                LeaseStatus::Accepted => {
+                    d.store.record_own_lease(&l, peer, &served).map_err(|e| e.to_string())?;
+                    let (sent, _) = push(d, link, &l, Some(peer)).await.map_err(|e| format!("push: {e}"))?;
+                    println!("lease {}: pushed {sent} of {} chunk(s) to <{}>", hex(&l.id), l.entries.len(), hex(peer));
+                    Ok(true)
                 }
+                LeaseStatus::NoRoom => Ok(false),
+                other => Err(format!("lease refused: {other:?}")),
             }
-            Ok(LeaseStatus::NoRoom) => return Ok(false),
-            Ok(other) => return Err(format!("lease refused: {other:?}")),
+        }
+    };
+    // Several leases at once: the next one's stamp and offer while the
+    // others' chunks travel.
+    let mut parts = chunks.chunks(lease::MAX_CHUNKS);
+    let mut flying = FuturesUnordered::new();
+    let mut room = true;
+    loop {
+        while room && flying.len() < LEASES_IN_FLIGHT {
+            let Some(part) = parts.next() else { break };
+            flying.push(one(part));
+        }
+        let Some(r) = flying.next().await else { break };
+        match r {
+            Ok(true) => {}
+            // No room for more: what's under way finishes, nothing new starts.
+            Ok(false) => room = false,
             Err(e) => {
                 d.drop_lane(peer, &lane, PUSH_LANE);
                 return Err(e);
             }
         }
     }
-    Ok(true)
+    Ok(room)
 }
+
+/// Leases offered and pushed at once to one holder.
+const LEASES_IN_FLIGHT: usize = 4;
 
 /// Sends the holder the chunks of `l` it doesn't have yet (asks with `have`
 /// first, so shared chunks and earlier versions never travel twice).
@@ -8234,14 +8260,10 @@ async fn lease_to(
 static DAMAGED: Mutex<std::collections::BTreeSet<Cid>> = Mutex::new(std::collections::BTreeSet::new());
 
 async fn push(d: &Daemon, link: LinkId, l: &Lease, peer: Option<&PeerId>) -> Result<(usize, usize), String> {
+    use futures_util::stream::{FuturesUnordered, StreamExt};
     let nonce = d.transport.link_nonce(link);
     let mut missing = Vec::new();
-    // Large requests first (a node since 2026-11-23 takes them); one that
-    // refuses them is an older node: the small ones of before, for the rest.
-    let mut large = true;
-    let mut i = 0;
-    while i < l.entries.len() {
-        let batch = &l.entries[i..(i + if large { MAX_HAVE_LARGE } else { MAX_HAVE }).min(l.entries.len())];
+    for batch in l.entries.chunks(MAX_HAVE) {
         let items: Vec<([u8; HAVE_PREFIX], [u8; 16])> = batch
             .iter()
             .map(|(cid, token)| {
@@ -8249,80 +8271,10 @@ async fn push(d: &Daemon, link: LinkId, l: &Lease, peer: Option<&PeerId>) -> Res
                 (prefix, token.have_proof(&nonce, &prefix))
             })
             .collect();
-        let reply = match d.ask(link, HAVE_ENDPOINT, encode_have(&items)).await {
-            Ok(r) => r,
-            Err(_) if large && batch.len() > MAX_HAVE => {
-                large = false;
-                continue;
-            }
-            Err(e) => return Err(e),
-        };
-        let bits = decode_bitmap(&reply, batch.len()).map_err(|e| e.to_string())?;
+        let bits = decode_bitmap(&d.ask(link, HAVE_ENDPOINT, encode_have(&items)).await?, batch.len()).map_err(|e| e.to_string())?;
         missing.extend(batch.iter().zip(bits).filter(|(_, held)| !held).map(|((cid, _), _)| *cid));
-        i += batch.len();
     }
-    if large {
-        match push_pipelined(d, link, l, peer, &missing).await {
-            Ok(r) => return Ok(r),
-            // Refused or broken: as before, one small batch at a time (what
-            // was taken already is only taken again).
-            Err(e) => eprintln!("lease {}: large pushes failed ({e}): small ones", hex(&l.id)),
-        }
-    }
-    // Start with full batches; on a timeout (slow or long paths), or a batch
-    // too big for one request (large chunks: Reticulum's DataTooLarge), halve
-    // the batch and resend the same chunks, down to one chunk per request.
-    let (mut sent, mut lacking, mut at, mut batch) = (0, 0, 0, MAX_PUT);
-    while at < missing.len() {
-        let end = (at + batch).min(missing.len());
-        // A chunk here that doesn't hash to its address (damaged in the
-        // store) would only be refused: not sent, counted as not here.
-        let cts: Vec<Vec<u8>> = missing[at..end]
-            .iter()
-            .filter_map(|c| {
-                let ct = d.store.fetch(c).ok().flatten()?;
-                if Cid::of(&ct) != *c {
-                    if DAMAGED.lock().unwrap().insert(*c) {
-                        eprintln!("chunk {c}: what's here doesn't match its address (damaged): not pushed");
-                    }
-                    return None;
-                }
-                Some(ct)
-            })
-            .collect();
-        let here = cts.len();
-        if !cts.is_empty() {
-            let t0 = Instant::now();
-            match d.ask(link, PUT_ENDPOINT, encode_put(&l.id, &cts)).await {
-                Ok(reply) => {
-                    if let Some(peer) = peer {
-                        let bytes = cts.iter().map(|c| c.len() as u64).sum();
-                        let _ = d.store.record_transfer(peer, bytes, t0.elapsed().as_millis() as u64);
-                    }
-                    sent += decode_bitmap(&reply, cts.len()).map_err(|e| e.to_string())?.iter().filter(|&&b| b).count()
-                }
-                Err(e) if batch > 1 && (e.contains("Timeout") || e.contains("timed out") || e.contains("DataTooLarge")) => {
-                    batch /= 2;
-                    continue;
-                }
-                Err(e) => return Err(e),
-            }
-        }
-        lacking += (end - at) - here;
-        at = end;
-    }
-    Ok((sent, lacking))
-}
-
-/// Pushes in flight at once to one holder: the link is never idle waiting
-/// for an answer (one request at a time sent 16 small chunks per round
-/// trip: a few Mbit/s, 2026-11-23).
-const PUSH_IN_FLIGHT: usize = 4;
-
-/// Pushes `missing` in large batches (up to `MAX_PUT_LARGE` chunks and about
-/// `MAX_PUT_BYTES`), `PUSH_IN_FLIGHT` at a time.
-async fn push_pipelined(d: &Daemon, link: LinkId, l: &Lease, peer: Option<&PeerId>, missing: &[Cid]) -> Result<(usize, usize), String> {
-    use futures_util::stream::{FuturesUnordered, StreamExt};
+    // Batches of up to MAX_PUT chunks and about MAX_PUT_BYTES, several in flight.
     let (mut sent, mut lacking) = (0usize, 0usize);
     let mut flying = FuturesUnordered::new();
     let send = |cts: Vec<Vec<u8>>| async move {
@@ -8337,7 +8289,7 @@ async fn push_pipelined(d: &Daemon, link: LinkId, l: &Lease, peer: Option<&PeerI
     };
     let mut batch: Vec<Vec<u8>> = Vec::new();
     let mut batch_bytes = 0usize;
-    for c in missing {
+    for c in &missing {
         // A chunk here that doesn't hash to its address (damaged in the
         // store) would only be refused: not sent, counted as not here.
         let Some(ct) = d.store.fetch(c).ok().flatten() else {
@@ -8351,7 +8303,7 @@ async fn push_pipelined(d: &Daemon, link: LinkId, l: &Lease, peer: Option<&PeerI
             lacking += 1;
             continue;
         }
-        if !batch.is_empty() && (batch.len() == MAX_PUT_LARGE || batch_bytes + ct.len() > MAX_PUT_BYTES) {
+        if !batch.is_empty() && (batch.len() == MAX_PUT || batch_bytes + ct.len() > MAX_PUT_BYTES) {
             if flying.len() == PUSH_IN_FLIGHT {
                 sent += flying.next().await.unwrap()?;
             }
@@ -8369,6 +8321,11 @@ async fn push_pipelined(d: &Daemon, link: LinkId, l: &Lease, peer: Option<&PeerI
     }
     Ok((sent, lacking))
 }
+
+/// Pushes in flight at once to one holder: the link is never idle waiting
+/// for an answer (one request at a time, 16 small chunks each, made a few
+/// Mbit/s, 2026-11-23).
+const PUSH_IN_FLIGHT: usize = 4;
 
 /// Renews, collects receipts and samples a storage proof for all leases one
 /// holder keeps, in bundles. Ok(None): nothing was due; Ok(Some(ok)): the
