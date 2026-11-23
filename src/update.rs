@@ -70,6 +70,17 @@ pub fn target() -> &'static str {
     }
 }
 
+/// The vØrk window beside the Windows node (`vork-net.exe`): in a release as
+/// a companion of the node's binary, put in place with it when it differs, so
+/// the window doesn't stay behind an updated node. It has no build mark.
+pub const WINDOW_TARGET: &str = "windows-x86_64-window";
+pub const WINDOW_EXE: &str = "vork-net.exe";
+
+/// A companion file (the window), not a node binary with a build mark.
+fn companion(target: &str) -> bool {
+    target.ends_with("-window")
+}
+
 /// The binary's file name in a release.
 pub fn file_name(target: &str) -> String {
     if target.starts_with("windows") { format!("vork-{target}.exe") } else { format!("vork-{target}") }
@@ -136,7 +147,7 @@ pub fn make(key: &Path, dir: &Path, build: Option<u32>, version: &str, files: &[
         Some(b) => b,
         None => {
             let mut b = None;
-            for (_, p) in files {
+            for (_, p) in files.iter().filter(|(t, _)| !companion(t)) {
                 let n = build_of(p)?;
                 if b.is_some_and(|x| x != n) {
                     bail!("the binaries are of different builds ({} and {n})", b.unwrap());
@@ -199,7 +210,8 @@ pub fn staging(state: &Path) -> PathBuf {
     state.join("update")
 }
 
-/// A download in progress.
+/// A download in progress: the node's binary, then the window when its
+/// release has one that isn't the one here.
 pub struct Download {
     pub manifest: Vec<u8>,
     pub sig: [u8; 64],
@@ -208,16 +220,34 @@ pub struct Download {
     pub offset: u64,
     hasher: Sha256,
     part: PathBuf,
+    /// (target, what it is, the name it waits under), the one being fetched first.
+    queue: Vec<(String, FileInfo, &'static str)>,
 }
 
 impl Download {
     pub fn start(state: &Path, manifest: Vec<u8>, sig: [u8; 64], m: &Manifest) -> Result<Download> {
         let info = m.files.get(target()).cloned().ok_or_else(|| anyhow!("no {} in release {}", target(), m.build))?;
+        let mut queue = vec![(target().to_string(), info.clone(), "vork.new")];
+        // The window, on Windows, when the release's isn't the one beside this binary.
+        if target() == "windows-x86_64" {
+            if let (Some(w), Ok(exe)) = (m.files.get(WINDOW_TARGET), std::env::current_exe()) {
+                let here = exe.with_file_name(WINDOW_EXE);
+                if here.exists() && sha256_file(&here).ok().as_deref() != Some(w.sha256.as_str()) {
+                    queue.push((WINDOW_TARGET.to_string(), w.clone(), "vork-net.new"));
+                }
+            }
+        }
         let dir = staging(state);
         std::fs::create_dir_all(&dir)?;
+        let _ = std::fs::remove_file(dir.join("vork-net.new"));
         let part = dir.join("vork.part");
         std::fs::write(&part, b"")?;
-        Ok(Download { manifest, sig, build: m.build, info, offset: 0, hasher: Sha256::new(), part })
+        Ok(Download { manifest, sig, build: m.build, info, offset: 0, hasher: Sha256::new(), part, queue })
+    }
+
+    /// The release's target being fetched now.
+    pub fn target(&self) -> &str {
+        &self.queue[0].0
     }
 
     /// Adds a piece; Ok(true) when the whole file is in and its hash is right.
@@ -235,12 +265,20 @@ impl Download {
         let got = hex::encode(std::mem::take(&mut self.hasher).finalize());
         if got != self.info.sha256 {
             let _ = std::fs::remove_file(&self.part);
-            bail!("the downloaded build {} doesn't have the signed hash", self.build);
+            bail!("the downloaded build {} doesn't have the signed hash ({})", self.build, self.queue[0].0);
         }
         let dir = self.part.parent().unwrap().to_path_buf();
+        let (_, _, name) = self.queue.remove(0);
+        std::fs::rename(&self.part, dir.join(name))?;
+        // The next file, if any.
+        if let Some((_, info, _)) = self.queue.first() {
+            self.info = info.clone();
+            self.offset = 0;
+            std::fs::write(&self.part, b"")?;
+            return Ok(false);
+        }
         std::fs::write(dir.join("manifest.json"), &self.manifest)?;
         std::fs::write(dir.join("manifest.sig"), hex::encode(self.sig))?;
-        std::fs::rename(&self.part, dir.join("vork.new"))?;
         Ok(true)
     }
 }
@@ -287,7 +325,34 @@ pub fn install(state: &Path, keys: &[[u8; 32]], exe: &Path) -> Result<Option<u32
     }
     let _ = std::fs::remove_file(&new);
     let _ = std::fs::write(dir.join("installed"), manifest.build.to_string());
+    install_window(&dir, &manifest, exe);
     Ok(Some(manifest.build))
+}
+
+/// The window that came with the update, beside the node's binary (Windows);
+/// one running is moved aside (it goes on until it's started again). Best
+/// effort: the node's own update doesn't depend on it.
+fn install_window(dir: &Path, manifest: &Manifest, exe: &Path) {
+    let new = dir.join("vork-net.new");
+    let Some(info) = manifest.files.get(WINDOW_TARGET) else {
+        let _ = std::fs::remove_file(&new);
+        return;
+    };
+    if !new.exists() || sha256_file(&new).ok().as_deref() != Some(info.sha256.as_str()) {
+        let _ = std::fs::remove_file(&new);
+        return;
+    }
+    let to = exe.with_file_name(WINDOW_EXE);
+    let previous = with_suffix(&to, ".previous");
+    let _ = std::fs::remove_file(&previous);
+    if to.exists() && std::fs::rename(&to, &previous).is_err() {
+        return;
+    }
+    if std::fs::copy(&new, &to).is_err() {
+        let _ = std::fs::rename(&previous, &to);
+        return;
+    }
+    let _ = std::fs::remove_file(&new);
 }
 
 /// The build last put in place, if this binary is older (it didn't take: the

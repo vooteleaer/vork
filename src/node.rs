@@ -2712,14 +2712,16 @@ impl Node {
             if let Some((m, sig)) = crate::update::read_release(&dir) {
                 if let Some(man) = crate::update::verify(&m, &sig, &self.cfg.update_keys) {
                     if man.build > crate::update::build() && man.files.contains_key(crate::update::target()) {
-                        let file = dir.join(crate::update::file_name(crate::update::target()));
                         let staged = self.state.dir().ok_or_else(|| anyhow::anyhow!("no state directory")).and_then(|st| {
                             let mut d = crate::update::Download::start(st, m.clone(), sig, &man)?;
-                            let bytes = std::fs::read(&file)?;
-                            if !d.add(&bytes)? {
-                                anyhow::bail!("the release's file is shorter than signed");
+                            // Each file the update takes (the binary, the window), whole.
+                            for _ in 0..4 {
+                                let bytes = std::fs::read(dir.join(crate::update::file_name(d.target())))?;
+                                if d.add(&bytes)? {
+                                    return Ok(());
+                                }
                             }
-                            Ok(())
+                            anyhow::bail!("the release's files are shorter than signed")
                         });
                         match staged {
                             Ok(()) => return self.update_apply(man.build),
@@ -2812,7 +2814,7 @@ impl Node {
     }
 
     fn update_get(&mut self, sid: u32, d: crate::update::Download) {
-        let body = json!({ "op": "get", "target": crate::update::target(), "offset": d.offset }).to_string();
+        let body = json!({ "op": "get", "target": d.target(), "offset": d.offset }).to_string();
         let Some(req) = self.request(sid, crate::update::PATH, body.as_bytes(), None) else { return };
         self.update = Some((UpdateStep::Getting(sid, req, d), Instant::now()));
     }
