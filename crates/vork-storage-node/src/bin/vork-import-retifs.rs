@@ -11,6 +11,7 @@
 //!     vork-import-retifs --from RETIFS_SOCKET --to VORK_STORE --list
 //!     vork-import-retifs --from RETIFS_SOCKET --to VORK_STORE --sample LIBRARY [N]
 //!     vork-import-retifs --from RETIFS_SOCKET --to VORK_STORE --import [LIBRARY]... [--progress FILE]
+//!     vork-import-retifs --from RETIFS_SOCKET --export LIBRARY --out DIR    (as plain files, by their paths)
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -23,7 +24,7 @@ fn fail(m: impl std::fmt::Display) -> ! {
 }
 
 fn usage() -> ! {
-    eprintln!("vork-import-retifs --from RETIFS_SOCKET --to VORK_STORE (--list | --sample LIBRARY [N] | --import [LIBRARY]... | --verify) [--progress FILE]");
+    eprintln!("vork-import-retifs --from RETIFS_SOCKET --to VORK_STORE (--list | --sample LIBRARY [N] | --import [LIBRARY]... | --verify) [--progress FILE]  |  --from RETIFS_SOCKET --export LIBRARY --out DIR");
     std::process::exit(2)
 }
 
@@ -397,13 +398,95 @@ async fn verify(src: &mut Client, dst: &mut Client, progress: &Progress) {
     }
 }
 
+// ---- exporting as plain files -----------------------------------------------
+
+/// A record's path as a path under `out`: its parts kept, with what a file
+/// system (Windows' too) can't take replaced, and no way out of `out`.
+fn local_path(out: &std::path::Path, path: &str) -> Option<PathBuf> {
+    let mut p = out.to_path_buf();
+    let mut any = false;
+    for part in path.split(['/', '\\']) {
+        if part.is_empty() || part == "." || part == ".." {
+            continue;
+        }
+        let clean: String = part.chars().map(|c| if c.is_control() || "<>:\"|?*".contains(c) { '_' } else { c }).collect();
+        let clean = clean.trim_end_matches(['.', ' ']).to_string();
+        if clean.is_empty() {
+            continue;
+        }
+        p.push(clean);
+        any = true;
+    }
+    any.then_some(p)
+}
+
+/// Writes library `ns`'s files under `out` as plain files, by their paths,
+/// with their modification times. Files already there with the right size
+/// are left (an export stopped goes on).
+async fn export(src: &mut Client, from: &str, ns: &str, out: &std::path::Path) {
+    let recs = records(src, ns).await;
+    let (mut written, mut there, mut missing, mut bytes) = (0usize, 0usize, Vec::new(), 0u64);
+    let total = recs.iter().filter(|r| !r.blocks.is_empty()).count();
+    for r in recs.iter().filter(|r| !r.blocks.is_empty()) {
+        let Some(path) = str_attr(r, "path").and_then(|p| local_path(out, p)) else {
+            missing.push((r.id.clone(), String::new(), "no path".to_string()));
+            continue;
+        };
+        let size = cap_size(r).unwrap_or(0);
+        if std::fs::metadata(&path).is_ok_and(|m| m.len() == size) {
+            there += 1;
+            continue;
+        }
+        let data = match read_all(src, from, &r.blocks[0], size).await {
+            Ok(d) => d,
+            Err(e) => {
+                missing.push((r.id.clone(), path.display().to_string(), e));
+                continue;
+            }
+        };
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).unwrap_or_else(|e| fail(format!("{}: {e}", dir.display())));
+        }
+        let part = path.with_extension(format!("{}part", path.extension().map(|e| format!("{}.", e.to_string_lossy())).unwrap_or_default()));
+        std::fs::write(&part, &data).unwrap_or_else(|e| fail(format!("{}: {e}", part.display())));
+        if let Some(ms) = int_attr(r, "mtime") {
+            if let Ok(f) = std::fs::File::options().write(true).open(&part) {
+                let _ = f.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_millis(ms.max(0) as u64));
+            }
+        }
+        std::fs::rename(&part, &path).unwrap_or_else(|e| fail(format!("{}: {e}", path.display())));
+        written += 1;
+        bytes += data.len() as u64;
+        if (written + there) % 500 == 0 {
+            println!("{ns}: {} of {total} file(s) done, {:.1} GB written, {} not here", written + there, bytes as f64 / 1e9, missing.len());
+        }
+    }
+    println!("{ns}: {total} file(s): {written} written now ({:.1} GB), {there} there before, {} whose content isn't here", bytes as f64 / 1e9, missing.len());
+    for (id, name, e) in missing.iter().take(10) {
+        println!("  not here: {id} {name} ({e})");
+    }
+    // The check: every file there, its size its record's.
+    let (mut ok, mut bad) = (0usize, 0usize);
+    for r in recs.iter().filter(|r| !r.blocks.is_empty()) {
+        match str_attr(r, "path").and_then(|p| local_path(out, p)) {
+            Some(path) if std::fs::metadata(&path).is_ok_and(|m| m.len() == cap_size(r).unwrap_or(0)) => ok += 1,
+            _ => bad += 1,
+        }
+    }
+    println!("{ns}: checked: {ok} file(s) there with their size, {bad} not");
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let val = |flag: &str| args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).cloned();
     let from = val("--from").unwrap_or_else(|| usage());
-    let to: PathBuf = val("--to").unwrap_or_else(|| usage()).into();
     let mut src = Client::connect_endpoint(&from).await.unwrap_or_else(|e| fail(e));
+    if let Some(ns) = val("--export") {
+        let out: PathBuf = val("--out").unwrap_or_else(|| usage()).into();
+        return export(&mut src, &from, &ns, &out).await;
+    }
+    let to: PathBuf = val("--to").unwrap_or_else(|| usage()).into();
     if args.iter().any(|a| a == "--list") {
         return list(&mut src).await;
     }
