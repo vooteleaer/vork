@@ -153,21 +153,16 @@ fn translate(attrs: &[(String, AttrValue)]) -> Vec<(String, AttrValue)> {
         .collect()
 }
 
-/// The whole content of `cap`, from the retifs daemon's store only (it has
-/// no network): None if any of it isn't there.
-async fn read_all(src: &mut Client, ns: &str, cap: &str, size: u64) -> Result<Vec<u8>, String> {
-    let mut out = Vec::with_capacity(size as usize);
-    let piece = 4u64 << 20;
-    while (out.len() as u64) < size {
-        let req = Request::ReadRange { cap: cap.into(), ns: Some(ns.into()), offset: out.len() as u64, len: piece.min(size - out.len() as u64), wait_ms: 3000 };
-        match src.call(req).await.map_err(|e| e.to_string())? {
-            Response::Range { data } if !data.is_empty() => out.extend_from_slice(&data),
-            Response::Range { .. } => return Err("an empty range".into()),
-            Response::Error { message } => return Err(message),
-            other => return Err(format!("unexpected answer {other:?}")),
-        }
+/// The whole content of `cap`, from the retifs daemon's own store only (no
+/// nodes asked: it has no network, and asking would wait).
+async fn read_all(src: &mut Client, _ns: &str, cap: &str, size: u64) -> Result<Vec<u8>, String> {
+    let req = Request::Get { cap: cap.into(), from: vec![], links_per_node: 1, batch: 64 };
+    match src.call(req).await.map_err(|e| e.to_string())? {
+        Response::Get { data, .. } if data.len() as u64 == size => Ok(data),
+        Response::Get { data, .. } => Err(format!("{} of {size} bytes here", data.len())),
+        Response::Error { message } => Err(message),
+        other => Err(format!("unexpected answer {other:?}")),
     }
-    Ok(out)
 }
 
 /// The content's size: the file reference's last part (`…:size`), else the record's.
