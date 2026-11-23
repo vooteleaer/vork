@@ -111,7 +111,7 @@ pub fn listen(endpoint: &str, _operators: &[String]) -> Result<mpsc::Receiver<Re
 /// this computer (interactive) may use: the default ACL left out the user
 /// whose app talks to a node running as a service.
 #[cfg(windows)]
-fn create_pipe(name: &str, first: bool) -> std::io::Result<tokio::net::windows::named_pipe::NamedPipeServer> {
+pub(crate) fn create_pipe(name: &str, first: bool) -> std::io::Result<tokio::net::windows::named_pipe::NamedPipeServer> {
     use windows_sys::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
     use windows_sys::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
     let sddl: Vec<u16> = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)".encode_utf16().chain([0]).collect();

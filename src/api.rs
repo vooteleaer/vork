@@ -63,9 +63,10 @@ pub fn listen(endpoint: &str) -> Result<mpsc::Receiver<Event>> {
 
 #[cfg(windows)]
 pub fn listen(endpoint: &str) -> Result<mpsc::Receiver<Event>> {
-    use tokio::net::windows::named_pipe::ServerOptions;
     let name = endpoint.to_string();
-    let mut server = ServerOptions::new().first_pipe_instance(true).create(&name).with_context(|| format!("API pipe {name}"))?;
+    // As on Unix, any local program may use the network: users signed in here
+    // too, not only SYSTEM and administrators (the node runs as a service).
+    let mut server = crate::control::create_pipe(&name, true).with_context(|| format!("API pipe {name}"))?;
     let (tx, rx) = mpsc::channel(256);
     tokio::spawn(async move {
         let mut next = 1u32;
@@ -74,7 +75,7 @@ pub fn listen(endpoint: &str) -> Result<mpsc::Receiver<Event>> {
                 return;
             }
             let conn = server;
-            server = match ServerOptions::new().create(&name) {
+            server = match crate::control::create_pipe(&name, false) {
                 Ok(s) => s,
                 Err(_) => return,
             };
