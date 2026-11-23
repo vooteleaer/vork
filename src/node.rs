@@ -171,6 +171,9 @@ const NEIGHBOR_IDLE: Duration = Duration::from_secs(600);
 const MAX_SESSIONS: usize = 4096;
 /// A session with nothing sent or received this long is closed.
 const SESSION_IDLE: Duration = Duration::from_secs(900);
+/// A direct link that went down (its far end's address changed, say) is
+/// offered again this often while a session to that node works.
+const DIRECT_AGAIN: Duration = Duration::from_secs(300);
 /// Key queries answered for one IP address per 10 s, and in all per second.
 const KEY_ANSWERS_PER_IP: u32 = 20;
 const KEY_ANSWERS_PER_S: u32 = 100;
@@ -530,6 +533,9 @@ pub struct Node {
     asked: HashMap<Hash, Instant>,
     /// Sessions in which our direct-link candidates were already sent.
     punched: HashSet<u32>,
+    /// When a direct link was last offered to a node (by its link key): offered
+    /// again while it's down, as its address may have changed (DIRECT_AGAIN).
+    offered: HashMap<[u8; 32], Instant>,
     /// Our outside address from a router port mapping.
     mapped: Option<SocketAddr>,
     bench_seq: u64,
@@ -806,6 +812,7 @@ impl Node {
             seen_req: HashSet::new(),
             asked: HashMap::new(),
             punched: HashSet::new(),
+            offered: HashMap::new(),
             mapped: None,
             bench_seq: 0,
             bench_sent: 0,
@@ -3647,11 +3654,16 @@ impl Node {
         if !self.direct_ok(sid) {
             return debug("peer offered a direct link; not with this peer here (direct, devices)");
         }
-        if self.punched.insert(sid) {
-            self.send_punch(sid);
-        }
         if peer == *self.me.x_pub().as_bytes() {
             return;
+        }
+        // Answered with ours once per session, and again when the link is down
+        // (an offer made again): both ends dial at once, which gets through NATs.
+        let down = !self.neighbor_by_key.get(&peer).is_some_and(|id| self.neighbors[id].up);
+        let lately = self.offered.get(&peer).is_some_and(|t| t.elapsed() < Duration::from_secs(30));
+        if self.punched.insert(sid) || (down && !lately) {
+            self.offered.insert(peer, Instant::now());
+            self.send_punch(sid);
         }
         if let Some(s) = self.sessions.get_mut(&sid) {
             s.direct_key = Some(peer);
@@ -3671,6 +3683,35 @@ impl Node {
             log(format!("dialing {} directly at {cands:?}", hex::encode(&peer[..4])));
             for c in &cands {
                 self.send_raw(*c, &p);
+            }
+        }
+    }
+
+    /// Direct links to the owner's devices that went down while a session to
+    /// them still works (over relays): offered again, now and then. The far
+    /// end's address may have changed; the offer carries ours and draws its.
+    fn offer_direct_again(&mut self) {
+        self.offered.retain(|_, t| t.elapsed() < DIRECT_AGAIN * 4);
+        let mut todo = Vec::new();
+        for (sid, s) in &self.sessions {
+            if s.looped.is_some() || !self.session_alive(*sid) {
+                continue;
+            }
+            // The far end's link key: from its offer, or the destination's (a node's own).
+            let Some(key) = s.direct_key.or(s.peer_hash.filter(|d| self.dest_identity(d) == Some(*d)).map(|_| s.peer_x)) else { continue };
+            if !self.punched.contains(sid)
+                || self.neighbor_by_key.get(&key).is_some_and(|id| self.neighbors[id].up)
+                || self.offered.get(&key).is_some_and(|t| t.elapsed() < DIRECT_AGAIN)
+                || todo.iter().any(|(_, k)| *k == key)
+            {
+                continue;
+            }
+            todo.push((*sid, key));
+        }
+        for (sid, key) in todo {
+            if self.direct_ok(sid) {
+                self.offered.insert(key, Instant::now());
+                self.send_punch(sid);
             }
         }
     }
@@ -3715,6 +3756,7 @@ impl Node {
             self.remove_neighbor(id);
         }
         self.close_idle_sessions(SESSION_IDLE);
+        self.offer_direct_again();
         // Learned nodes that didn't come up: let go.
         let failed: Vec<u32> = self.neighbors.iter().filter(|(_, n)| !n.up && n.trial.is_some_and(|t| t.elapsed() >= TRIAL)).map(|(id, _)| *id).collect();
         for id in failed {

@@ -166,7 +166,7 @@ After a valid `IDENTIFY` the far end knows the session's opener by its address. 
 
 ## 5. Direct links
 
-On the first pong (or on receiving candidates), a node with `--direct` sends its candidates (addresses its neighbors observed, its router mapping, its listening address if specific) inside the session. Each side, on receiving the other's candidates, sends a WireGuard handshake initiation to all of them at once. When the link comes up, the two are neighbors; the origin opens a path over it (`PATH_OPEN` to the neighbor, which is the destination) and uses it alone.
+On the first pong (or on receiving candidates), a node with `--direct` sends its candidates (addresses its neighbors observed, its router mapping, its listening address if specific) inside the session. Each side, on receiving the other's candidates, sends a WireGuard handshake initiation to all of them at once. When the link comes up, the two are neighbors; the origin opens a path over it (`PATH_OPEN` to the neighbor, which is the destination) and uses it alone. A direct link that goes down while a session to that node still works (over relays) is offered again every 5 minutes: the far end's address may have changed, and an offer made again is answered with the other side's, so both dial at once.
 
 ## 6. Constants
 

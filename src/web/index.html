@@ -584,6 +584,14 @@ function requests() {
   return (S.links?.requests || []).map((r) => `<div class="card alert" style="margin-bottom:16px"><div class="card-head"><div><h2>${esc(r.name || short(r.address))} wants to be one of your devices</h2><div class="sub">${r.with_link ? "It came with a link you made. " : ""}Allowed, the two see each other's services and link directly. <span class="mono">${esc(r.address)}</span></div></div></div>
     <div class="row"><button class="btn" data-allow="${r.address}">Allow</button><button class="btn ghost" data-dismiss="${r.address}">Dismiss</button></div></div>`).join("");
 }
+// A link that's down needn't mean the node is: it's reached through others meanwhile.
+function linkRank(n) { return n.up ? 2 : n.address && byAddr()[n.address] ? 1 : 0; }
+function linkState(n) {
+  if (n.up) return '<span class="tag green">up</span>';
+  const k = n.address && byAddr()[n.address];
+  if (k) return `<span class="tag amber" title="No direct link now: reached through other nodes (${k.hops} hops)">via relays</span>`;
+  return n.address ? '<span class="tag" title="Not reached now, directly or through others">down</span>' : '<span class="tag" title="Dialed; no answer yet">trying</span>';
+}
 function reachOf(n) { if (!n) return `<span class="tag">away</span>`; return n.direct ? `<span class="tag green">direct</span>` : `<span class="tag amber">${n.hops} hop(s)</span>`; }
 function pDevices() {
   const devs = S.settings?.devices || [], k = byAddr(), sess = Object.fromEntries((M?.sessions || []).filter((s) => s.peer).map((s) => [s.peer, s]));
@@ -627,8 +635,8 @@ function pNetwork() {
   <div class="card" style="margin-top:16px">
     <div class="card-head"><div><h2>Neighbors</h2><div class="sub">Nodes this one exchanges packets with directly (WireGuard links)</div></div></div>
     ${neigh.length ? `<table><thead><tr><th>Node</th><th>Endpoint</th><th>State</th><th class="num">Last heard</th><th class="num">Received</th><th class="num">Sent</th></tr></thead><tbody>
-    ${neigh.sort((a, b) => b.up - a.up).map((n) => `<tr><td><div class="name">${esc(n.name || short(n.address) || "–")}</div><div class="muted small mono">${short(n.address)}${n.device ? ' · <span class="tag blue">device</span>' : ""}</div></td>
-      <td class="mono">${esc(n.endpoint || "–")}</td><td>${n.up ? '<span class="tag green">up</span>' : '<span class="tag">down</span>'}</td>
+    ${neigh.sort((a, b) => linkRank(b) - linkRank(a)).map((n) => `<tr><td><div class="name">${esc(n.name || short(n.address) || "–")}</div><div class="muted small mono">${short(n.address)}${n.device ? ' · <span class="tag blue">device</span>' : ""}</div></td>
+      <td class="mono">${esc(n.endpoint || "–")}</td><td>${linkState(n)}</td>
       <td class="num">${n.last_rx_s != null ? (n.last_rx_s < 2 ? "just now" : ago(n.last_rx_s) + " ago") : "–"}</td><td class="num">${bytes(n.rx)}</td><td class="num">${bytes(n.tx)}</td></tr>`).join("")}
     </tbody></table>` : `<div class="empty">No neighbors.</div>`}
   </div>
