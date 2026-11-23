@@ -108,8 +108,8 @@ fn file_manager_menus() {
     let on_path = |exe: &str| std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(exe).is_file()));
     let share = home().join(".local/share");
     let menus: [(&str, PathBuf, &str); 2] = [
-        ("nautilus", share.join("nautilus/scripts/Share with vork"), include_str!("../../../../../packaging/linux/share-nautilus.sh")),
-        ("dolphin", share.join("kio/servicemenus/vork-share.desktop"), include_str!("../../../../../packaging/linux/vork-share.desktop")),
+        ("nautilus", share.join("nautilus/scripts/Share with vork"), include_str!("share-nautilus.sh")),
+        ("dolphin", share.join("kio/servicemenus/vork-share.desktop"), include_str!("vork-share.desktop")),
     ];
     for (exe, path, text) in menus {
         if !on_path(exe) || std::fs::read_to_string(&path).is_ok_and(|t| t == text) {
