@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+if [ "$1" = remove ] && command -v systemctl >/dev/null && [ -d /run/systemd/system ]; then
+    systemctl --global disable vork-storage.service >/dev/null 2>&1 || true
+    for uid in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $1}'); do
+        u=$(id -nu "$uid" 2>/dev/null) || continue
+        systemctl --user -M "$u@" stop vork-storage.service >/dev/null 2>&1 || true
+    done
+fi
+exit 0

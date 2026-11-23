@@ -895,9 +895,10 @@ impl Status {
 }
 
 /// Where the daemon keeps its store (and endpoint) unless told otherwise:
-/// `$VORK_STORE`, else `$XDG_DATA_HOME/vork` or `~/.local/share/vork`
-/// (Unix), `%LOCALAPPDATA%\vork` (Windows), `~/config/var/vork` (Haiku,
-/// its place for data a program keeps).
+/// `$VORK_STORE`, else `$XDG_DATA_HOME/vork-storage` or
+/// `~/.local/share/vork-storage` (Unix), `%LOCALAPPDATA%\vork-storage`
+/// (Windows), `~/config/var/vork-storage` (Haiku, its place for data a
+/// program keeps): apart from the vØrk node's own files.
 pub fn default_store_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("VORK_STORE") {
         return dir.into();
@@ -905,20 +906,20 @@ pub fn default_store_dir() -> PathBuf {
     #[cfg(windows)]
     {
         let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(|| ".".into());
-        base.join("vork")
+        base.join("vork-storage")
     }
     #[cfg(target_os = "haiku")]
     {
         let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| "/boot/home".into());
-        home.join("config/var/vork")
+        home.join("config/var/vork-storage")
     }
     #[cfg(not(any(windows, target_os = "haiku")))]
     {
         if let Some(data) = std::env::var_os("XDG_DATA_HOME") {
-            return PathBuf::from(data).join("vork");
+            return PathBuf::from(data).join("vork-storage");
         }
         let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| ".".into());
-        home.join(".local/share/vork")
+        home.join(".local/share/vork-storage")
     }
 }
 

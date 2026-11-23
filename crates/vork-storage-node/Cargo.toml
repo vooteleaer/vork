@@ -18,6 +18,10 @@ path = "src/bin/vork-storage.rs"
 name = "vork-import-retifs"
 path = "src/bin/vork-import-retifs.rs"
 
+[[bin]]
+name = "vork-storage-run"
+path = "src/bin/vork-storage-run.rs"
+
 [dependencies]
 getrandom = "0.3"
 libvork = { path = "../libvork" }

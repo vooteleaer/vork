@@ -1,5 +1,5 @@
 /*
- * vork for Haiku: the app's resources (signature, one instance, version).
+ * vØrk storage for Haiku: the app's resources (signature, one instance, version).
  */
 
 resource app_signature "application/x-vnd.vork-storage-desktop";
@@ -12,8 +12,8 @@ resource app_version {
 	minor  = 1,
 	variety = B_APPV_DEVELOPMENT,
 	internal = 0,
-	short_info = "vork",
-	long_info = "vork: status and settings of this device's vork and Reticulum"
+	short_info = "vØrk storage",
+	long_info = "vØrk storage: status and settings of this device's storage"
 };
 
 /* vork: links (invitations, libraries) open here: the link in the

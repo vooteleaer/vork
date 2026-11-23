@@ -1,0 +1,11 @@
+# vØrk storage as the user's launch_daemon job, after the vØrk node (the vork
+# package's x-vnd.vork-node): vork-storage-run keeps vorkd and its pages in
+# the vØrk dashboard running, their output in ~/config/var/vork-storage/logs.
+# A package puts this in data/user_launch/ (every user) with its own paths;
+# by hand, copy it to ~/config/settings/launch/vork-storage with APP
+# replaced by the app folder, then log in again.
+
+job x-vnd.vork-storage-daemon {
+	launch APP/bin/vork-storage-run
+	requires x-vnd.vork-node
+}

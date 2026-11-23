@@ -326,7 +326,7 @@ pub fn default_endpoint() -> String {
     }
     #[cfg(windows)]
     {
-        r"\\.\pipe\vork-api-51820".to_string()
+        format!(r"\\.\pipe\vork-api-{}", system_node_port())
     }
     #[cfg(unix)]
     {
@@ -342,6 +342,25 @@ pub fn default_endpoint() -> String {
     }
 }
 
+/// The Windows system node's UDP port, which names its pipes: its
+/// `listen` in `%ProgramData%\vork\vork.toml` (the installer picks a free
+/// one), else 51820.
+#[cfg(windows)]
+fn system_node_port() -> u16 {
+    let config = std::env::var_os("ProgramData").map(std::path::PathBuf::from).unwrap_or_else(|| r"C:\ProgramData".into()).join(r"vork\vork.toml");
+    std::fs::read_to_string(config)
+        .ok()
+        .and_then(|text| {
+            text.lines()
+                .map(str::trim)
+                .find(|l| l.starts_with("listen") && l["listen".len()..].trim_start().starts_with('='))
+                .and_then(|l| l.split('=').nth(1))
+                .map(|v| v.trim().trim_matches('"').to_string())
+        })
+        .and_then(|addr| addr.rsplit(':').next().and_then(|p| p.parse().ok()))
+        .unwrap_or(51820)
+}
+
 // ---- the control endpoint: status and settings, one JSON line each way --------------
 
 /// The machine's node's control endpoint: `$VORK_CONTROL`, else the system
@@ -352,7 +371,7 @@ pub fn default_control_endpoint() -> String {
     }
     #[cfg(windows)]
     {
-        r"\\.\pipe\vork-51820".to_string()
+        format!(r"\\.\pipe\vork-{}", system_node_port())
     }
     #[cfg(unix)]
     {

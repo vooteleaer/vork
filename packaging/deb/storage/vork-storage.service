@@ -1,0 +1,18 @@
+# vØrk storage for each user who logs in (a systemd user service, enabled
+# for everyone by the vork-storage package): vorkd, its pages in the vØrk
+# dashboard, the libraries as folders in ~/vork.
+[Unit]
+Description=vØrk storage (vorkd, its dashboard pages, ~/vork)
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/vork-storage-run
+# vorkd closes its store on SIGINT; the runner and the others just end.
+KillSignal=SIGINT
+TimeoutStopSec=40
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

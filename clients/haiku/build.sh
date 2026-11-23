@@ -24,23 +24,23 @@ g++ -O2 -std=c++17 -Wall -o "$OUT/vork" "$HERE/app/VorkApp.cpp" \
 	-I "$HERE/capi" -I /boot/system/develop/headers/private/shared \
 	-L "$OUT/lib" -lvork_desktop -lbe -lshared \
 	-Wl,-rpath,'$ORIGIN/lib' -rdynamic
-rc -o "$HERE/build/retifs.rsrc" "$HERE/app/retifs.rdef"
-xres -o "$OUT/vork" "$HERE/build/retifs.rsrc"
+rc -o "$HERE/build/vork-storage.rsrc" "$HERE/app/vork-storage.rdef"
+xres -o "$OUT/vork" "$HERE/build/vork-storage.rsrc"
 mimeset -f "$OUT/vork"
-# The programs it manages, in its bin/ folder as a package has them: the vØrk
-# node (vork), vØrk storage (vorkd) and its commands (vork-storage), built
-# in this repository (cargo build --release -p vork -p vork-storage-node).
-rm -f "${OUT:?}/bin/prnsd"
-for p in "$ROOT/../target/release/vorkd" "$ROOT/../target/release/vork" "$ROOT/../target/release/vork-storage"; do
+# The programs, in its bin/ folder as a package has them: vorkd, its pages
+# in the vØrk dashboard (vork-web), the vork-storage command and
+# vork-storage-run, which keeps them running, built in this repository
+# (cargo build --release -p vork-storage-node -p vork-web). The vØrk node
+# is the vork package's.
+rm -f "${OUT:?}/bin/prnsd" "${OUT:?}/bin/vork" "${OUT:?}/bin/default-libraries"
+for p in vorkd vork-storage vork-storage-run vork-web; do
+	p=$ROOT/../target/release/$p
 	if [ -f "$p" ]; then
 		mkdir -p "$OUT/bin"
 		rm -f "${OUT:?}/bin/$(basename "$p")"	# a running one keeps its old file
 		cp "$p" "$OUT/bin/"
 	fi
 done
-# The libraries a new install joins (vorkd reads it next to itself).
-mkdir -p "$OUT/bin"
-cp "$ROOT/../packaging/default-libraries" "$OUT/bin/default-libraries"
 # Libraries as volumes: the userlandfs module (vork-haikufs), when built.
 M="$ROOT/../target/release/libvork_haikufs.so"
 if [ -f "$M" ]; then
