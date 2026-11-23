@@ -1117,6 +1117,18 @@ impl Client {
         Ok(Client { stream, next_id: 1, via: None })
     }
 
+    /// Connects to a daemon at this endpoint (a socket path, or a pipe name on
+    /// Windows): one not at its store's usual place (an importer reading
+    /// another daemon of the same protocol).
+    pub async fn connect_endpoint(at: &str) -> Result<Self, ClientError> {
+        #[cfg(windows)]
+        let stream = open_pipe(at).await;
+        #[cfg(not(windows))]
+        let stream = tokio::net::UnixStream::connect(at).await;
+        let stream = stream.map_err(|e| ClientError::NotRunning(at.to_string(), e))?;
+        Ok(Client { stream, next_id: 1, via: None })
+    }
+
     /// Connects to the app socket as an application with `token`: requests
     /// are limited to what the token allows.
     pub async fn connect_app(store: &Path, token: &str) -> Result<Self, ClientError> {
