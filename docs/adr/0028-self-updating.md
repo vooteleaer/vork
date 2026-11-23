@@ -20,3 +20,8 @@ Updating nodes by hand (copying a binary, a UAC prompt on Windows, adb on Androi
 - One signed release reaches all of the owner's nodes within hours, with no prompts.
 - Whoever holds the release key can make every node run their code: keep it off servers.
 - Not yet: a release channel for others' nodes (a project key), rollback on a failed start, and Android's app update.
+
+## Addendum (2026-11-23): the window comes along
+The vØrk window on Windows (`vork-net.exe`) came only with the MSI, so it stayed behind a node that updated itself, with an older dashboard built in. Two changes:
+- The window shows the node's own dashboard (control command `page`); its built-in page only for a node older than it.
+- A release may carry the window as a companion file (`windows-x86_64-window`, no build mark). A Windows node fetches it after its own binary when it isn't the one beside it, and puts it in place with its own update; a running window is moved aside and goes on until it's started again.
