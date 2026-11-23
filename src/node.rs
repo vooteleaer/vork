@@ -174,6 +174,8 @@ const SESSION_IDLE: Duration = Duration::from_secs(900);
 /// A direct link that went down (its far end's address changed, say) is
 /// offered again this often while a session to that node works.
 const DIRECT_AGAIN: Duration = Duration::from_secs(300);
+/// A neighbor up without its HELLO heard is greeted again this often.
+const HELLO_AGAIN: Duration = Duration::from_secs(10);
 /// Key queries answered for one IP address per 10 s, and in all per second.
 const KEY_ANSWERS_PER_IP: u32 = 20;
 const KEY_ANSWERS_PER_S: u32 = 100;
@@ -1463,10 +1465,14 @@ impl Node {
             n.up = false;
             log(format!("link down: {}", self.name(id)));
             self.on_link_down(id);
+        } else if n.up && n.hash.is_none() && n.hello_sent.is_none_or(|t| t.elapsed() >= HELLO_AGAIN) {
+            // Up, but its HELLO never came: ours or its answer was lost (one
+            // packet, sent as the link came up). Said again; it answers with its own.
+            self.send_hello(id);
         }
     }
 
-    fn on_link_up(&mut self, id: u32, addr: Option<SocketAddr>) {
+    fn send_hello(&mut self, id: u32) {
         let flags = self.my_flags();
         let mut bound = self.me.x_pub().as_bytes().to_vec();
         bound.push(flags);
@@ -1475,6 +1481,10 @@ impl Node {
         if let Some(n) = self.neighbors.get_mut(&id) {
             n.hello_sent = Some(Instant::now());
         }
+    }
+
+    fn on_link_up(&mut self, id: u32, addr: Option<SocketAddr>) {
+        self.send_hello(id);
         if let Some(addr) = addr {
             self.send_msg(id, &Msg::Observed { addr });
         }
