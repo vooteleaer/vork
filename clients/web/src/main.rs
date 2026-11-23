@@ -442,6 +442,7 @@ const DASHBOARD_PAGES: [(&str, &str, &str); 5] = [
     ("/libraries", "Libraries", "libraries"),
     ("/announces", "Announces", "announces"),
     ("/status", "Status", "node"),
+    // The dashboard shows it as a tab of its own Settings.
     ("/settings", "Settings", "settings"),
     ("/reports", "Reports", "reports"),
 ];

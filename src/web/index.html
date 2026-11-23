@@ -35,6 +35,9 @@
   header.top { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 14px; padding: 14px 28px; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
   header.top h1 { margin: 0; font-size: 17px; font-weight: 600; }
   .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 550; background: var(--panel2); border: 1px solid var(--line); color: var(--dim); }
+  /* Settings, all of them (the node's and the applications'): at the bottom, apart. */
+  #navend { margin-top: auto; border-top: 1px solid var(--line); padding-top: 8px; }
+  #navend + .side-foot { margin-top: 0; }
   #nav .navapp { display: flex; align-items: center; gap: 10px; padding: 16px 10px 6px; margin-top: 8px; border-top: 1px solid var(--line); font-weight: 650; font-size: 15px; }
   #nav .navapp.off { color: var(--faint); }
   #nav .navapp .logo { width: 24px; height: 24px; border-radius: 7px; flex: none; overflow: hidden; display: grid; place-items: center; background: linear-gradient(135deg, var(--accent), var(--violet)); }
@@ -157,6 +160,7 @@
     .app { grid-template-columns: minmax(0, 1fr); }
     aside { position: static; height: auto; flex-direction: row; overflow-x: auto; padding: 8px; }
     .brand, .side-foot { display: none; }
+    #navend { margin-top: 0; border-top: 0; padding-top: 0; }
     nav { display: flex; gap: 2px; } nav a span.lbl { display: none; }
     .content { padding: 16px; } header.top { padding: 10px 16px; gap: 10px; }
     .g2, .g4 { grid-template-columns: minmax(0, 1fr); }
@@ -174,6 +178,7 @@
   <aside>
     <div class="brand"><div class="logo"><svg viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round"><path d="M32 36V21.3M32 36L19.3 43.3M32 36L44.7 43.3"/><circle cx="32" cy="15" r="5.6"/><circle cx="13.8" cy="46.5" r="5.6"/><circle cx="50.2" cy="46.5" r="5.6"/></g><circle cx="32" cy="36" r="9" fill="#fff"/></svg></div>vØrk</div>
     <nav id="nav"></nav>
+    <nav id="navend"></nav>
     <div class="side-foot" id="foot"></div>
   </aside>
   <main>
@@ -268,7 +273,18 @@ const PAGES = [["dashboard", "Dashboard"], ["devices", "Devices"], ["network", "
 // Pages applications on this machine add (none: nothing about them shows).
 // Each is "app/<id><path>"; one whose application isn't running says so.
 const appPages = () => (S.apps || []).flatMap((a) => a.pages.map((pg) => ({ key: "app/" + a.id + pg.path, app: a, pg })));
-const navList = () => PAGES.concat(appPages().map((x) => [x.key, x.app.pages.length > 1 ? `${x.app.title}: ${x.pg.title}` : x.app.title, x]));
+// An application's /settings page isn't in the menu: it's a tab of the dashboard's Settings.
+const isSettings = (x) => x.pg.path === "/settings";
+const settingsTabs = () => appPages().filter(isSettings);
+const onSettings = () => page === "settings" || settingsTabs().some((x) => x.key === page);
+// Settings last (at the bottom of the menu, apart): all settings are there, as tabs.
+const navList = () => PAGES.filter(([id]) => id !== "settings").concat(appPages().filter((x) => !isSettings(x)).map((x) => [x.key, `${x.app.title}: ${x.pg.title}`, x]), PAGES.filter(([id]) => id === "settings"));
+// Settings' tabs: the node's own, then each application's (none: no tabs).
+function tabsSettings() {
+  const t = settingsTabs();
+  if (!t.length) return "";
+  return `<div class="seg" style="margin-bottom:16px">${[["settings", "vØrk"]].concat(t.map((x) => [x.key, x.app.title])).map(([k, l]) => `<button class="${page === k ? "on" : ""}" data-page="${esc(k)}">${esc(l)}</button>`).join("")}</div>`;
+}
 // An application's icon: its page /icon.svg, shown as an image (an SVG in an
 // image runs nothing). Asked once while it runs; the stand-in until then.
 const APPICON = {};
@@ -284,11 +300,14 @@ function appIcon(a) {
 }
 function drawNav() {
   const req = (S.links?.requests || []).length, list = navList();
-  $("#nav").innerHTML = list.map(([id, t, x]) => `${x && x.app.pages[0] === x.pg ? `<div class="navapp${x.app.running ? "" : " off"}">${appIcon(x.app)}<span>${esc(x.app.title)}</span></div>` : ""}<a data-page="${esc(id)}" tabindex="0" class="${page === id ? "on" : ""}${x && !x.app.running ? " off" : ""}"><svg viewBox="0 0 24 24">${I[x ? "app" : id]}</svg><span class="lbl">${esc(x ? x.pg.title : t)}</span>${id === "devices" && req ? `<span class="count">${req}</span>` : ""}</a>`).join("");
+  let lastApp = "";
+  const link = ([id, t, x]) => `${x && lastApp !== (lastApp = x.app.id) ? `<div class="navapp${x.app.running ? "" : " off"}">${appIcon(x.app)}<span>${esc(x.app.title)}</span></div>` : ""}<a data-page="${esc(id)}" tabindex="0" class="${page === id || (id === "settings" && onSettings()) ? "on" : ""}${x && !x.app.running ? " off" : ""}"><svg viewBox="0 0 24 24">${I[x ? "app" : id]}</svg><span class="lbl">${esc(x ? x.pg.title : t)}</span>${id === "devices" && req ? `<span class="count">${req}</span>` : ""}</a>`;
+  $("#nav").innerHTML = list.filter(([id]) => id !== "settings").map(link).join("");
+  $("#navend").innerHTML = list.filter(([id]) => id === "settings").map(link).join("");
   const opts = list.map(([id, t]) => `<option value="${esc(id)}" ${page === id ? "selected" : ""}>${esc(t)}${id === "devices" && req ? ` (${req})` : ""}</option>`).join("");
   const sel = $("#pagesel");
   if (sel._opts !== opts) { sel.innerHTML = opts; sel._opts = opts; }
-  sel.value = page;
+  sel.value = onSettings() ? "settings" : page;
   $("#foot").innerHTML = S.update ? `Build ${S.update.build} · ${esc(S.update.target)}` : "";
 }
 
@@ -962,7 +981,7 @@ function draw(force) {
   if (nokey) { st.innerHTML = '<span class="dot warn"></span>Key needed'; } else if (down) { st.innerHTML = '<span class="dot bad"></span>Not answering'; }
   else { st.innerHTML = `<span class="dot ok"></span>Online · ${dur(S.uptime_s || 0)}`; }
   $("#who").textContent = S.name ? `${S.name} · ${short(S.address)}` : "";
-  $("#title").textContent = (navList().find(([id]) => id === page) || [, ""])[1];
+  $("#title").textContent = onSettings() ? "Settings" : (navList().find(([id]) => id === page) || [, ""])[1];
   drawNav();
   // Typing isn't interrupted by the refresh.
   const a = document.activeElement;
@@ -972,7 +991,7 @@ function draw(force) {
   const sig = ap ? page + (ap.app.running ? ":on" : ":off") + requests() : "";
   if (ap && !force && APPF.sig === sig && APPF.frame?.isConnected) return;
   APPF.sig = sig;
-  $("#page").innerHTML = nokey ? keyPage() : requests() + (ap ? pApp(ap) : (RENDER[page] || pDashboard)());
+  $("#page").innerHTML = nokey ? keyPage() : requests() + (onSettings() ? tabsSettings() : "") + (ap ? pApp(ap) : (RENDER[page] || pDashboard)());
   if (ap) appMount(ap);
   if (was) refocus(was);
   if (!nokey && page === "dashboard") chartsDashboard();
