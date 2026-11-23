@@ -25,9 +25,10 @@ Application → node:
 | 7 | `IDENTIFY session[4] as_dest[16]` — prove to the far end we are the identity of our destination | — |
 | 8 | `REQUEST req[4] session[4] path body` | `RESPONSE` or `ERROR` |
 | 9 | `CLOSE session[4]` | — |
-| 10 | `RESPOND token[8] status[1] body` — answer an `INCOMING` | — |
+| 10 | `RESPOND token[8] status[1] body` — answer an `INCOMING` or a `PAGE` | — |
 | 11 | `SUBSCRIBE` — pass on every announce heard | `HEARD`s |
 | 12 | `DEVICES` `hash[16]…` — the owner's other devices (destinations or identities); sessions with them get direct links (ADR-0011). Replaces the client's earlier list; dropped when it disconnects | — |
+| 13 | `PAGES id title count[1]` then `count` × `path title` — pages this application adds to the node's dashboard (ADR-0032); none: forgotten | — |
 
 Node → application:
 
@@ -42,8 +43,21 @@ Node → application:
 | 7 | `HEARD dest[16] known` |
 | 8 | `INCOMING token[8] dest[16] session[4] nonce[32] identified[1] (requester[16]) path body` |
 | 9 | `CLOSED session[4]` |
+| 10 | `PAGE token[8] id path body` — the dashboard asks for one of this application's pages, or a call a page makes; answer with `RESPOND`, status 0 and the content |
 
 Status: 0 ok, 1 no such path, 2 refused. A destination's registration ends with its application's connection.
+
+## Pages in the dashboard
+
+An application may add pages to the node's dashboard (ADR-0032), in its menu under the application's title, on the web page, in the vØrk window and in the Android app alike. `id` is 1–32 of `a-z 0-9 -`; a path starts with `/`; at most 8 pages and 16 applications. The node keeps them in `apps.json` in its state directory: they stay in the menu after the application disconnects or the node restarts, shown as not running, until the application says them again (or says none), or the owner removes them.
+
+A page's content is the HTML the application answers to `PAGE` for its path. The dashboard shows it in a sandboxed frame of its own origin with the dashboard's colors as CSS variables (`--bg`, `--panel`, `--text`, `--dim`, `--accent`, `--line`…), and gives its scripts:
+- `vork.call(path, body)`: a `PAGE` for that path with that body (a string, or JSON), answered as `{status, body}`;
+- `vork.go(path)`: shows another of the application's pages.
+
+The frame can't reach the dashboard, its key or the node: only its own application, through `vork.call`. The dashboard waits 15 s for an answer.
+
+`cargo run -p vork-api --example pages -- ENDPOINT` adds two pages and answers a call.
 
 ## Example
 

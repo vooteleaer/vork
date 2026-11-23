@@ -176,6 +176,11 @@ const SESSION_IDLE: Duration = Duration::from_secs(900);
 const DIRECT_AGAIN: Duration = Duration::from_secs(300);
 /// A neighbor up without its HELLO heard is greeted again this often.
 const HELLO_AGAIN: Duration = Duration::from_secs(10);
+/// Tokens of the dashboard's asks for an application's page (`RESPOND`'s
+/// other tokens are a session and a request id, below 2^63).
+const PAGE_TOKEN: u64 = 1 << 63;
+/// An application's page not answered in this long: the dashboard is told.
+const PAGE_WAIT: Duration = Duration::from_secs(15);
 /// Key queries answered for one IP address per 10 s, and in all per second.
 const KEY_ANSWERS_PER_IP: u32 = 20;
 const KEY_ANSWERS_PER_S: u32 = 100;
@@ -505,6 +510,12 @@ pub struct Node {
     local: HashMap<Hash, LocalDest>,
     me_arc: Arc<Identity>,
     clients: HashMap<u32, ApiClient>,
+    /// Pages applications add to the dashboard.
+    apps: crate::apps::Apps,
+    /// The dashboard's asks for an application's page, waiting for its
+    /// answer: token → (the client asked, where the answer goes, since).
+    page_waits: HashMap<u64, (u32, tokio::sync::oneshot::Sender<String>, Instant)>,
+    next_page: u64,
     /// `Find`s waiting for an announce: (client, request, destination, deadline).
     finds: Vec<(u32, u32, Hash, Instant)>,
     /// Neighbors we know by address only, asked for their key: nonce, when.
@@ -793,6 +804,9 @@ impl Node {
             local: HashMap::new(),
             me_arc: Arc::new(Identity::from_bytes(&me.to_bytes())),
             clients: HashMap::new(),
+            apps: crate::apps::Apps::open(state.dir()),
+            page_waits: HashMap::new(),
+            next_page: 0,
             finds: Vec::new(),
             asking: HashMap::new(),
             me,
@@ -1188,10 +1202,10 @@ impl Node {
                     self.on_api(ev);
                 }
                 Some((req, owner, reply)) = web_rx.recv() => {
-                    let _ = reply.send(self.on_control(&req, owner));
+                    self.control_in(req, owner, reply);
                 }
                 Some((req, owner, reply)) = async { match ctrl_rx.as_mut() { Some(rx) => rx.recv().await, None => std::future::pending().await } } => {
-                    let _ = reply.send(self.on_control(&req, owner));
+                    self.control_in(req, owner, reply);
                 }
                 _ = async { match stop.as_mut() { Some(s) => { let _ = s.changed().await; } None => std::future::pending().await } } => {
                     let _ = stop_tx.send(true);
@@ -3409,6 +3423,13 @@ impl Node {
             }
             crate::api::Event::Gone { client } => {
                 self.clients.remove(&client);
+                self.apps.gone(client);
+                let lost: Vec<u64> = self.page_waits.iter().filter(|(_, w)| w.0 == client).map(|(t, _)| *t).collect();
+                for t in lost {
+                    if let Some((_, reply, _)) = self.page_waits.remove(&t) {
+                        let _ = reply.send(json!({ "error": "the application stopped" }).to_string());
+                    }
+                }
                 let gone: Vec<Hash> = self.local.iter().filter(|(_, d)| d.owner == Some(client)).map(|(h, _)| *h).collect();
                 for d in gone {
                     self.local.remove(&d);
@@ -3463,10 +3484,25 @@ impl Node {
                     }
                 }
                 ToNode::Close { .. } => {}
+                ToNode::Respond { token, status, body } if token & PAGE_TOKEN != 0 => {
+                    // An application's page for the dashboard: only from the client asked.
+                    if self.page_waits.get(&token).is_some_and(|w| w.0 == client) {
+                        let (_, reply, _) = self.page_waits.remove(&token).unwrap();
+                        let _ = reply.send(json!({ "status": status, "body": String::from_utf8_lossy(&body) }).to_string());
+                    }
+                }
                 ToNode::Respond { token, status, body } => {
                     let (sid, id) = ((token >> 32) as u32, token as u32);
                     self.respond(sid, id, status, &body);
                 }
+                ToNode::Pages { id, title, pages } => match self.apps.set(client, &id, &title, pages) {
+                    Ok(changed) => {
+                        if changed {
+                            log(format!("an application adds pages to the dashboard: {id}"));
+                        }
+                    }
+                    Err(e) => log(format!("an application's pages refused: {e}")),
+                },
                 ToNode::Subscribe => {
                     if let Some(c) = self.clients.get_mut(&client) {
                         c.subscribed = true;
@@ -3772,6 +3808,12 @@ impl Node {
         }
         self.close_idle_sessions(SESSION_IDLE);
         self.offer_direct_again();
+        let late: Vec<u64> = self.page_waits.iter().filter(|(_, w)| w.2.elapsed() >= PAGE_WAIT).map(|(t, _)| *t).collect();
+        for t in late {
+            if let Some((_, reply, _)) = self.page_waits.remove(&t) {
+                let _ = reply.send(json!({ "error": "the application didn't answer" }).to_string());
+            }
+        }
         // Learned nodes that didn't come up: let go.
         let failed: Vec<u32> = self.neighbors.iter().filter(|(_, n)| !n.up && n.trial.is_some_and(|t| t.elapsed() >= TRIAL)).map(|(id, _)| *id).collect();
         for id in failed {
@@ -4019,6 +4061,38 @@ impl Node {
         }
     }
 
+    /// A control request: most are answered at once; one for an application's
+    /// page waits for the application's answer.
+    fn control_in(&mut self, request: String, owner: bool, reply: tokio::sync::oneshot::Sender<String>) {
+        let v = serde_json::from_str::<serde_json::Value>(&request).unwrap_or_default();
+        if v.get("cmd").and_then(|c| c.as_str()) != Some("app") {
+            let _ = reply.send(self.on_control(&request, owner));
+            return;
+        }
+        let fail = |reply: tokio::sync::oneshot::Sender<String>, e: &str| {
+            let _ = reply.send(json!({ "error": e }).to_string());
+        };
+        // The dashboard's owner only: a page may show what the application keeps.
+        if !owner {
+            return fail(reply, "only the node's own user (or root) may do this");
+        }
+        let (id, path) = (v["id"].as_str().unwrap_or_default(), v["path"].as_str().unwrap_or("/"));
+        if !crate::apps::valid_path(path) {
+            return fail(reply, "not a page path");
+        }
+        let Some(client) = self.apps.serving(id) else {
+            return fail(reply, if self.apps.list.iter().any(|a| a.id == id) { "stopped" } else { "no such application" });
+        };
+        if self.page_waits.len() >= 64 {
+            return fail(reply, "too many pages asked at once");
+        }
+        self.next_page += 1;
+        let token = PAGE_TOKEN | self.next_page;
+        let body = v["body"].as_str().unwrap_or_default().as_bytes().to_vec();
+        self.page_waits.insert(token, (client, reply, Instant::now()));
+        self.to_client(client, &vork_api::FromNode::Page { token, id: id.to_string(), path: path.to_string(), body });
+    }
+
     fn on_control(&mut self, request: &str, owner: bool) -> String {
         let v = serde_json::from_str::<serde_json::Value>(request).unwrap_or_default();
         let cmd = v.get("cmd").and_then(|c| c.as_str()).unwrap_or_default();
@@ -4030,6 +4104,11 @@ impl Node {
         }
         match Some(cmd) {
             Some("status") => self.status_json().to_string(),
+            // An application's pages out of the menu (one that's stopped).
+            Some("app_forget") => match self.apps.forget(v["id"].as_str().unwrap_or_default()) {
+                Ok(()) => json!({ "ok": true }).to_string(),
+                Err(e) => json!({ "error": e }).to_string(),
+            },
             // Started again by its service, with settings taken at start (the port).
             Some("restart") => {
                 self.restart_at = Some(Instant::now() + Duration::from_millis(500));
@@ -4726,6 +4805,7 @@ impl Node {
             },
             // Every node known by its announce, as Tailscale lists a tailnet's machines.
             "nodes": self.known_nodes(),
+            "apps": self.apps.json(),
             // The owner's network for the map: how this node and each device reach the others.
             "map": {
                 "me": self.paths_json(),

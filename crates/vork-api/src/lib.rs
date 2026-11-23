@@ -60,6 +60,10 @@ pub enum ToNode {
     /// with them get direct links (ADR-0011). Replaces what this client said
     /// before; forgotten when it disconnects.
     Devices { devices: Vec<Hash> },
+    /// Pages this application adds to the node's dashboard: `id` (a-z, 0-9,
+    /// -), the menu's title, and (path, title) for each page. None: the
+    /// application is forgotten. The node asks for a page's content with `Page`.
+    Pages { id: String, title: String, pages: Vec<(String, String)> },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -74,6 +78,9 @@ pub enum FromNode {
     /// A request to one of our destinations; answer with `Respond { token }`.
     Incoming { token: u64, dest: Hash, session: u32, nonce: [u8; 32], requester: Option<Hash>, path: String, body: Vec<u8> },
     Closed { session: u32 },
+    /// The dashboard asks for one of this application's pages (or a call a
+    /// page makes): answer with `Respond { token }`, status 0 and the content.
+    Page { token: u64, id: String, path: String, body: Vec<u8> },
 }
 
 // ---- encoding --------------------------------------------------------------------
@@ -178,6 +185,13 @@ impl ToNode {
                 }
                 &mut w
             }
+            ToNode::Pages { id, title, pages } => {
+                w.u8(13).str(id).str(title).u8(pages.len().min(255) as u8);
+                for (path, title) in pages.iter().take(255) {
+                    w.str(path).str(title);
+                }
+                &mut w
+            }
         };
         w.0
     }
@@ -197,6 +211,14 @@ impl ToNode {
             10 => ToNode::Respond { token: r.u64()?, status: r.u8()?, body: r.rest() },
             11 => ToNode::Subscribe,
             12 => ToNode::Devices { devices: r.rest().chunks_exact(16).map(|c| c.try_into().unwrap()).collect() },
+            13 => {
+                let (id, title, n) = (r.str()?, r.str()?, r.u8()?);
+                let mut pages = Vec::with_capacity(n as usize);
+                for _ in 0..n {
+                    pages.push((r.str()?, r.str()?));
+                }
+                ToNode::Pages { id, title, pages }
+            }
             k => return Err(bad(k)),
         })
     }
@@ -228,6 +250,7 @@ impl FromNode {
                 w.str(path).raw(body)
             }
             FromNode::Closed { session } => w.u8(9).u32(*session),
+            FromNode::Page { token, id, path, body } => w.u8(10).u64(*token).str(id).str(path).raw(body),
         };
         w.0
     }
@@ -255,6 +278,7 @@ impl FromNode {
                 FromNode::Incoming { token, dest, session, nonce, requester, path: r.str()?, body: r.rest() }
             }
             9 => FromNode::Closed { session: r.u32()? },
+            10 => FromNode::Page { token: r.u64()?, id: r.str()?, path: r.str()?, body: r.rest() },
             k => return Err(bad(k)),
         })
     }
@@ -371,6 +395,8 @@ pub enum Event {
     Heard { dest: Hash, known: Known },
     Incoming { token: u64, dest: Hash, session: u32, nonce: [u8; 32], requester: Option<Hash>, path: String, body: Vec<u8> },
     Closed { session: u32 },
+    /// The dashboard asks for one of our pages (answer with `respond`).
+    Page { token: u64, id: String, path: String, body: Vec<u8> },
     /// The connection to the node ended.
     Gone,
 }
@@ -453,6 +479,9 @@ impl Client {
                     (None, FromNode::Closed { session }) => {
                         let _ = ev_tx.send(Event::Closed { session });
                     }
+                    (None, FromNode::Page { token, id, path, body }) => {
+                        let _ = ev_tx.send(Event::Page { token, id, path, body });
+                    }
                     _ => {}
                 }
             }
@@ -490,6 +519,12 @@ impl Client {
 
     pub fn subscribe(&self) -> io::Result<()> {
         self.send(ToNode::Subscribe)
+    }
+
+    /// Adds this application's pages to the node's dashboard (none: removes
+    /// them). Requests for them arrive as `Event::Page`.
+    pub fn pages(&self, id: &str, title: &str, pages: Vec<(String, String)>) -> io::Result<()> {
+        self.send(ToNode::Pages { id: id.into(), title: title.into(), pages })
     }
 
     /// Tells the node the owner's other devices (destinations or identities).
@@ -562,6 +597,8 @@ mod tests {
             ToNode::Subscribe,
             ToNode::Devices { devices: vec![[1; 16], [2; 16]] },
             ToNode::Devices { devices: vec![] },
+            ToNode::Pages { id: "app".into(), title: "App".into(), pages: vec![("/".into(), "Overview".into()), ("/b".into(), "B".into())] },
+            ToNode::Pages { id: "app".into(), title: "".into(), pages: vec![] },
         ];
         for f in to {
             assert_eq!(ToNode::decode(&f.encode()).unwrap(), f);
@@ -578,6 +615,7 @@ mod tests {
             FromNode::Incoming { token: 1, dest: [2; 16], session: 3, nonce: [4; 32], requester: Some([5; 16]), path: "/x".into(), body: vec![6] },
             FromNode::Incoming { token: 1, dest: [2; 16], session: 3, nonce: [4; 32], requester: None, path: "/x".into(), body: vec![] },
             FromNode::Closed { session: 3 },
+            FromNode::Page { token: 1 << 63, id: "app".into(), path: "/".into(), body: b"{}".to_vec() },
         ];
         for f in from {
             assert_eq!(FromNode::decode(&f.encode()).unwrap(), f);

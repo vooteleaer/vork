@@ -166,6 +166,8 @@ impl Net {
                         NetEvent::Incoming { token, dest: DestinationHash(dest), session, nonce, requester, path, body }
                     }
                     Event::Closed { .. } => continue,
+                    // Dashboard pages: not served yet.
+                    Event::Page { .. } => continue,
                     Event::Gone => break,
                 };
                 if tx.send(out).is_err() {

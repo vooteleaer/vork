@@ -35,6 +35,8 @@
   header.top { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 14px; padding: 14px 28px; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
   header.top h1 { margin: 0; font-size: 17px; font-weight: 600; }
   .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 550; background: var(--panel2); border: 1px solid var(--line); color: var(--dim); }
+  #nav .navsep { height: 1px; background: var(--line); margin: 8px 10px; }
+  #nav a.off .lbl { color: var(--faint); }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); display: inline-block; flex: none; }
   .dot.ok { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent); }
   .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); }
@@ -202,7 +204,7 @@ window.vorkResume = () => refresh();
 const token = () => APP ? "app" : window.VORK_INGRESS ? "ingress" : localStorage.getItem("vork-token") || "";
 
 // ---- state ----
-let S = {}, M = null, LOG = [], page = (location.hash.match(/^#\/(\w+)/) || [])[1] || "dashboard", nokey = false, down = false;
+let S = {}, M = null, LOG = [], page = (location.hash.match(/^#\/([\w/-]+)/) || [])[1] || "dashboard", nokey = false, down = false;
 let code = null, codeOpts = { valid: 600, many: false, approve: false }, logFilter = "", range = 3600;
 
 // ---- helpers ----
@@ -254,13 +256,18 @@ const I = {
   updates: '<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   log: '<path d="M4 6h16M4 12h16M4 18h10"/>',
+  app: '<path d="M12 3 3 7.5v9L12 21l9-4.5v-9z"/><path d="M3 7.5 12 12l9-4.5M12 12v9"/>',
 };
 const PAGES = [["dashboard", "Dashboard"], ["devices", "Devices"], ["network", "Network"], ["firewall", "Firewall"], ["exit", "Exit node"], ["updates", "Updates"], ["settings", "Settings"], ["log", "Log"]];
 
+// Pages applications on this machine add (none: nothing about them shows).
+// Each is "app/<id><path>"; one whose application isn't running says so.
+const appPages = () => (S.apps || []).flatMap((a) => a.pages.map((pg) => ({ key: "app/" + a.id + pg.path, app: a, pg })));
+const navList = () => PAGES.concat(appPages().map((x) => [x.key, x.app.pages.length > 1 ? `${x.app.title}: ${x.pg.title}` : x.app.title, x]));
 function drawNav() {
-  const req = (S.links?.requests || []).length;
-  $("#nav").innerHTML = PAGES.map(([id, t]) => `<a data-page="${id}" tabindex="0" class="${page === id ? "on" : ""}"><svg viewBox="0 0 24 24">${I[id]}</svg><span class="lbl">${t}</span>${id === "devices" && req ? `<span class="count">${req}</span>` : ""}</a>`).join("");
-  const opts = PAGES.map(([id, t]) => `<option value="${id}" ${page === id ? "selected" : ""}>${t}${id === "devices" && req ? ` (${req})` : ""}</option>`).join("");
+  const req = (S.links?.requests || []).length, list = navList();
+  $("#nav").innerHTML = list.map(([id, t, x]) => `${x && x.app.pages[0] === x.pg ? '<div class="navsep"></div>' : ""}<a data-page="${esc(id)}" tabindex="0" class="${page === id ? "on" : ""}${x && !x.app.running ? " off" : ""}"><svg viewBox="0 0 24 24">${I[x ? "app" : id]}</svg><span class="lbl">${esc(x ? (x.app.pages[0] === x.pg ? x.app.title : x.pg.title) : t)}</span>${id === "devices" && req ? `<span class="count">${req}</span>` : ""}</a>`).join("");
+  const opts = list.map(([id, t]) => `<option value="${esc(id)}" ${page === id ? "selected" : ""}>${esc(t)}${id === "devices" && req ? ` (${req})` : ""}</option>`).join("");
   const sel = $("#pagesel");
   if (sel._opts !== opts) { sel.innerHTML = opts; sel._opts = opts; }
   sel.value = page;
@@ -877,6 +884,57 @@ document.addEventListener("keydown", (e) => {
   else if (d[1]) window.scrollBy(0, d[1] * 240);
 });
 
+// ---- applications' pages ----
+// An application's page runs in a sandboxed frame of its own origin: it can't
+// reach the dashboard or its key, only ask its own application, through the
+// dashboard (vork.call), and say how tall it is.
+const APPF = { key: "", frame: null, sig: "", n: 0 };
+function pApp(x) {
+  const a = x.app;
+  const head = `<div class="card-head"><div><h2>${esc(x.pg.title)}</h2><div class="sub">From the application <span class="mono">${esc(a.id)}</span> on this machine</div></div>${a.running ? `<button class="btn ghost sm" data-app-reload="1">Reload</button>` : ""}</div>`;
+  if (!a.running) return `<div class="card">${head}<div class="empty">${esc(a.title)} isn't running. Start it again, or remove its pages from the menu.<div style="margin-top:12px"><button class="btn sm" data-app-forget="${esc(a.id)}">Remove from the menu</button></div></div></div>`;
+  return `<div class="card apppage">${head}<div id="appframe"><div class="empty">Loading…</div></div></div>`;
+}
+function appShell(body) {
+  const cs = getComputedStyle(document.documentElement);
+  const vars = ["bg", "panel", "panel2", "line", "line2", "text", "dim", "faint", "accent", "accent2", "ok", "warn", "bad", "violet", "r", "mono"].map((v) => `--${v}:${cs.getPropertyValue("--" + v).trim()}`).join(";");
+  return `<!doctype html><html><head><meta charset="utf-8"><style>:root{${vars};color-scheme:${cs.colorScheme || "normal"}}html,body{margin:0;background:transparent;color:var(--text);font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}a{color:var(--accent2)}</style>`
+    + `<script>(function(){var n=0,w={};addEventListener("message",function(e){var m=e.data;if(e.source!==parent||!m||m.vork!=="answer"||!w[m.n])return;var c=w[m.n];delete w[m.n];m.error?c[1](new Error(m.error)):c[0]({status:m.status,body:m.body})});`
+    + `window.vork={call:function(path,body){return new Promise(function(ok,no){w[++n]=[ok,no];parent.postMessage({vork:"call",n:n,path:path,body:body==null?"":typeof body==="string"?body:JSON.stringify(body)},"*")})},`
+    + `go:function(path){parent.postMessage({vork:"go",path:path},"*")}};`
+    + `var h=0;function size(){var v=Math.ceil(document.documentElement.getBoundingClientRect().height);if(v!==h){h=v;parent.postMessage({vork:"height",h:v},"*")}}addEventListener("load",size);new ResizeObserver(size).observe(document.documentElement)})()<\/script></head><body>${body}</body></html>`;
+}
+async function appMount(x) {
+  const box = $("#appframe");
+  if (!box) return;
+  if (APPF.frame && APPF.key === x.key) { box.replaceChildren(APPF.frame); return; }
+  const key = x.key;
+  APPF.key = key; APPF.frame = null;
+  let r;
+  try { r = await cmd({ cmd: "app", id: x.app.id, path: x.pg.path }); } catch (e) { r = { error: "the node didn't answer" }; }
+  if (APPF.key !== key || !box.isConnected) return;
+  if (r.error || r.status) { box.innerHTML = `<div class="empty">${esc(r.error || r.body || "The page isn't there")}</div>`; return; }
+  const f = document.createElement("iframe");
+  f.setAttribute("sandbox", "allow-scripts");
+  f.setAttribute("title", x.pg.title);
+  f.style.cssText = "width:100%;border:0;height:240px;display:block;background:transparent";
+  f.srcdoc = appShell(r.body);
+  APPF.frame = f;
+  box.replaceChildren(f);
+}
+window.addEventListener("message", async (e) => {
+  const f = APPF.frame, m = e.data;
+  if (!f || e.source !== f.contentWindow || !m || typeof m !== "object") return;
+  const x = appPages().find((p) => p.key === APPF.key);
+  if (!x) return;
+  if (m.vork === "height") { f.style.height = Math.max(80, Math.min(20000, +m.h || 0)) + "px"; return; }
+  if (m.vork === "go") { const k = "app/" + x.app.id + String(m.path || ""); if (appPages().some((p) => p.key === k)) go(k); return; }
+  if (m.vork !== "call") return;
+  let r;
+  try { r = await cmd({ cmd: "app", id: x.app.id, path: String(m.path || "/"), body: String(m.body ?? "") }); } catch (err) { r = { error: "the node didn't answer" }; }
+  if (APPF.frame === f) f.contentWindow.postMessage({ vork: "answer", n: m.n, status: r.status, body: r.body, error: r.error }, "*");
+});
+
 // ---- drawing ----
 const RENDER = { dashboard: pDashboard, devices: pDevices, network: pNetwork, firewall: pFirewall, exit: pExit, updates: pUpdates, settings: pSettings, log: pLog };
 function draw(force) {
@@ -885,12 +943,18 @@ function draw(force) {
   if (nokey) { st.innerHTML = '<span class="dot warn"></span>Key needed'; } else if (down) { st.innerHTML = '<span class="dot bad"></span>Not answering'; }
   else { st.innerHTML = `<span class="dot ok"></span>Online · ${dur(S.uptime_s || 0)}`; }
   $("#who").textContent = S.name ? `${S.name} · ${short(S.address)}` : "";
-  $("#title").textContent = (PAGES.find(([id]) => id === page) || [, ""])[1];
+  $("#title").textContent = (navList().find(([id]) => id === page) || [, ""])[1];
   drawNav();
   // Typing isn't interrupted by the refresh.
   const a = document.activeElement;
   if (!force && a && $("#page").contains(a) && (a.tagName === "INPUT" && a.type === "text" || a.tagName === "SELECT")) return was && refocus(was);
-  $("#page").innerHTML = nokey ? keyPage() : requests() + (RENDER[page] || pDashboard)();
+  // An application's page stays as it is between refreshes (an iframe moved is loaded again).
+  const ap = !nokey && page.startsWith("app/") && appPages().find((x) => x.key === page);
+  const sig = ap ? page + (ap.app.running ? ":on" : ":off") + requests() : "";
+  if (ap && !force && APPF.sig === sig && APPF.frame?.isConnected) return;
+  APPF.sig = sig;
+  $("#page").innerHTML = nokey ? keyPage() : requests() + (ap ? pApp(ap) : (RENDER[page] || pDashboard)());
+  if (ap) appMount(ap);
   if (was) refocus(was);
   if (!nokey && page === "dashboard") chartsDashboard();
   if (page === "firewall") rulePreview();
@@ -926,6 +990,8 @@ document.addEventListener("click", async (e) => {
   if (t.id === "restartNode") { APP.restart(); return toast("Restarting the node"); }
   if (t.id === "stopNode") { if (confirm("Stop the node? This phone leaves vØrk until the app is opened again.")) { APP.stop(); toast("Stopped"); } return; }
   if (d.copy) return copy(d.copy);
+  if (d.appReload) { APPF.key = ""; APPF.frame = null; return draw(true); }
+  if (d.appForget) return act({ cmd: "app_forget", id: d.appForget }, "Removed from the menu");
   if (d.valid) { codeOpts.valid = +d.valid; return draw(true); }
   if (t.id === "many") { codeOpts.many = t.checked; return; }
   if (t.id === "approve") { codeOpts.approve = t.checked; return; }
