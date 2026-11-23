@@ -153,16 +153,64 @@ fn translate(attrs: &[(String, AttrValue)]) -> Vec<(String, AttrValue)> {
         .collect()
 }
 
-/// The whole content of `cap`, from the retifs daemon's own store only (no
-/// nodes asked: it has no network, and asking would wait).
-async fn read_all(src: &mut Client, _ns: &str, cap: &str, size: u64) -> Result<Vec<u8>, String> {
-    let req = Request::Get { cap: cap.into(), from: vec![], links_per_node: 1, batch: 64 };
-    match src.call(req).await.map_err(|e| e.to_string())? {
-        Response::Get { data, .. } if data.len() as u64 == size => Ok(data),
-        Response::Get { data, .. } => Err(format!("{} of {size} bytes here", data.len())),
-        Response::Error { message } => Err(message),
-        other => Err(format!("unexpected answer {other:?}")),
+/// A read with no answer in this long: its content isn't all here.
+const READ_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The whole content of `cap`, from the retifs daemon's own store only, in
+/// pieces (a whole large file in one answer ended the connection), asking no
+/// one (no wait: it has no network, or mustn't use it). A connection that
+/// breaks is made again and the read goes on where it was.
+async fn read_all(src: &mut Client, from: &str, cap: &str, size: u64) -> Result<Vec<u8>, String> {
+    // Without its holder hints (`@node,…`): those are nodes it would ask.
+    let cap = cap.split('@').next().unwrap_or(cap);
+    // Up to 200 MB in one answer (fast; an answer is at most 256 MB); larger ones in pieces.
+    if size <= 200 << 20 {
+        for attempt in 0..3 {
+            let call = tokio::time::timeout(READ_WAIT, src.call(Request::Get { cap: cap.into(), from: vec![], links_per_node: 1, batch: 64 })).await;
+            let Ok(call) = call else {
+                // No answer: the content isn't all here (it waits for what's
+                // missing). The connection is busy with it: a new one.
+                *src = Client::connect_endpoint(from).await.map_err(|e| e.to_string())?;
+                return Err(format!("no answer in {} s", READ_WAIT.as_secs()));
+            };
+            match call {
+                Ok(Response::Get { data, .. }) if data.len() as u64 == size => return Ok(data),
+                Ok(Response::Get { data, .. }) => return Err(format!("{} of {size} bytes here", data.len())),
+                Ok(Response::Error { message }) => return Err(message),
+                Ok(other) => return Err(format!("unexpected answer {other:?}")),
+                Err(e) if attempt == 2 => return Err(e.to_string()),
+                Err(_) => {
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    *src = Client::connect_endpoint(from).await.map_err(|e| e.to_string())?;
+                }
+            }
+        }
     }
+    let mut out = Vec::with_capacity(size as usize);
+    let piece = 64u64 << 20;
+    let mut broken = 0;
+    while (out.len() as u64) < size {
+        let req = Request::ReadRange { cap: cap.into(), ns: None, offset: out.len() as u64, len: piece.min(size - out.len() as u64), wait_ms: 0 };
+        let Ok(call) = tokio::time::timeout(READ_WAIT, src.call(req)).await else {
+            *src = Client::connect_endpoint(from).await.map_err(|e| e.to_string())?;
+            return Err(format!("no answer in {} s", READ_WAIT.as_secs()));
+        };
+        match call {
+            Ok(Response::Range { data }) if !data.is_empty() => out.extend_from_slice(&data),
+            Ok(Response::Range { .. }) => return Err("an empty range".into()),
+            Ok(Response::Error { message }) => return Err(message),
+            Ok(other) => return Err(format!("unexpected answer {other:?}")),
+            Err(e) => {
+                broken += 1;
+                if broken > 3 {
+                    return Err(e.to_string());
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                *src = Client::connect_endpoint(from).await.map_err(|e| e.to_string())?;
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// The content's size: the file reference's last part (`…:size`), else the record's.
@@ -240,7 +288,7 @@ async fn write_large(dst: &mut Client, ns: &str, attrs: Vec<(String, AttrValue)>
     id
 }
 
-async fn import(src: &mut Client, dst: &mut Client, only: &[String], progress: &mut Progress) {
+async fn import(src: &mut Client, from: &str, dst: &mut Client, only: &[String], progress: &mut Progress) {
     let mut names = libraries(src).await;
     names.retain(|n| !SKIP_LIBRARIES.contains(&n.as_str()) && (only.is_empty() || only.contains(n)));
     for ns in names {
@@ -262,9 +310,14 @@ async fn import(src: &mut Client, dst: &mut Client, only: &[String], progress: &
             }
             let attrs = translate(&r.attrs);
             let size = cap_size(r).unwrap_or(0);
+            let t0 = std::time::Instant::now();
+            let debug = std::env::var_os("VORK_IMPORT_DEBUG").is_some();
+            if debug {
+                eprintln!("reading {size} bytes: {}", str_attr(r, "path").unwrap_or(""));
+            }
             let data = match r.blocks.first() {
                 None => None,
-                Some(cap) => match read_all(src, &ns, cap, size).await {
+                Some(cap) => match read_all(src, from, cap, size).await {
                     Ok(d) => Some(d),
                     Err(e) => {
                         missing.push((r.id.clone(), str_attr(r, "path").or(str_attr(r, "name")).unwrap_or("").to_string(), e));
@@ -273,6 +326,9 @@ async fn import(src: &mut Client, dst: &mut Client, only: &[String], progress: &
                 },
             };
             let len = data.as_ref().map_or(0, |d| d.len());
+            if debug {
+                eprintln!("read {} bytes in {:.2} s: {}", len, t0.elapsed().as_secs_f64(), str_attr(r, "path").unwrap_or(""));
+            }
             if (len as u64) <= SMALL {
                 batch.push((r.id.clone(), attrs, data));
                 batch_bytes += len;
@@ -362,7 +418,7 @@ async fn main() {
     }
     if let Some(i) = args.iter().position(|a| a == "--import") {
         let only: Vec<String> = args[i + 1..].iter().take_while(|a| !a.starts_with("--")).cloned().collect();
-        import(&mut src, &mut dst, &only, &mut progress).await;
+        import(&mut src, &from, &mut dst, &only, &mut progress).await;
         return verify(&mut src, &mut dst, &progress).await;
     }
     usage()
