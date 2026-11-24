@@ -49,7 +49,7 @@ modules:
       - type: script
         dest-filename: wrapper
         commands:
-          - ': "${VORK_STORE:=$HOME/.local/share/vork}"'
+          - ': "${VORK_STORE:=$HOME/.local/share/vork-storage}"'
           - export VORK_STORE
           # The node's paths on the host (inside, XDG_* are the app's own and
           # the host's /etc is /run/host/etc): the system node's, else the user's.
