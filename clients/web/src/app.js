@@ -82,6 +82,9 @@ function when(ms) {
 
 function copyButton(text) {
   return el("button", { onclick: async () => {
+    // In the dashboard the page is a sandboxed frame, which may not use the
+    // clipboard (nor may Android's WebView): the dashboard copies it.
+    if (inDashboard && vork.copy) { vork.copy(text); return; }
     try { await navigator.clipboard.writeText(text); toast("Copied"); } catch { toast("Select it and copy"); }
   } }, "Copy");
 }

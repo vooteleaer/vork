@@ -939,7 +939,8 @@ function appShell(body) {
   return `<!doctype html><html><head><meta charset="utf-8"><style>:root{${vars};color-scheme:${cs.colorScheme || "normal"}}html,body{margin:0;background:transparent;color:var(--text);font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}a{color:var(--accent2)}</style>`
     + `<script>(function(){var n=0,w={};addEventListener("message",function(e){var m=e.data;if(e.source!==parent||!m||m.vork!=="answer"||!w[m.n])return;var c=w[m.n];delete w[m.n];m.error?c[1](new Error(m.error)):c[0]({status:m.status,body:m.body})});`
     + `window.vork={call:function(path,body){return new Promise(function(ok,no){w[++n]=[ok,no];parent.postMessage({vork:"call",n:n,path:path,body:body==null?"":typeof body==="string"?body:JSON.stringify(body)},"*")})},`
-    + `go:function(path){parent.postMessage({vork:"go",path:path},"*")}};`
+    + `go:function(path){parent.postMessage({vork:"go",path:path},"*")},`
+    + `copy:function(text){parent.postMessage({vork:"copy",text:String(text)},"*")}};`
     + `var h=0;function size(){var v=Math.ceil(document.documentElement.getBoundingClientRect().height);if(v!==h){h=v;parent.postMessage({vork:"height",h:v},"*")}}addEventListener("load",size);new ResizeObserver(size).observe(document.documentElement)})()<\/script></head><body>${body}</body></html>`;
 }
 async function appMount(x) {
@@ -966,6 +967,8 @@ window.addEventListener("message", async (e) => {
   const x = appPages().find((p) => p.key === APPF.key);
   if (!x) return;
   if (m.vork === "height") { f.style.height = Math.max(80, Math.min(20000, +m.h || 0)) + "px"; return; }
+  // The frame may not use the clipboard: the dashboard copies for it.
+  if (m.vork === "copy") { copy(String(m.text || "")); return; }
   if (m.vork === "go") { const k = "app/" + x.app.id + String(m.path || ""); if (appPages().some((p) => p.key === k)) go(k); return; }
   if (m.vork !== "call") return;
   let r;
