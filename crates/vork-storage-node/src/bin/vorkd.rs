@@ -1485,6 +1485,32 @@ fn save_deleted(d: &Daemon) {
     let _ = std::fs::write(d.store.root().join("deleted"), text);
 }
 
+/// Library `ns`'s deletion was called off (its `vork.deleted` record is
+/// gone): shown again, and kept by its rules as before; files let go are
+/// fetched again as they're read.
+fn library_undeleted(d: &Daemon, ns: &str) {
+    if d.deleted.lock().unwrap().remove(ns).is_none() {
+        return;
+    }
+    save_deleted(d);
+    d.lib_wake.notify_one();
+    println!("{ns}: its deletion was called off; shown again");
+    ns_changed(d, ns);
+}
+
+/// At start: libraries marked deleted whose `vork.deleted` record is gone
+/// (removed while this node ran an older vorkd, or before it restarted):
+/// their deletion is called off, as a merge would.
+fn undelete_unmarked(d: &Daemon) {
+    let marked: Vec<String> = d.deleted.lock().unwrap().keys().cloned().collect();
+    for ns in marked {
+        let Ok(records) = d.store.records(&ns) else { continue };
+        if !records.is_empty() && !records.iter().any(|r| r.attrs.get("type") == Some(&Value::Str(LIBRARY_DELETED.into()))) {
+            library_undeleted(d, &ns);
+        }
+    }
+}
+
 /// Deleted libraries whose grace is over: left.
 fn leave_deleted(d: &Daemon) {
     let due: Vec<String> = d.deleted.lock().unwrap().iter().filter(|(_, t)| now_ms().saturating_sub(**t) > DELETED_GRACE_MS).map(|(n, _)| n.clone()).collect();
@@ -2556,6 +2582,7 @@ async fn serve(store: Arc<SlabStore>, identity: node::IdentitySecret, endpoint: 
     worker("library sync", ns_sync(daemon.clone()));
     worker("shares", share_keeper(daemon.clone()));
     worker("leaver", leaver(daemon.clone()));
+    undelete_unmarked(&daemon);
     worker("crash reports", crash_reports(daemon.clone(), args.crash_library.clone()));
     #[cfg(target_os = "haiku")]
     worker("mounts", haiku_mounts::keeper(daemon.clone(), args.store.clone()));
@@ -6939,6 +6966,11 @@ fn apply_view(d: &Daemon, ns: &str) -> Result<(), String> {
         (false, Some(st)) => st.records().iter().any(|r| says_deleted(st, &r.id)),
         _ => false,
     };
+    // Marked deleted here, and the word is gone (a granter removed it): the
+    // deletion is called off, on every member alike.
+    let undeleted = !deleted
+        && d.deleted.lock().unwrap().contains_key(ns)
+        && entry.state.as_ref().is_some_and(|st| !st.records().iter().any(|r| says_deleted(st, &r.id)));
     if let (true, Some(st)) = (entry.view_built, entry.state.as_ref()) {
         // Only the records the state says changed: no copy of every record,
         // no comparison of everything on each write.
@@ -6966,6 +6998,9 @@ fn apply_view(d: &Daemon, ns: &str) -> Result<(), String> {
     }
     if deleted {
         library_deleted(d, ns);
+    }
+    if undeleted {
+        library_undeleted(d, ns);
     }
     Ok(())
 }
