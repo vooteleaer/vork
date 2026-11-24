@@ -1263,6 +1263,24 @@ impl Sync {
             Err(_) => return,
         };
         let name = path.rsplit('/').next().unwrap_or("").to_string();
+        // A library's file copied into an album's folder: the file is put in
+        // the album, not stored twice (Explorer keeps a copy's name, size and
+        // modification time).
+        if id.is_none() {
+            if let Some(record) = self.into_album(&path, &name, size, mtime, d) {
+                let identity = names::identity(&record.id, record.blocks.first().map(String::as_str));
+                let mut ph = Placeholder::from(file);
+                let done = if placeholder {
+                    ph.update(UpdateOptions::default().blob(&identity).mark_in_sync(), None).map(|_| ())
+                } else {
+                    ph.convert_to_placeholder(ConvertOptions::default().blob(identity).mark_in_sync(), None).map(|_| ())
+                };
+                if let Err(e) = done {
+                    eprintln!("vork-cloudfiles: {path}: in the album, but marking it in sync: {e}");
+                }
+                return;
+            }
+        }
         let result: Result<RecordView, String> = (|| {
             let first = |rs: Vec<RecordView>| rs.into_iter().next().ok_or_else(|| "no record in the answer".to_string());
             let piece_len = d.piece();
@@ -1334,6 +1352,31 @@ impl Sync {
             Ok(()) => eprintln!("vork-cloudfiles: {path}: written ({size} bytes)"),
             Err(e) => eprintln!("vork-cloudfiles: {path}: written, but marking it in sync: {e}"),
         }
+    }
+
+    /// A new file at `path` in an album's folder that is a copy of a file
+    /// already in the library (the same name, size and modification time):
+    /// that record, now in the album too. None: not in an album's folder, or
+    /// no such file (then it's stored as a new one, in the album).
+    fn into_album(&self, path: &str, name: &str, size: u64, mtime: i64, d: &mut Daemon) -> Option<RecordView> {
+        let album = path.strip_prefix(&format!("{}/", tree::ALBUMS_DIR))?.split_once('/')?.0.to_string();
+        let ns = self.shared.ns.clone();
+        let terms = vec![format!("name=\"{name}\""), format!("size={size}")];
+        let same = d.records_of(Request::Query { ns: ns.clone(), terms, at: None }).ok()?;
+        let int = |r: &RecordView, k: &str| r.attrs.iter().find_map(|(key, v)| if let AttrValue::Int(i) = v { (key == k).then_some(*i) } else { None });
+        // The file itself (it has a place), else an album's copy of it.
+        let original = same
+            .into_iter()
+            .filter(|r| !r.blocks.is_empty() && int(r, "mtime").is_none_or(|t| (t - mtime).abs() < 2_000))
+            .max_by_key(|r| str_attr(r, "path").is_some())?;
+        if let Some(set) = tree::with_album(&original.attrs, &album) {
+            if let Err(e) = d.call(Request::RecordSet { ns, id: original.id.clone(), attrs: vec![set], unset: vec![], data: None }) {
+                eprintln!("vork-cloudfiles: {path}: putting it in album {album}: {e}");
+                return None;
+            }
+        }
+        eprintln!("vork-cloudfiles: {path}: {} put in album {album}", str_attr(&original, "path").unwrap_or(name));
+        Some(original)
     }
 
     /// A folder made here: a directory record, and the folder becomes its

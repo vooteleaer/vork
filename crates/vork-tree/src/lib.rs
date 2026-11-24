@@ -86,6 +86,20 @@ pub fn album_names(v: Option<&AttrValue>) -> Vec<String> {
     }
 }
 
+/// What puts a record (attributes `attrs`) in album `name` too: the
+/// attribute to set, or None if it's in it already (in any case).
+pub fn with_album(attrs: &[(String, AttrValue)], name: &str) -> Option<(String, AttrValue)> {
+    let mut names = album_names(attrs.iter().find(|(k, _)| k == ALBUM).map(|(_, v)| v));
+    if name.trim().is_empty() || names.iter().any(|n| n.eq_ignore_ascii_case(name)) {
+        return None;
+    }
+    names.push(name.to_string());
+    Some(match names.as_slice() {
+        [one] => (ALBUM.to_string(), AttrValue::Str(one.clone())),
+        many => (ALBUM.to_string(), AttrValue::List(many.iter().cloned().map(AttrValue::Str).collect())),
+    })
+}
+
 /// What takes a record (attributes `attrs`) out of album `name`: the
 /// attributes to set and to unset (both empty if it isn't in it).
 pub fn without_album(attrs: &[(String, AttrValue)], name: &str) -> (Vec<(String, AttrValue)>, Vec<String>) {
@@ -505,5 +519,14 @@ mod tests {
         assert_eq!(format_value(&s("plain")), "plain");
         assert_eq!(format_value(&s("42")), "\"42\"");
         assert_eq!(parse_value("Prangli 2026"), s("Prangli 2026"));
+    }
+
+    #[test]
+    fn albums_added() {
+        let s = |v: &str| AttrValue::Str(v.into());
+        assert_eq!(with_album(&[], "Prangli"), Some((ALBUM.into(), s("Prangli"))));
+        assert_eq!(with_album(&[(ALBUM.into(), s("prangli"))], "Prangli"), None, "in it already, any case");
+        assert_eq!(with_album(&[(ALBUM.into(), s("Suvi"))], "Prangli"), Some((ALBUM.into(), AttrValue::List(vec![s("Suvi"), s("Prangli")]))));
+        assert_eq!(with_album(&[], " "), None);
     }
 }
