@@ -62,8 +62,19 @@ fn start(k: &mut Kept, logs: &Path) {
     }
 }
 
-/// Asks vorkd to stop (it closes its store cleanly), then ends the rest.
+/// Lets the Explorer provider end by itself first (it sees `run.stop` and
+/// disconnects while vorkd still answers what Windows is waiting for: killed
+/// with requests in flight, it lingered and held the sync root), asks vorkd
+/// to stop (it closes its store cleanly), then ends the rest.
 fn stop_all(kept: &mut [Kept], store: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    for k in kept.iter_mut().filter(|k| k.name == "vork-cloudfiles") {
+        if let Some(c) = k.child.as_mut() {
+            while Instant::now() < deadline && matches!(c.try_wait(), Ok(None)) {
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        }
+    }
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
     let asked = rt.block_on(async {
         match libvork::Client::connect(store).await {
@@ -108,12 +119,13 @@ fn main() {
     }
     let logs = store.join("logs");
     std::fs::create_dir_all(&logs).unwrap_or_else(|e| panic!("{}: {e}", logs.display()));
-    let _ = std::fs::remove_file(&stop_file);
     // One per store: held while it runs.
     let lock = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(store.join("run.lock")).expect("lock file");
     if lock.try_lock().is_err() {
-        return; // another runs them already
+        return; // another runs them already (its stop asked for, if it was, stays asked)
     }
+    // A stop asked of one that ran before: not of this one.
+    let _ = std::fs::remove_file(&stop_file);
     let here = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or_else(|| ".".into());
     // The store named only when it was named here: vorkd without --store
     // is the user's own, whose libraries it shows as folders in ~/vork (Linux).

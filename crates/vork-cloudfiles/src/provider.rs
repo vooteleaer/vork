@@ -767,7 +767,7 @@ pub fn run_all(store: &Path, folder: &Path, wait: Duration) -> Result<(), String
     let mut daemon = Daemon::new(store, None)?;
     let mut said = HashSet::new();
     let mut not_shown = HashSet::new();
-    loop {
+    'rounds: loop {
         // While vorkd can't be asked, the folders stay as they are.
         let names = match daemon.call(Request::Namespaces) {
             Ok(Response::Names { names }) => names,
@@ -776,7 +776,9 @@ pub fn run_all(store: &Path, folder: &Path, wait: Duration) -> Result<(), String
                 if said.insert(e.clone()) {
                     eprintln!("vork-cloudfiles: {e}");
                 }
-                std::thread::sleep(LIBRARIES_EVERY);
+                if pause_or_stop(store, LIBRARIES_EVERY) {
+                    break 'rounds;
+                }
                 continue;
             }
         };
@@ -828,8 +830,35 @@ pub fn run_all(store: &Path, folder: &Path, wait: Duration) -> Result<(), String
                 }
             }
         }
-        std::thread::sleep(LIBRARIES_EVERY);
+        if pause_or_stop(store, LIBRARIES_EVERY) {
+            break 'rounds;
+        }
     }
+    // Asked to stop (vork-storage-run --stop): every library let go and the
+    // sync root disconnected while vorkd still answers, so what Windows is
+    // waiting for ends instead of holding this process (killed with requests
+    // in flight, it lingered, and no other could connect the root).
+    for (_, s) in serving.drain() {
+        s.stop.store(true, Ordering::Relaxed);
+        _ = s.wake.send(());
+        _ = s.thread.join();
+    }
+    drop(_connection);
+    eprintln!("vork-cloudfiles: stopped");
+    Ok(())
+}
+
+/// Waits `d`, or less if vork-storage-run asks the programs to stop (its
+/// `run.stop` in the store): whether it did.
+fn pause_or_stop(store: &Path, d: Duration) -> bool {
+    let until = std::time::Instant::now() + d;
+    while std::time::Instant::now() < until {
+        if store.join("run.stop").exists() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    store.join("run.stop").exists()
 }
 
 /// Library `ns`'s folder in the root: made as a placeholder, or an existing
