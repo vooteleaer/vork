@@ -8,7 +8,7 @@
 The open network gives reachability; groups of people need privacy and trust among themselves (family, a company, friends) without a controller.
 
 ## Decision
-An island is a group whose membership is a chain of signed invitations from its founder, with signed, monotonic revocations. Members' island announces are encrypted to the island and stored under a rotating key, so outsiders can't see who belongs. Island policy can allow direct links and prefer members as relays.
+An island is a group whose membership is a chain of signed invitations from its founder, with signed, monotonic revocations. Members' island announces are encrypted to the island and stored under a rotating key, so outsiders can't see who belongs. Island policy can allow direct links and prefer members as relays. Later the membership can live in a storage library (ADR-0015).
 
 ## Consequences
 - No coordinator; leaving and revoking are signatures.

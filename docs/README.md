@@ -2,7 +2,7 @@
 
 | Document | What |
 |---|---|
-| [install](install.md) | installing on each kind of device, linking, updating, troubleshooting |
+| [install](install.md) | installing on each kind of device, linking, updating, troubleshooting; installing vØrk storage |
 | [technical-overview](technical-overview.md) | how the prototype works, what was tested, throughput |
 | [00-vision](00-vision.md) | what vØrk is for, principles, non-goals |
 | [01-architecture](01-architecture.md) | how the parts fit: layers, paths, NAT traversal, node profiles, privacy classes, applications |
@@ -11,6 +11,8 @@
 | [04-roadmap](04-roadmap.md) | milestones with scope, approach and acceptance tests |
 | [05-open-questions](05-open-questions.md) | decisions still to make |
 | [06-local-api](06-local-api.md) | how applications use the machine's node: frames, endpoint |
+| [storage/](storage/README.md) | vØrk storage (prototype): its own documents and ADRs |
+| [clients/](clients/platforms.md) | the earlier storage clients per platform, and their plan (history) |
 
 ## Decisions (ADRs)
 
@@ -32,12 +34,14 @@ New decisions copy [adr/0000-template.md](adr/0000-template.md). *Accepted* mean
 | [0012](adr/0012-port-mapping-opt-in.md) | Router port mapping is opt-in | accepted |
 | [0013](adr/0013-identities-on-hardware-keys.md) | Identities on hardware keys; devices are delegated | proposed |
 | [0014](adr/0014-islands.md) | Islands: closed groups inside an open network | proposed |
+| [0015](adr/0015-storage.md) | Storage (formerly retifs) is a vØrk application | accepted |
 | [0016](adr/0016-privacy-classes.md) | Privacy classes; nested WireGuard for the strong class | proposed |
 | [0017](adr/0017-applications.md) | Applications: IPv6 inside sessions, several ways in | proposed |
 | [0018](adr/0018-dns-vork.md) | Names: the .vork DNS domain | accepted |
 | [0019](adr/0019-open-relaying-owner-first.md) | Open relaying, the owner's traffic first | accepted |
 | [0020](adr/0020-shared-node.md) | One shared node per machine | proposed |
 | [0021](adr/0021-compatibility-addresses.md) | Compatibility addresses: IPv6 per identity, local IPv4 aliases | proposed |
+| [0022](adr/0022-storage-leaves-reticulum.md) | Storage leaves Reticulum: destinations, sessions, requests | accepted |
 | [0023](adr/0023-reachability-learned.md) | Reachability is learned from others, never claimed | accepted |
 | [0024](adr/0024-linking-devices.md) | Devices are linked with both sides agreeing | accepted |
 | [0025](adr/0025-resolver-in-the-route.md) | The resolver at fd00::53; device names | accepted |

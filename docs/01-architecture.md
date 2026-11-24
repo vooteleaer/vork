@@ -6,7 +6,7 @@ This describes the design as a whole. What the prototype implements today is mar
 
 One process, one UDP socket, the same code everywhere. Its state:
 
-- **Identity** (implemented): an Ed25519 signing key and an X25519 key (the WireGuard static key). Address = `SHA-256(x_pub ‖ ed_pub)[:16]`; a named service of an identity has the address `SHA-256(SHA-256(name)[:10] ‖ address)[:16]` (a destination).
+- **Identity** (implemented): an Ed25519 signing key and an X25519 key (the WireGuard static key). Address = `SHA-256(x_pub ‖ ed_pub)[:16]`, as storage identities had it; a named service of an identity has the address `SHA-256(SHA-256(name)[:10] ‖ address)[:16]` (a destination).
 - **Neighbors** (implemented): an outer WireGuard session (boringtun, userspace) with each directly connected node.
 - **Routes** (implemented): for each destination, one route per neighbor that announced it.
 - **Relay table** (implemented): `(neighbor, label) → (neighbor, label)` for paths passing through.
@@ -85,10 +85,11 @@ The default rule: your IP address is never shown to anyone outside your islands 
 
 ## Above the network (planned)
 
-- **Applications** (ADR-0017): sessions carry IPv6 packets between overlay addresses (`fd` + the first 15 bytes of an address). Applications attach through a TUN interface (every existing program), a local daemon API (status, peers, `whois`), a native message API (`connect(identity, "service")`), or an embedded userspace stack (no admin rights; lwIP on an ESP32). The overlay address is a compatibility view; the network never routes by it.
+- **Applications** (ADR-0017): sessions carry IPv6 packets between overlay addresses (`fd` + the first 15 bytes of an address). Applications attach through a TUN interface (every existing program), a local daemon API (status, peers, `whois`), a native message API (`connect(identity, "service")`, used by storage), or an embedded userspace stack (no admin rights; lwIP on an ESP32). The overlay address is a compatibility view; the network never routes by it.
 - **Compatibility addresses** (ADR-0021): every identity has its IPv6 overlay address on the machine's TUN interface; IPv4-only programs get local aliases handed out by DNS and translated at the node. Sessions always carry IPv6.
 - **Shared node** (ADR-0020): one node per machine; the first program starts it and later ones attach over local IPC, each registering its own identities and services, like Reticulum's shared instance but with a specified IPC protocol.
 - **Names** (ADR-0018): DNS for `.vork`: `<address>.vork` and petnames like `nas.vork` resolve to overlay addresses; only `.vork` queries go to the node.
 - **Identity firewall:** rules say which identity may use which service, using `whois`; IP rules have nothing to hold on to.
 - **Identities on hardware keys:** a person's identity on a YubiKey signs short-lived session keys for devices; servers have their own identities, delegated by their owner. See ADR-0013.
 - **Islands:** closed groups (membership by signed invitation) inside the open network. See ADR-0014.
+- **Storage:** vØrk storage, an application on the machine's node through the local API (ADR-0015, ADR-0022), installed apart; its pages appear in the node's dashboard (ADR-0032). Crates in `crates/`, documents in [storage/](storage/README.md).

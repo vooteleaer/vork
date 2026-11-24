@@ -11,7 +11,7 @@ Existing software speaks IP; new software benefits from knowing identities. A TU
 Sessions carry IPv6 packets between overlay addresses. Applications attach in one of these ways:
 1. **TUN interface** (kernel stack): every existing application, system-wide.
 2. **Local daemon API** (Unix socket / named pipe): status, peers, `whois(overlay address) → identity`, services; several applications share one node, each with its own identity (ADR-0020).
-3. **Native message API**: `connect(identity, service)`, request/response and datagrams, no IP.
+3. **Native message API**: `connect(identity, service)`, request/response and datagrams, no IP; storage uses this.
 4. **Embedded stack** (smoltcp, like Tailscale's tsnet): an application embeds vØrk and gets TCP/UDP sockets to identities without admin rights. On an ESP32, lwIP plays this part.
 
 Services have names in the native API and ports on IP; the mapping is open question 10. An identity firewall uses whois.

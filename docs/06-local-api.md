@@ -1,6 +1,6 @@
 # vØrk: the local API
 
-How applications on a machine use the machine's node (ADR-0020) instead of running their own. Implemented in `crates/vork-api` (protocol and async Rust client) and `src/api.rs` (the node's side). Version 1, prototype.
+How applications on a machine use the machine's node (ADR-0020, ADR-0022) instead of running their own. Implemented in `crates/vork-api` (protocol and async Rust client) and `src/api.rs` (the node's side). Version 1, prototype.
 
 ## Endpoint
 

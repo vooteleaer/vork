@@ -6,7 +6,7 @@ Each milestone ends in something that runs and is measured (proto first). "Done 
 
 vØrk replaces Tailscale on the author's own machines (a Linux server, a Windows PC, Android phones, a TrueNAS box), released as [v0.3.2](https://github.com/vooteleaer/vork/releases/tag/v0.3.2), a pre-release: installers for Windows (MSI), Android, Debian/Ubuntu, static Linux binaries, Haiku, and a Docker setup for NAS boxes and a Home Assistant add-on.
 
-Built since the prototype: the node as a service (M1); the TUN interface on Linux, Windows and Android with IPv6 sessions and IPv4 delivered as IPv4 (M2); `.vork` names, devices linked with consent and one group per owner, the walled-garden firewall (M3); exit nodes (Linux offers, Windows and Android use); reachability learned from others, LAN discovery and router port mapping; a dashboard on every platform (a window on the desktop, the Android app, the browser); self-updating with signed releases; the local API for applications (M9). Next: hardening (M4), Linux as an exit client, routing for big networks, a project release key.
+Built since the prototype: the node as a service (M1); the TUN interface on Linux, Windows and Android with IPv6 sessions and IPv4 delivered as IPv4 (M2); `.vork` names, devices linked with consent and one group per owner, the walled-garden firewall (M3); exit nodes (Linux offers, Windows and Android use); reachability learned from others, LAN discovery and router port mapping; a dashboard on every platform (a window on the desktop, the Android app, the browser); self-updating with signed releases; the local API for applications, and vØrk storage on it (M9; its Windows installer released). Next: hardening (M4), Linux as an exit client, routing for big networks, a project release key.
 
 ```
 M0 prototype (done)
@@ -79,6 +79,7 @@ Links with fresh-handshake liveness, signed announces, path labels swapped per h
 - **Goal:** the CPU stops being the limit on ordinary hardware.
 - **Scope:** batched socket calls (`sendmmsg`/`recvmmsg`, UDP GSO/GRO on Linux), buffer reuse without per-packet allocation, several threads (sharded by neighbor); the bench as a regression test.
 - **Done when:** at least 2× the M0 numbers on the server and on the 2-core VM, measured with `scripts/bench-local.sh` and between machines.
+- **Storage (measured 2026-11-18, [technical overview](technical-overview.md#storage-over-vørk-2026-11-18)):** 200 MiB PC ← server took 45 s over vØrk (4 links); 16 links halve it; the stream alone does ~200 Mbit/s. Since then placement pushes to every holder in parallel, in large batches with several in flight. Next: fewer copies between storage and the node (the local API carries every byte twice).
 - **Depends on:** nothing (can run alongside).
 
 ## M7 Identities
@@ -91,13 +92,14 @@ Links with fresh-handshake liveness, signed announces, path labels swapped per h
 ## M8 Islands
 
 - **Goal:** closed groups inside the open network (ADR-0014).
-- **Scope:** membership by signed invitations and revocations; island announces encrypted to the members; island policy (direct links allowed, relays preferred among members).
+- **Scope:** membership by signed invitations and revocations; island announces encrypted to the members; island policy (direct links allowed, relays preferred among members); later backed by a storage library.
 - **Depends on:** M7.
 
 ## M9 Local API and destinations — done
 
 - **Goal:** applications use the machine's node: named services of an identity, sessions to them and requests over them, with no node of their own.
 - **Done:** identities and destinations (`SHA-256(SHA-256(name)[0..10] ‖ address)[0..16]`), announces of several destinations per node with app data, path requests for destinations; sessions to a destination with an anonymous opener that can identify, and `request(path, body) → response` up to 32 MiB, reliable and flow-controlled over the session's paths (32 MiB through a relay at ~200 Mbit/s); [the local API](06-local-api.md) and its client crate `crates/vork-api` (an application on one node answered 2 MB requests from one on another, through a relay). Tested on Linux and Windows (named pipes).
+- **Storage on vØrk (done 2026-11-18):** vØrk storage (formerly retifs) runs on this with no Reticulum code (ADR-0015, ADR-0022): `vorkd` attaches to the machine's node, registers `vork.node`, `vork.library` and `vork.keyring`, and comes back by itself when the node restarts. Tested across a relay: `put` on one node and `get` on another, `replicate` with a lease and its signed receipt, a library made on one node and joined from the other. Since 2026-11-23 the format carries vØrk's names (ADR-0015 addendum; retifs libraries come over with `vork-import-retifs`), storage's pages are in the dashboard (ADR-0032), and Windows has its own installer. Next: installers for Linux, Docker, Haiku and Android.
 - **Depends on:** M1.
 
 ## M10 Embedded stack (no admin rights)

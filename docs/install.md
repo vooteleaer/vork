@@ -2,7 +2,7 @@
 
 This guide takes you from nothing to your devices reaching each other by name. It takes about ten minutes per device. vØrk is an early prototype: keep all your devices on the same version, and don't rely on it for anything important yet.
 
-**Contents:** [which file](#which-file) · [one reachable device](#before-you-start-one-reachable-device) · [Windows](#windows) · [Android](#android) · [Debian, Ubuntu, Raspberry Pi](#debian-ubuntu-raspberry-pi) · [any Linux](#any-linux-the-node-alone) · [Docker and NAS](#docker-and-nas-truenas-scale) · [Home Assistant](#home-assistant) · [Haiku](#haiku) · [linking your devices](#link-your-devices) · [exit node](#use-an-exit-node) · **[the dashboard in a browser and its key](#the-dashboard-in-a-browser-its-key)** · [updates](#updates) · [when something doesn't work](#when-something-doesnt-work)
+**Contents:** [which file](#which-file) · [one reachable device](#before-you-start-one-reachable-device) · [Windows](#windows) · [Android](#android) · [Debian, Ubuntu, Raspberry Pi](#debian-ubuntu-raspberry-pi) · [any Linux](#any-linux-the-node-alone) · [Docker and NAS](#docker-and-nas-truenas-scale) · [Home Assistant](#home-assistant) · [Haiku](#haiku) · [linking your devices](#link-your-devices) · [exit node](#use-an-exit-node) · **[the dashboard in a browser and its key](#the-dashboard-in-a-browser-its-key)** · [updates](#updates) · [vØrk storage](#installing-vørk-storage) · [when something doesn't work](#when-something-doesnt-work)
 
 ## Which file
 
@@ -18,6 +18,8 @@ Downloads are on the [releases page](https://github.com/vooteleaer/vork/releases
 | A NAS or server with Docker (TrueNAS SCALE) | `packaging/docker/node.yaml` | [Docker and NAS](#docker-and-nas-truenas-scale) |
 | Home Assistant OS or Supervised | the add-on repository | [Home Assistant](#home-assistant) |
 | Haiku | `vork-<version>-1-x86_64.hpkg` | [Haiku](#haiku) |
+
+vØrk storage, an application on vØrk, has installers of its own: see [installing vØrk storage](#installing-vørk-storage).
 
 Each file's SHA-256 is in the release's `SHA256SUMS`: `sha256sum -c SHA256SUMS --ignore-missing` on Linux, `Get-FileHash <file>` on Windows.
 
@@ -160,6 +162,29 @@ To make a browser forget the key, clear the page's site data.
 ## Updates
 
 The dashboard's **Updates** page shows the newest release and what's new in it, and offers this device's file when it's newer: install it over the old one, as above. Your settings and devices stay.
+
+## Installing vØrk storage
+
+[vØrk storage](storage/README.md) keeps your files on your own devices, encrypted, in sync and backed up by them. It's a separate installer per platform, and it runs on the machine's vØrk node: install vØrk first, as above. It's a prototype: use copies of your files, not the only ones.
+
+| Device | File |
+|---|---|
+| Windows 10/11 | `vork-storage-<version>.msi` |
+| Debian, Ubuntu, Raspberry Pi (`.deb`) | coming |
+| Docker and NAS | coming |
+| Haiku | coming |
+| Android | coming |
+
+**Windows:**
+
+1. Run `vork-storage-<version>.msi` (Windows may warn as for vØrk's own installer: **More info → Run anyway**). It installs for you only, with no administrator rights, into `%LOCALAPPDATA%\Programs\vork-storage`. It refuses to install if vØrk isn't installed.
+2. Storage starts at once, and at every login after that (`vork-storage-run` keeps it running).
+3. Open the vØrk dashboard: a **Storage** section appears in its menu, with your libraries, the public libraries heard, status and settings.
+4. Your libraries appear in Explorer under `%USERPROFILE%\vork`. Files that aren't on this device yet are fetched when you open them.
+
+Next: [getting started](storage/getting-started.md) with two devices. To update, run a newer MSI over it. To remove it: **Settings → Apps → vØrk storage → Uninstall**. Your libraries leave Explorer, but the store (`%LOCALAPPDATA%\vork-storage`) and the `%USERPROFILE%\vork` folder stay.
+
+On other platforms, until their installers come, storage can be built from source: [command line](storage/10-command-line.md#installing).
 
 ## When something doesn't work
 
