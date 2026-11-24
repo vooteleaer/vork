@@ -144,12 +144,19 @@ impl Usage {
     }
 }
 
+/// The free-space reserve when none is set: 5 % of the volume, at least
+/// 5 GiB and at most 50 GiB. (10 % once: a 2 TB disk with 150 GB free
+/// then took nothing new at all.)
+pub fn default_reserve(total: u64) -> u64 {
+    (total / 20).clamp(5 * GIB, 50 * GIB)
+}
+
 /// Disk budget settings (ADR-0012). `None` means the default.
 #[derive(Debug, Clone, Default)]
 pub struct Budget {
     /// Hard tiers (pinned + leased) may use at most this. Default: 50 % of the volume.
     pub max_store: Option<u64>,
-    /// Never take the volume's free space below this. Default: max(10 % of the volume, 5 GiB).
+    /// Never take the volume's free space below this. Default: [`default_reserve`].
     pub min_free: Option<u64>,
     /// Cache tier cap. Default: 20 % of the store limit.
     pub cache_max: Option<u64>,
@@ -608,7 +615,7 @@ impl SlabStore {
         let hard_max = b.max_store.unwrap_or(total / 2);
         Ok(Limits {
             hard_max,
-            reserve: b.min_free.unwrap_or((total / 10).max(5 * GIB)),
+            reserve: b.min_free.unwrap_or(default_reserve(total)),
             cache_max: b.cache_max.unwrap_or(hard_max / 5),
             disk_total: total,
             disk_available: available,

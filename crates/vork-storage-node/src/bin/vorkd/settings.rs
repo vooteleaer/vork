@@ -48,7 +48,7 @@ const TEMPLATE: &str = r#"# vork node settings. Flags given to vorkd override th
 
 [store]
 # max_store = "..."          # store limit (default: half the volume)
-# min_free = "..."           # always leave this free on the volume (default: max(10 %, 5G))
+# min_free = "..."           # always leave this free on the volume (default: 5 %, between 5G and 50G)
 # cache_max = "..."          # cache for others' content read here (default: 20 % of the limit)
 # db_cache = "64M"           # the index's page cache in RAM
 # no_storage = false         # keep nothing of its own on this device, only a keyring (ADR-0031)

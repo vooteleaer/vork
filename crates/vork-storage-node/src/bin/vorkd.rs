@@ -5,7 +5,7 @@
 //!             [--public] [--put FILE]...
 //!
 //! SIZE: bytes, or with a K/M/G/T suffix (powers of 1024). Defaults (ADR-0012):
-//! store limit 50 % of the volume, reserve max(10 %, 5 GiB), cache 20 % of the limit.
+//! store limit 50 % of the volume, reserve 5 % between 5 and 50 GiB, cache 20 % of the limit.
 //! `--hold-for-others`: hold leased data for others up to SIZE (default: up to the
 //! store limit; 0 opts out). Every node is a storage node by default (ADR-0014).
 //! `--slow-link-budget`: the most a file may take over a slow link (LoRa class) before
