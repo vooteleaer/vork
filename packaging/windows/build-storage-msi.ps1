@@ -32,12 +32,12 @@ $Parts = $Version.Split("-")[0].Split(".")
 $MsiVersion = "$($Parts[0]).$($Parts[1]).$Count"
 
 Step "vork-storage $Name (MSI $MsiVersion)"
-Invoke-Native cargo build --release --locked --manifest-path "$Root\Cargo.toml" -p vork-storage-node -p vork-web -p vork-cloudfiles
+Invoke-Native cargo build --release --locked --manifest-path "$Root\Cargo.toml" -p vork-storage-node -p vork-web -p vork-cloudfiles -p vork-extract
 
 Step "files"
 if (Test-Path $Stage) { Remove-Item $Stage -Recurse -Force }
 New-Item -ItemType Directory -Force $Stage | Out-Null
-foreach ($f in "vorkd", "vork-storage", "vork-storage-run", "vork-web", "vork-cloudfiles") { Copy-Item "$Built\$f.exe" $Stage }
+foreach ($f in "vorkd", "vork-storage", "vork-storage-run", "vork-web", "vork-cloudfiles", "vork-extractd") { Copy-Item "$Built\$f.exe" $Stage }
 Copy-Item "$Root\LICENSE" "$Stage\LICENSE.txt"
 Get-ChildItem $Stage | ForEach-Object { "   {0,-28} {1,8:N0} KB" -f $_.Name, ($_.Length / 1KB) }
 

@@ -30,10 +30,10 @@ mimeset -f "$OUT/vork"
 # The programs, in its bin/ folder as a package has them: vorkd, its pages
 # in the vØrk dashboard (vork-web), the vork-storage command and
 # vork-storage-run, which keeps them running, built in this repository
-# (cargo build --release -p vork-storage-node -p vork-web). The vØrk node
+# (cargo build --release -p vork-storage-node -p vork-web -p vork-extract). The vØrk node
 # is the vork package's.
 rm -f "${OUT:?}/bin/prnsd" "${OUT:?}/bin/vork" "${OUT:?}/bin/default-libraries"
-for p in vorkd vork-storage vork-storage-run vork-web; do
+for p in vorkd vork-storage vork-storage-run vork-web vork-extractd; do
 	p=$ROOT/../target/release/$p
 	if [ -f "$p" ]; then
 		mkdir -p "$OUT/bin"

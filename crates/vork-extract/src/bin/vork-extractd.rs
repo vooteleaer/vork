@@ -233,15 +233,36 @@ fn commit(conn: &mut Conn, ns: &str, batch: &mut Vec<(String, TxStep)>) -> usize
     done
 }
 
-fn scan(conn: &mut Conn, ns: &str) -> Result<(usize, usize), String> {
+/// Records described in one library before the others get their turn (a
+/// library of 95,000 map tiles doesn't hold up a few new photos).
+const TURN: usize = 500;
+
+/// Whether this node (or app) may write to `ns`: else describing it is
+/// only refused.
+fn writable(conn: &mut Conn, ns: &str) -> bool {
+    match conn.call(Request::NsInfo { ns: ns.into() }) {
+        Ok(Response::Namespace(v)) => v.writers.iter().any(|(w, rights)| *w == v.own_writer && rights.iter().any(|r| r == "write")),
+        // Not answered (an app's token may not ask): try, as before.
+        _ => true,
+    }
+}
+
+/// Describes what's new in `ns`, up to [`TURN`] records: (described, failed,
+/// whether there's more).
+fn scan(conn: &mut Conn, ns: &str) -> Result<(usize, usize, bool), String> {
     let records = match conn.call(Request::Query { ns: ns.into(), terms: vec!["has:size".into()], at: None })? {
         Response::Records { records } => records,
-        _ => return Ok((0, 0)),
+        _ => return Ok((0, 0, false)),
     };
+    let mut more = false;
     let (mut done, mut failed) = (0, 0);
     let mut batch: Vec<(String, TxStep)> = Vec::new();
     let mut since = std::time::Instant::now();
     for r in &records {
+        if done + failed + batch.len() >= TURN {
+            more = true;
+            break;
+        }
         match update(conn, ns, r) {
             Ok(Some(step)) => {
                 if batch.is_empty() {
@@ -266,7 +287,7 @@ fn scan(conn: &mut Conn, ns: &str) -> Result<(usize, usize), String> {
     let ok = commit(conn, ns, &mut batch);
     done += ok;
     failed += n - ok;
-    Ok((done, failed))
+    Ok((done, failed, more))
 }
 
 fn libvork_text(v: &AttrValue) -> String {
@@ -329,10 +350,22 @@ fn main() {
             if seen.get(&ns) == Some(&count) {
                 continue;
             }
+            if !writable(&mut conn, &ns) {
+                // Looked at again when it changes (a grant arriving changes it).
+                seen.insert(ns, count);
+                continue;
+            }
+            let mut more = false;
             match scan(&mut conn, &ns) {
-                Ok((0, 0)) => {}
-                Ok((done, failed)) => eprintln!("{ns}: {done} record(s) described{}", if failed > 0 { format!(", {failed} to look at again") } else { String::new() }),
+                Ok((0, 0, _)) => {}
+                Ok((done, failed, m)) => {
+                    more = m;
+                    eprintln!("{ns}: {done} record(s) described{}{}", if failed > 0 { format!(", {failed} to look at again") } else { String::new() }, if m { "; more next turn" } else { "" })
+                }
                 Err(e) => eprintln!("{ns}: {e}"),
+            }
+            if more {
+                continue; // not marked seen: the next round goes on with it
             }
             // Its own writes change the count too: the next look finds them done.
             let count = match conn.call(Request::Watch { ns: ns.clone(), since: 0, timeout_ms: 0 }) {

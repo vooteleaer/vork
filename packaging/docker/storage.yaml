@@ -62,3 +62,9 @@ services:
     container_name: vork-storage-web
     depends_on: [vork-storage]
     command: ["/data/bin/vork-web", "--store", "/data/store", "--dashboard", "/node/api.sock"]
+  # Describes new files (types, dates, thumbnails) as they come.
+  vork-storage-extract:
+    <<: *storage
+    container_name: vork-storage-extract
+    depends_on: [vork-storage]
+    command: ["/data/bin/vork-extractd", "--store", "/data/store"]

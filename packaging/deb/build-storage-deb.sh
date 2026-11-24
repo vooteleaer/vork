@@ -27,14 +27,14 @@ else
 fi
 
 echo "== vork-storage $DEBVER ($ARCH)"
-cargo build --release --locked --manifest-path "$ROOT/Cargo.toml" -p vork-storage-node -p vork-web -p vork-fuse
+cargo build --release --locked --manifest-path "$ROOT/Cargo.toml" -p vork-storage-node -p vork-web -p vork-fuse -p vork-extract
 BIN=$CARGO_TARGET_DIR/release
 
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 chmod 0755 "$STAGE"
 install -d "$STAGE/DEBIAN" "$STAGE/usr/bin" "$STAGE/usr/lib/systemd/user" "$STAGE/usr/share/doc/vork-storage"
-for b in vorkd vork-storage vork-storage-run vork-web vork-mount; do
+for b in vorkd vork-storage vork-storage-run vork-web vork-mount vork-extractd; do
     install -m 0755 -s "$BIN/$b" "$STAGE/usr/bin/$b"
 done
 install -m 0644 "$HERE/storage/vork-storage.service" "$STAGE/usr/lib/systemd/user/vork-storage.service"

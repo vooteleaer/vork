@@ -39,6 +39,7 @@
             <File Id="vorkd.exe" Source="$(Files)\vorkd.exe" />
             <File Id="vork_web.exe" Source="$(Files)\vork-web.exe" />
             <File Id="vork_cloudfiles.exe" Source="$(Files)\vork-cloudfiles.exe" />
+            <File Id="vork_extractd.exe" Source="$(Files)\vork-extractd.exe" />
             <File Id="vork_storage.exe" Source="$(Files)\vork-storage.exe" />
             <File Id="vork_storage_run.exe" Source="$(Files)\vork-storage-run.exe" />
             <File Id="LICENSE.txt" Source="$(Files)\LICENSE.txt" />
@@ -65,7 +66,7 @@
          its store cleanly), then anything left of it ended. -->
     <SetProperty Id="StopStorage" Value="&quot;[INSTALLFOLDER]vork-storage-run.exe&quot; --stop" Before="StopStorage" Sequence="execute" />
     <CustomAction Id="StopStorage" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec" Execute="deferred" Impersonate="yes" Return="ignore" />
-    <SetProperty Id="EndStorage" Value="&quot;[System64Folder]taskkill.exe&quot; /F /IM vork-storage-run.exe /IM vorkd.exe /IM vork-web.exe /IM vork-cloudfiles.exe" Before="EndStorage" Sequence="execute" />
+    <SetProperty Id="EndStorage" Value="&quot;[System64Folder]taskkill.exe&quot; /F /IM vork-storage-run.exe /IM vorkd.exe /IM vork-web.exe /IM vork-cloudfiles.exe /IM vork-extractd.exe" Before="EndStorage" Sequence="execute" />
     <CustomAction Id="EndStorage" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec" Execute="deferred" Impersonate="yes" Return="ignore" />
     <!-- Removed: the libraries leave Explorer (their data stays). -->
     <SetProperty Id="Unregister" Value="&quot;[INSTALLFOLDER]vork-cloudfiles.exe&quot; --unregister --all" Before="Unregister" Sequence="execute" />

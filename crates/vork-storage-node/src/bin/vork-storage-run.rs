@@ -1,6 +1,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 //! vork-storage-run: keeps vØrk storage running for a user: vorkd, its pages
-//! in the vØrk dashboard (vork-web --dashboard) and, on Windows, the
+//! in the vØrk dashboard (vork-web --dashboard), the extractor that describes
+//! new files (vork-extractd: types, dates, thumbnails) and, on Windows, the
 //! libraries in Explorer (vork-cloudfiles --all). Started at login by the
 //! installer; each program is started again if it ends, its output kept in
 //! `<store>/logs`.
@@ -118,7 +119,7 @@ fn main() {
     // is the user's own, whose libraries it shows as folders in ~/vork (Linux).
     let named: Vec<String> = given.iter().flat_map(|g| ["--store".to_string(), g.to_string_lossy().into_owned()]).collect();
     let with = |more: &[&str]| named.iter().cloned().chain(more.iter().map(|m| m.to_string())).collect::<Vec<String>>();
-    let mut programs: Vec<(&'static str, Vec<String>)> = vec![("vorkd", with(&[])), ("vork-web", with(&["--dashboard"]))];
+    let mut programs: Vec<(&'static str, Vec<String>)> = vec![("vorkd", with(&[])), ("vork-web", with(&["--dashboard"])), ("vork-extractd", with(&[]))];
     if cfg!(windows) {
         programs.push(("vork-cloudfiles", with(&["--all"])));
     }
