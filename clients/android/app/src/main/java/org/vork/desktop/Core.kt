@@ -113,10 +113,8 @@ object Core {
         val logs: File = File(context.filesDir, "logs")
         private val native = File(context.applicationInfo.nativeLibraryDir)
         val vorkd: File = File(native, "libvorkd.so")
-        /** The vØrk node's program, and its settings, identity and sockets. */
-        val vork: File = File(native, "libvork.so")
-        val node: File = File(context.filesDir, "node")
-        val nodeConfig: File = File(node, "vork.toml")
+        /** Its pages in the vØrk dashboard. */
+        val web: File = File(native, "libvork_web.so")
     }
 
     @Volatile private var ready = false

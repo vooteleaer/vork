@@ -23,17 +23,16 @@ fn result(env: &mut JNIEnv, r: Result<(), String>) -> jstring {
 }
 
 /// Where everything is: the app's files folder as HOME, and the store.
-/// The vØrk node is the app's own (VorkService runs it).
+/// The vØrk node is the vØrk app's (org.vork.net), reached through
+/// NodeBridge's socket (vork-api's `broker:` endpoints).
 #[no_mangle]
 pub extern "system" fn Java_org_vork_desktop_Core_init<'l>(mut env: JNIEnv<'l>, _: JClass<'l>, home: JString<'l>, store: JString<'l>) {
     let (home, store) = (arg(&mut env, &home), arg(&mut env, &store));
     std::env::set_var("HOME", &home);
     std::env::set_var("VORK_STORE", store);
-    // The app's own vØrk node (VorkService runs it): its settings and sockets.
-    let node = std::path::Path::new(&home).join("node");
-    std::env::set_var("VORK_CONFIG", node.join("vork.toml"));
-    std::env::set_var("VORK_API", node.join("state").join("api.sock"));
-    std::env::set_var("VORK_CONTROL", node.join("state").join("control.sock"));
+    let broker = std::path::Path::new(&home).join("node-broker.sock");
+    std::env::set_var("VORK_API", format!("{}{}#api", vork_api::BROKER, broker.display()));
+    std::env::set_var("VORK_CONTROL", format!("{}{}#control", vork_api::BROKER, broker.display()));
 }
 
 #[no_mangle]
@@ -233,7 +232,7 @@ fn event_of(v: &serde_json::Value) -> vork_calendar_core::Event {
     e
 }
 
-/// The libraries that are calendars (holding events, a `retifs.calendar`
+/// The libraries that are calendars (holding events, a `vork.calendar`
 /// record, or made for it, ADR-0032), `me` first: `[{"ns", "writable",
 /// "color"}]`, or `{"error"}`.
 #[no_mangle]

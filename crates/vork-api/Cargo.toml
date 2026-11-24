@@ -8,5 +8,8 @@ license.workspace = true
 [dependencies]
 tokio = { version = "1", features = ["io-util", "net", "rt", "sync", "macros", "time"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

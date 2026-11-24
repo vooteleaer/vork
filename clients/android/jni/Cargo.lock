@@ -479,17 +479,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
-name = "libretifs"
-version = "0.6.0"
-dependencies = [
- "libc",
- "rmp-serde",
- "serde",
- "serde_bytes",
- "tokio",
-]
-
-[[package]]
 name = "libvork"
 version = "0.6.0"
 dependencies = [
@@ -597,23 +586,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 dependencies = [
  "getrandom 0.2.17",
-]
-
-[[package]]
-name = "retifs-calendar-core"
-version = "0.6.0"
-dependencies = [
- "chrono",
- "libretifs",
- "tokio",
-]
-
-[[package]]
-name = "retifs-contacts-core"
-version = "0.6.0"
-dependencies = [
- "libretifs",
- "tokio",
 ]
 
 [[package]]
@@ -879,6 +851,24 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "vork-api"
 version = "0.0.1"
 dependencies = [
+ "libc",
+ "tokio",
+]
+
+[[package]]
+name = "vork-calendar-core"
+version = "0.6.0"
+dependencies = [
+ "chrono",
+ "libvork",
+ "tokio",
+]
+
+[[package]]
+name = "vork-contacts-core"
+version = "0.6.0"
+dependencies = [
+ "libvork",
  "tokio",
 ]
 
@@ -917,9 +907,10 @@ name = "vork-desktop-jni"
 version = "0.6.0"
 dependencies = [
  "jni",
- "retifs-calendar-core",
- "retifs-contacts-core",
  "serde_json",
+ "vork-api",
+ "vork-calendar-core",
+ "vork-contacts-core",
  "vork-desktop-core",
 ]
 

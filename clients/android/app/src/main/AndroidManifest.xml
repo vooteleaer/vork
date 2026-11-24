@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <uses-permission android:name="android.permission.INTERNET" />
-    <!-- mDNS: finding vØrk nodes on the same Wi-Fi (Android drops multicast without a lock). -->
-    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!-- Storage runs on the vØrk app's node: connections to it, handed over. -->
+    <uses-permission android:name="org.vork.net.permission.API" />
+    <queries><package android:name="org.vork.net" /></queries>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
@@ -43,7 +43,7 @@
             </intent-filter>
         </activity>
 
-        <!-- vorkd, on the phone's Reticulum (Prns's app). -->
+        <!-- vorkd and its dashboard pages, on the vØrk app's node. -->
         <service
             android:name=".VorkService"
             android:exported="false"
@@ -55,13 +55,6 @@
 
         <!-- Other apps (vork-photos, vork-map) using vork: the user lets
              each in, to the libraries chosen; connections are handed over. -->
-        <!-- vØrk M2: apps reach other nodes at fd… addresses (only fd00::/8 goes through it). -->
-        <service
-            android:name=".VorkVpn"
-            android:exported="false"
-            android:permission="android.permission.BIND_VPN_SERVICE">
-            <intent-filter><action android:name="android.net.VpnService" /></intent-filter>
-        </service>
         <service android:name=".AccessService" android:exported="true">
             <intent-filter><action android:name="org.vork.storage.action.ACCESS" /></intent-filter>
         </service>
@@ -79,7 +72,7 @@
         <!-- The libraries in the Files app and every app's file picker. -->
         <provider
             android:name=".LibrariesProvider"
-            android:authorities="org.vork.desktop.documents"
+            android:authorities="org.vork.storage.documents"
             android:exported="true"
             android:grantUriPermissions="true"
             android:permission="android.permission.MANAGE_DOCUMENTS">

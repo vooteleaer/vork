@@ -210,7 +210,7 @@ class LibrariesProvider : DocumentsProvider() {
     private fun cache(): File = File(context!!.cacheDir, "documents").apply { mkdirs() }
 
     companion object {
-        const val AUTHORITY = "org.vork.desktop.documents"
+        const val AUTHORITY = "org.vork.storage.documents"
         private const val ROOT = "root"
         private const val TAG = "vork-documents"
         private val ROOT_COLUMNS = arrayOf(Root.COLUMN_ROOT_ID, Root.COLUMN_DOCUMENT_ID, Root.COLUMN_TITLE, Root.COLUMN_SUMMARY, Root.COLUMN_ICON, Root.COLUMN_FLAGS)

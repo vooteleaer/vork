@@ -95,46 +95,7 @@ class MainActivity : ComponentActivity() {
         opened(intent)
     }
 
-    /**
-     * Turns on the interface for apps: the system's VPN consent first, if
-     * it hasn't been given (the plain activity-result route: the Compose
-     * launcher gave no sign of anything on a phone).
-     */
-    fun turnOnVpn() {
-        try {
-            val ask = android.net.VpnService.prepare(this)
-            if (ask != null) {
-                toast("Android asks whether vØrk may set up a VPN (fd00::/8 only)")
-                @Suppress("DEPRECATION")
-                startActivityForResult(ask, REQUEST_VPN)
-            } else {
-                vpnAllowed()
-            }
-        } catch (e: Exception) {
-            toast("Couldn't turn it on: ${e.message ?: e.javaClass.simpleName}")
-        }
-    }
-
-    private fun vpnAllowed() {
-        getSharedPreferences("vork", MODE_PRIVATE).edit().putBoolean("vpn", true).apply()
-        VorkVpn.startIfAllowed(this)
-        toast("Turning on the interface for apps…")
-    }
-
     private fun toast(text: String) = android.widget.Toast.makeText(this, text, android.widget.Toast.LENGTH_LONG).show()
-
-    @Deprecated("Activity result API")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
-        @Suppress("DEPRECATION")
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == REQUEST_VPN) {
-            if (resultCode == RESULT_OK) vpnAllowed() else toast("The VPN wasn't allowed, so apps can't reach vØrk addresses")
-        }
-    }
-
-    companion object {
-        const val REQUEST_VPN = 71
-    }
 
     /** A vork: link opened elsewhere: the join dialog shows it (nothing is joined until the user says so). */
     private fun opened(intent: android.content.Intent?) {
@@ -462,22 +423,7 @@ fun Network(n: JSONObject, said: (String) -> Unit) {
                 }
             }
             val ip = n.optString("ip").takeIf { !n.isNull("ip") && it.isNotEmpty() }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    if (ip != null) "Apps reach this phone at $ip" else "Apps on this phone don't reach vØrk addresses",
-                    Modifier.weight(1f),
-                    style = small,
-                )
-                if (ip == null) {
-                    TextButton(onClick = {
-                        val activity = context as? MainActivity
-                        if (activity != null) activity.turnOnVpn() else said("Open vØrk from its icon to turn this on")
-                    }) { Text("Turn on") }
-                } else {
-                    TextButton(onClick = { VorkVpn.stop(context); said("Apps no longer reach vØrk addresses") }) { Text("Turn off") }
-                }
-            }
-            VorkVpn.state?.let { if (ip == null) Text("Interface: $it", style = small) }
+            if (ip != null) Text("Apps reach this phone at $ip (the vØrk app's interface)", style = small)
             if (n.optInt("reached_by") > 0) {
                 Text("Reachable directly: ${n.optInt("reached_by")} node(s) reached this phone", style = small)
             }

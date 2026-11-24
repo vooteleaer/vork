@@ -23,7 +23,7 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "org.vork.desktop"
+        applicationId = "org.vork.storage"
         minSdk = 26
         targetSdk = 34
         versionCode = commits

@@ -15,16 +15,15 @@ import org.json.JSONObject
 import java.io.File
 
 /**
- * Keeps the vØrk node and vorkd running (programs from the app's native
- * libraries), each restarted if it stops; vorkd starts once the node
- * answers, and reconnects to it by itself. Its notification is Android's
- * tray: the same state as the desktop icon, with Open and Stop.
+ * Keeps vorkd and its pages in the vØrk dashboard (vork-web) running
+ * (programs from the app's native libraries), each restarted if it stops;
+ * vorkd starts once the vØrk app's node answers (through NodeBridge), and
+ * reconnects to it by itself. Its notification is Android's tray: the same
+ * state as the desktop icon, with Open and Stop.
  */
 class VorkService : Service() {
     private var vorkd: Process? = null
-    private var node: Process? = null
-    /** Lets multicast in while the node runs, for mDNS on the local network. */
-    private var multicast: android.net.wifi.WifiManager.MulticastLock? = null
+    private var web: Process? = null
     @Volatile private var running = false
     /** Wakes the supervisor before its next round (Restart). */
     private val wake = java.util.concurrent.Semaphore(0)
@@ -54,6 +53,7 @@ class VorkService : Service() {
         }
         if (running) return START_STICKY
         Core.ready(this)
+        NodeBridge.start(this)
         channel()
         val notification = notification("Starting…")
         if (Build.VERSION.SDK_INT >= 34) {
@@ -62,10 +62,6 @@ class VorkService : Service() {
             startForeground(NOTIFICATION, notification)
         }
         running = true
-        multicast = runCatching {
-            (applicationContext.getSystemService(WIFI_SERVICE) as android.net.wifi.WifiManager)
-                .createMulticastLock("vork-mdns").apply { setReferenceCounted(false); acquire() }
-        }.getOrNull()
         supervisor = Thread(::supervise, "vork-supervisor").apply { start() }
         watcher = Thread(::watchLibraries, "vork-library-watch").apply { start() }
         // The address books in the system's Contacts, after a boot or an
@@ -82,15 +78,10 @@ class VorkService : Service() {
     override fun onDestroy() {
         running = false
         daemonAlive = false
-        multicast?.release()
         supervisor?.interrupt()
         watcher?.interrupt()
+        web?.destroy()
         vorkd?.destroy()
-        // The node after vorkd, which may still be saying goodbye through it.
-        Thread {
-            vorkd?.waitFor()
-            node?.destroy()
-        }.start()
         super.onDestroy()
     }
 
@@ -100,24 +91,14 @@ class VorkService : Service() {
             .apply {
                 environment()["HOME"] = p.home.absolutePath
                 environment()["VORK_STORE"] = p.store.absolutePath
-                environment()["VORK_CONFIG"] = p.nodeConfig.absolutePath
-                environment()["VORK_API"] = File(p.node, "state/api.sock").absolutePath
-                environment()["VORK_CONTROL"] = File(p.node, "state/control.sock").absolutePath
+                environment()["VORK_API"] = NodeBridge.api(this@VorkService)
+                environment()["VORK_CONTROL"] = NodeBridge.control(this@VorkService)
                 redirectErrorStream(true)
                 redirectOutput(ProcessBuilder.Redirect.appendTo(File(p.logs, "$name.log")))
             }
             .start()
     }
 
-    /**
-     * The libraries a new install joins (vork' packaging/default-libraries,
-     * an asset of the app), as a file vorkd reads: it joins each once.
-     */
-    private fun defaultLibraries(): File {
-        val f = File(filesDir, "default-libraries")
-        runCatching { assets.open("default-libraries").use { input -> f.outputStream().use { input.copyTo(it) } } }
-        return f
-    }
 
 
     /** Starts what's missing, every few seconds, and says how it is. */
@@ -132,25 +113,7 @@ class VorkService : Service() {
                     booksAt = System.currentTimeMillis()
                     Accounts.syncContacts(this)
                 }
-                // The node first: its settings and identity made once, then
-                // run (restarted if it stops).
-                if (node?.isAlive != true) {
-                    if (!p.nodeConfig.exists()) {
-                        p.node.mkdirs()
-                        start(p.vork, "node-init", "init", "--config", p.nodeConfig.absolutePath).waitFor()
-                    }
-                    // The interface comes from VorkVpn, handed over as a descriptor.
-                    val conf = p.nodeConfig.readText()
-                    if (!Regex("(?m)^tun\\s*=").containsMatchIn(conf)) p.nodeConfig.appendText("\ntun = \"fd\"\n")
-                    // Its name as other nodes see it: the phone's model.
-                    if (!Regex("(?m)^name\\s*=").containsMatchIn(conf)) {
-                        val model = Build.MODEL.replace("\"", "").trim().ifEmpty { "android" }
-                        p.nodeConfig.appendText("name = \"$model\"\n")
-                    }
-                    node = start(p.vork, "node", "run", "--config", p.nodeConfig.absolutePath)
-                    VorkVpn.startIfAllowed(this)
-                }
-                // vorkd once the node answers (it reconnects by itself later).
+                // vorkd once the vØrk app's node answers (it reconnects by itself later).
                 val up = Core.nodeUp()
                 // Stopped by itself (not by Restart): why, for the app to show.
                 vorkd?.let { old ->
@@ -158,14 +121,19 @@ class VorkService : Service() {
                 }
                 if (vorkd?.isAlive != true && up) {
                     restarting = false
-                    vorkd = start(p.vorkd, "vorkd", "--default-libraries", defaultLibraries().absolutePath)
+                    vorkd = start(p.vorkd, "vorkd")
                     if (firstStart) phoneDefaults()
                     firstStart = false
+                }
+                // Its pages in the vØrk dashboard, once vorkd runs.
+                if (web?.isAlive != true && vorkd?.isAlive == true) {
+                    web = start(p.web, "vork-web", "--store", p.store.absolutePath, "--dashboard", NodeBridge.api(this))
                 }
                 daemonAlive = vorkd?.isAlive == true
                 waitingForNode = !up
                 when {
                     up -> update()
+                    !NodeBridge.netInstalled(this) -> update("install the vØrk app: storage runs on its node")
                     else -> update("waiting for the vØrk node")
                 }
                 wake.tryAcquire(if (vorkd?.isAlive == true) 15_000L else 3_000L, java.util.concurrent.TimeUnit.MILLISECONDS)
