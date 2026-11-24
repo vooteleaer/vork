@@ -2,14 +2,14 @@
 //! (`rights` empty: a member the creator knows, who gets the read key when it
 //! rotates), to write, or to write and invite.
 //!
-//! An invitation is canonical msgpack, base32 in a `retifs:invite/…` link:
+//! An invitation is canonical msgpack, base32 in a `vork:invite/…` link:
 //!
 //! ```text
 //! { "expires": ms, "limits": { "keys"?: [str], "until"?: ms }, "node": bin 16,
 //!   "ns": bin 64 (writer ‖ read key), "q"?: str, "rights": [str], "secret": bin 32 }
 //! ```
 //!
-//! Its creator keeps `id = SHA-256("retifs/v1/invite" ‖ secret)` as pending.
+//! Its creator keeps `id = SHA-256("vork-storage/v1/invite" ‖ secret)` as pending.
 //! The recipient joins (the address reads) and redeems over a Link to the
 //! creator's node (`/vork/invite`) with
 //! `id ‖ writer key ‖ its node ‖ HMAC-SHA256(secret, link id ‖ writer key ‖ its node)`:
@@ -32,7 +32,7 @@ pub const REDEEM_LEN: usize = 32 + 32 + 16 + 32;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Invitation {
     pub ns: ChannelAddr,
-    /// The creator's node (its `retifs.node` address), to redeem with.
+    /// The creator's node (its `vork.node` address), to redeem with.
     pub node: [u8; 16],
     pub secret: [u8; 32],
     /// `write`: the member's writes count. False: a reader (`rights` empty).

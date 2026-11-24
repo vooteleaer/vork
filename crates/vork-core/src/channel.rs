@@ -2,20 +2,20 @@
 //! writer's append-only chain of versions, which followers track.
 //!
 //! ```text
-//! address = "retifs-ch:1:" ‖ hex(writer Ed25519 public key) ‖ ":" ‖ hex(read key)
-//! ns_id   = SHA-256("retifs/v1/ns" ‖ writer)[0..16]
+//! address = "vork-ch:1:" ‖ hex(writer Ed25519 public key) ‖ ":" ‖ hex(read key)
+//! ns_id   = SHA-256("vork-storage/v1/ns" ‖ writer)[0..16]
 //!
 //! commit  = body ‖ sig(64)                      stored as an ordinary sealed chunk,
 //! body    = 0x01 ‖ ns_id (16) ‖ writer (32)      convergence secret
-//!           ‖ seq (u64 BE) ‖ time (u64 BE, unix ms)   for_record(read key, "retifs/v1/commits")
+//!           ‖ seq (u64 BE) ‖ time (u64 BE, unix ms)   for_record(read key, "vork-storage/v1/commits")
 //!           ‖ has_prev (u8) [‖ prev cid (33) ‖ prev seed (32)]
 //!           ‖ root cid (33) ‖ root seed (32) ‖ root size (u64 BE)
-//! sig     = Ed25519(writer, "retifs/v1/commit" ‖ body)
+//! sig     = Ed25519(writer, "vork-storage/v1/commit" ‖ body)
 //!
 //! head    = 0x01 ‖ ns_id (16) ‖ writer (32) ‖ seq (u64 BE) ‖ time (u64 BE, unix s)
 //!           ‖ commit cid (33) ‖ Token(head key, commit seed) (96) ‖ sig (64)        258 B
-//! sig     = Ed25519(writer, "retifs/v1/head" ‖ all fields before it)
-//! head key = HKDF-SHA256(ikm = read key, salt = "retifs/v1/head-seed", info = "", L = 64)
+//! sig     = Ed25519(writer, "vork-storage/v1/head" ‖ all fields before it)
+//! head key = HKDF-SHA256(ikm = read key, salt = "vork-storage/v1/head-seed", info = "", L = 64)
 //! ```
 //! - **Holders stay blind:** commits are chunks like any other; a head shows
 //!   only the library, the writer key, the sequence number and a commit CID.
@@ -76,7 +76,7 @@ impl std::fmt::Display for ChannelError {
 
 impl std::error::Error for ChannelError {}
 
-/// Names a read key without revealing it: SHA-256("retifs/v1/key-id" ‖ key)[0..16].
+/// Names a read key without revealing it: SHA-256("vork-storage/v1/key-id" ‖ key)[0..16].
 /// Members ask for "your latest head under this key" to cross a key rotation (ADR-0017).
 pub fn key_id(read_key: &[u8; 32]) -> [u8; 16] {
     Sha256::digest([b"vork-storage/v1/key-id".as_slice(), read_key].concat())[..16].try_into().unwrap()

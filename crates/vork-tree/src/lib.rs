@@ -116,7 +116,7 @@ pub fn join(dir: &str, name: &str) -> String {
     if dir == "/" { format!("/{name}") } else { format!("{dir}/{name}") }
 }
 
-/// The size a read-cap (`retifs:1:<root>:<key>:<size>`) gives its file.
+/// The size a read-cap (`vork:1:<root>:<key>:<size>`) gives its file.
 fn cap_size(cap: &str) -> Option<u64> {
     cap.strip_prefix("vork:")?.rsplit(':').next()?.parse().ok()
 }

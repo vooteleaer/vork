@@ -2,9 +2,9 @@
 //! anonymous and prove they know each chunk's seed, RNS style.
 //!
 //! ```text
-//! chunk_token = HKDF-SHA256(ikm = chunk seed, salt = "retifs/v1/serve", info = "", L = 32)
-//! get proof   = HMAC-SHA256(chunk_token, "retifs/v1/get"  ‖ link_nonce ‖ cid)[0..16]
-//! have proof  = HMAC-SHA256(chunk_token, "retifs/v1/have" ‖ link_nonce ‖ prefix)[0..16]
+//! chunk_token = HKDF-SHA256(ikm = chunk seed, salt = "vork-storage/v1/serve", info = "", L = 32)
+//! get proof   = HMAC-SHA256(chunk_token, "vork-storage/v1/get"  ‖ link_nonce ‖ cid)[0..16]
+//! have proof  = HMAC-SHA256(chunk_token, "vork-storage/v1/have" ‖ link_nonce ‖ prefix)[0..16]
 //! ```
 //! - The seed comes from the manifest, so anyone who can read a file can prove
 //!   access to each of its chunks, and nothing extra has to be shared.

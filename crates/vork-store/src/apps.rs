@@ -25,7 +25,7 @@ pub struct App {
     /// The executable that first used the token (Linux), if pinned.
     pub exe: Option<String>,
     /// For one of the user's own nodes asking over a Link (ADR-0019): its
-    /// `retifs.node` address. Such an entry has no token.
+    /// `vork.node` address. Such an entry has no token.
     pub device: Option<[u8; 16]>,
     /// The attribute keys it may write (`exif.*` for a prefix, `@content`,
     /// `@delete`, `@create`); empty: any. A local limit, not a grant.

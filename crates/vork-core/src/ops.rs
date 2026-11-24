@@ -140,7 +140,7 @@ pub enum Op {
     /// The signer's public identity (X25519 ‖ Ed25519), so others can wrap keys to it.
     /// Counts only if its Ed25519 half is the signer's own key.
     Identity([u8; 64]),
-    /// The `retifs.node` address of the signer's node (ADR-0022), so every
+    /// The `vork.node` address of the signer's node (ADR-0022), so every
     /// member can sync with every member's node, not just the one it joined
     /// through. Counts for the signer only; its latest one stands.
     Node([u8; 16]),
@@ -416,7 +416,7 @@ pub struct RekeyEvent {
 pub struct Merged {
     /// Writers' public identities, as they announced them.
     pub identities: BTreeMap<WriterKey, [u8; 64]>,
-    /// Writers' nodes (`retifs.node` addresses), as they announced them.
+    /// Writers' nodes (`vork.node` addresses), as they announced them.
     pub nodes: BTreeMap<WriterKey, [u8; 16]>,
     /// Valid rekeys, in stamp order.
     pub rekeys: Vec<RekeyEvent>,

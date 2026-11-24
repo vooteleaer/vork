@@ -1,12 +1,12 @@
 //! Saved queries (ADR-0020): records in the user's own library `me`, so
-//! every device of theirs has them. `type = retifs.query`, `name`, `query`
+//! every device of theirs has them. `type = vork.query`, `name`, `query`
 //! (terms as `vork query` takes them, comma-separated) and `scope`: the
 //! libraries it looks in, by their creators' keys (stable, and the same on
 //! every device whatever each calls them); empty: every library.
 //!
-//! Favorite libraries are kept the same way: `type = retifs.favorite`,
+//! Favorite libraries are kept the same way: `type = vork.favorite`,
 //! `library` (its creator's key). So are members' nicknames:
-//! `type = retifs.nickname`, `name`, `retifs:node` (the device), `retifs:writer`.
+//! `type = vork.nickname`, `name`, `vork:node` (the device), `vork:writer`.
 //!
 //! One convention for the CLI, the desktop utility's Find and any app.
 
@@ -77,7 +77,7 @@ pub async fn namespaces(c: &mut Client) -> Result<Vec<String>, String> {
     }
 }
 
-/// A library's creator key (hex), from its address (`retifs-ch:1:<creator>:<read key>`).
+/// A library's creator key (hex), from its address (`vork-ch:1:<creator>:<read key>`).
 pub async fn creator(c: &mut Client, ns: &str) -> Result<String, String> {
     match err(c.call(Request::NsInfo { ns: ns.into() }).await)? {
         Response::Namespace(v) => v.address.split(':').nth(2).map(String::from).ok_or_else(|| "a malformed address".into()),
@@ -176,9 +176,9 @@ pub async fn set_favorite(c: &mut Client, ns: &str, on: bool) -> Result<(), Stri
 
 /// A member's nickname (in `me`, so only the user and their devices see
 /// it): `name`, what the user calls it ("Neighbour's iPad"), and
-/// `retifs:node`, the member's device, so the name is the same in every
+/// `vork:node`, the member's device, so the name is the same in every
 /// library that device is in (a device has a writer key per library);
-/// `retifs:writer`, the writer key (hex), names a member whose node isn't
+/// `vork:writer`, the writer key (hex), names a member whose node isn't
 /// known. Apps show it with the key's fingerprint words, never instead of
 /// them, and decide nothing by it.
 pub const NICKNAME_TYPE: &str = "vork.nickname";

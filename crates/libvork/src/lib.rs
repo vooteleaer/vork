@@ -77,7 +77,7 @@ pub enum Request {
     /// Owner only: lets an application use the app socket with a new token
     /// (answered once, never stored), limited to `namespaces`, read-only
     /// unless `write`.
-    /// With `device` (a node's `retifs.node` address): admits that node of
+    /// With `device` (a node's `vork.node` address): admits that node of
     /// the user's to ask over a Link instead (ADR-0019); no token.
     /// `keys` limits its writes to those attribute keys (`exif.*` for a
     /// prefix; `@content`, `@delete`, `@create` for content, deleting and
@@ -295,7 +295,7 @@ pub enum Request {
         mine: bool,
     },
     /// Deletes library `ns` everywhere (ADR-0034): every record is deleted
-    /// and a `retifs.deleted` record written, so each member's node, seeing
+    /// and a `vork.deleted` record written, so each member's node, seeing
     /// it from one who held `grant`, hides the library, lets its content go
     /// and leaves it after a while. Only a member holding `grant`.
     NsDelete { ns: String },
@@ -339,7 +339,7 @@ pub enum Request {
     /// records matching `terms` (or the records `ids`), without the
     /// attributes `omit` names (`exif:gps*` for a prefix), kept up to date by
     /// the owner's nodes that hold both. The definition is a
-    /// `type = retifs.share` record in `source`; members of the share don't
+    /// `type = vork.share` record in `source`; members of the share don't
     /// see it. Answers with the share library.
     ShareCreate {
         source: String,
@@ -355,7 +355,7 @@ pub enum Request {
     /// Ends a share: deletes its definition `id` from `source`, so updates
     /// stop. What members already have stays theirs.
     ShareDelete { source: String, id: String },
-    /// Makes an invitation to write to `ns` (ADR-0020): a `retifs:invite/…`
+    /// Makes an invitation to write to `ns` (ADR-0020): a `vork:invite/…`
     /// link the first recipient redeems for a grant (`grant` too if asked,
     /// limited to `keys` and `until` if given). It expires after
     /// `expires_ms` (default a day). Answers with the link.
@@ -410,7 +410,7 @@ pub enum Request {
 /// The Reticulum path to one of a library's nodes (`NsPaths`).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PathInfo {
-    /// Its `retifs.node` address (32 hex digits).
+    /// Its `vork.node` address (32 hex digits).
     pub node: String,
     /// The writer key it's a member's device for, if it is one.
     pub writer: Option<String>,
@@ -470,7 +470,7 @@ impl std::fmt::Display for AttrValue {
 /// A storage node as placement sees it.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StorageNodeInfo {
-    /// Its `retifs.node` address (32 hex digits).
+    /// Its `vork.node` address (32 hex digits).
     pub node: String,
     pub hops: u8,
     pub last_heard_ms: u64,
@@ -889,7 +889,7 @@ pub struct Status {
 /// A node holding a copy of a file for this one.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FileHolder {
-    /// Its `retifs.node` address (32 hex digits).
+    /// Its `vork.node` address (32 hex digits).
     pub node: String,
     /// A valid receipt for every lease, no failed storage proof.
     pub confirmed: bool,
@@ -1155,7 +1155,7 @@ impl Client {
         }
     }
 
-    /// From now on, asks the user's own node `node` (a `retifs.node`
+    /// From now on, asks the user's own node `node` (a `vork.node`
     /// address) instead of the local daemon; the local daemon carries the
     /// requests over a Link.
     pub fn via(mut self, node: Option<String>) -> Self {

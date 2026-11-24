@@ -90,8 +90,8 @@ pub struct FileRef {
 }
 
 /// Text form of a read capability (draft, not yet an accepted format):
-/// `retifs:1:<root cid hex>:<root seed hex>:<size>`, optionally followed by
-/// holder hints, `@<node>,<node>` (`retifs.node` addresses, 32 hex digits
+/// `vork:1:<root cid hex>:<root seed hex>:<size>`, optionally followed by
+/// holder hints, `@<node>,<node>` (`vork.node` addresses, 32 hex digits
 /// each; ADR-0010): where to ask, never what to trust (every chunk is checked
 /// against its CID). Parsing a read-cap accepts hints and drops them;
 /// [`FileRef::parse_with_hints`] keeps them.

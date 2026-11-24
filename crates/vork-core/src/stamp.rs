@@ -3,7 +3,7 @@
 //! ```text
 //! workblock = ‖ for n in 0..3000: HKDF-SHA256(ikm = material, salt = SHA-256(material ‖ msgpack(n)), info = "", L = 256)
 //! value     = leading zero bits of SHA-256(workblock ‖ stamp)          stamp: 32 bytes
-//! material  = "retifs/v1/stamp" ‖ SHA-256(lease body)
+//! material  = "vork-storage/v1/stamp" ‖ SHA-256(lease body)
 //! ```
 //! A stamp is valid for one lease and costs about 2^cost hashes of the
 //! 768 KB workblock to find, nothing to keep. Holders set the cost they ask of

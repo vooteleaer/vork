@@ -194,7 +194,7 @@ pub fn remove_member(ns: &str, writer: &str) -> Result<(), String> {
     Daemon::new().remove_member(ns, writer)
 }
 
-/// A library's link (`retifs:ns/…`): whoever has it can read the library.
+/// A library's link (`vork:ns/…`): whoever has it can read the library.
 pub fn link(ns: &str) -> Result<String, String> {
     Daemon::new().link(ns)
 }

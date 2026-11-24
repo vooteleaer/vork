@@ -1,4 +1,4 @@
-//! What a `retifs.node` announce carries in its app data (ADR-0014): how
+//! What a `vork.node` announce carries in its app data (ADR-0014): how
 //! often the node announces, so others can tell a node that went quiet from
 //! one that announces rarely, and, if its owner said, which site it's at, so
 //! copies can be kept in more than one place. Canonical msgpack, a map so it
@@ -18,12 +18,12 @@
 //! room is below what it would lease there, without a link or a lease.
 //!
 //! The site is a tag, not the name: the first 8 bytes of
-//! SHA-256("retifs.site" ‖ 0x00 ‖ the name, trimmed and lowercased). Nodes
+//! SHA-256("vork.site" ‖ 0x00 ‖ the name, trimmed and lowercased). Nodes
 //! with the same name are at the same site; a name others might also use
 //! ("home") makes their nodes look like the same site too, which only costs
 //! diversity, so a name of one's own is better ("prangli-home").
 //!
-//! Nodes before this sent `retifs/v0` (no interval known).
+//! Nodes before this sent `vork-storage/v0` (no interval known).
 
 use sha2::{Digest, Sha256};
 
@@ -103,7 +103,7 @@ pub fn node_app_data_with_room(announce_s: u32, site: Option<SiteTag>, holds: bo
 }
 
 /// What a node's app data states. Anything unreadable (an older node's
-/// `retifs/v0`, other versions) says nothing; unknown fields are skipped.
+/// `vork-storage/v0`, other versions) says nothing; unknown fields are skipped.
 pub fn node_announce(app_data: &[u8]) -> NodeAnnounce {
     let mut out = NodeAnnounce::default();
     let mut r = Reader(app_data);
@@ -129,7 +129,7 @@ pub fn node_announce_s(app_data: &[u8]) -> Option<u32> {
 // ------------------------------------------------- announced public libraries
 
 /// A public library's announce (ADR-0029), sent from the node's
-/// `retifs.library` destination, one library per announce. Canonical msgpack,
+/// `vork.library` destination, one library per announce. Canonical msgpack,
 /// keys in order (`bounds` only when set):
 ///
 /// ```text
@@ -138,8 +138,8 @@ pub fn node_announce_s(app_data: &[u8]) -> Option<u32> {
 ///   "seq": uint, "v": 1 }
 /// ```
 ///
-/// `node`: the announcing node's `retifs.node` address, which serves the
-/// library (the announce comes from its `retifs.library` destination, which
+/// `node`: the announcing node's `vork.node` address, which serves the
+/// library (the announce comes from its `vork.library` destination, which
 /// serves nothing).
 /// ```text
 /// ```
@@ -147,7 +147,7 @@ pub fn node_announce_s(app_data: &[u8]) -> Option<u32> {
 pub struct LibraryAnnounce {
     pub name: String,
     pub about: String,
-    /// The channel: writer key and read key (its address, `retifs-ch:1:…`).
+    /// The channel: writer key and read key (its address, `vork-ch:1:…`).
     pub writer: [u8; 32],
     pub read_key: [u8; 32],
     /// The library format it's in (channels and records, decision 2).
@@ -158,7 +158,7 @@ pub struct LibraryAnnounce {
     pub bounds: Option<[f64; 4]>,
     /// Its latest version.
     pub seq: u64,
-    /// The node that serves it (its `retifs.node` address).
+    /// The node that serves it (its `vork.node` address).
     pub node: Option<[u8; 16]>,
 }
 

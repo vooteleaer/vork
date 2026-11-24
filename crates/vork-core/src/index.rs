@@ -2,23 +2,23 @@
 //! that a node can answer without the read key.
 //!
 //! ```text
-//! token key     = HKDF-SHA256(ikm = read key, salt = "retifs/v1/index-token",  info = "", L = 32)
-//! search secret = HKDF-SHA256(ikm = read key, salt = "retifs/v1/index-search", info = "", L = 32)
+//! token key     = HKDF-SHA256(ikm = read key, salt = "vork-storage/v1/index-token",  info = "", L = 32)
+//! search secret = HKDF-SHA256(ikm = read key, salt = "vork-storage/v1/index-search", info = "", L = 32)
 //! token         = HMAC-SHA256(token key, canonical msgpack [key, value])[0..16]
-//! K_t           = HKDF-SHA256(ikm = token key, salt = "retifs/v1/index-entry", info = token, L = 32)
+//! K_t           = HKDF-SHA256(ikm = token key, salt = "vork-storage/v1/index-entry", info = token, L = 32)
 //! entry         = AES-256-Encrypt(K_t, record id)                  one block
 //! index         = Prolly tree of token ‖ entry (32-byte keys) → nil, sealed under the search secret
 //!
-//! index channel (ADR-0015): signing seed = HKDF-SHA256(ikm = read key, salt = "retifs/v1/index-writer", L = 32),
+//! index channel (ADR-0015): signing seed = HKDF-SHA256(ikm = read key, salt = "vork-storage/v1/index-writer", L = 32),
 //!                           read key     = the search secret
 //! descriptor    = { "index": nil | [cid (bin 33), seed (bin 32)],      one per channel version,
 //!                   "state": bin Token(state key, [cid, seed, size]),    canonical msgpack
 //!                   "time":  int (unix ms) }
-//! state key     = HKDF-SHA256(ikm = token key, salt = "retifs/v1/index-state", info = "", L = 64)
-//! query proof   = HMAC-SHA256(search secret, "retifs/v1/index-query" ‖ link id)
+//! state key     = HKDF-SHA256(ikm = token key, salt = "vork-storage/v1/index-state", info = "", L = 64)
+//! query proof   = HMAC-SHA256(search secret, "vork-storage/v1/index-query" ‖ link id)
 //! ```
 //! - Every member derives the index channel from the read key, so a search
-//!   capability is just its address (`retifs-ch:1:…`), and any member can
+//!   capability is just its address (`vork-ch:1:…`), and any member can
 //!   find the index without asking. A revoke rotates the read key and so
 //!   moves the index to a new channel.
 //! - The descriptor names the checkpoint the index describes, encrypted to

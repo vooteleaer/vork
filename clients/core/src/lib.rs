@@ -653,9 +653,9 @@ impl Daemon {
         }
     }
 
-    /// What library `ns` is for (ADR-0032): its `retifs.library` record's
+    /// What library `ns` is for (ADR-0032): its `vork.library` record's
     /// `for` (every one's, should members have made two), and `calendar` for
-    /// one with a `retifs.calendar` record (ADR-0024). Empty: a generic one.
+    /// one with a `vork.calendar` record (ADR-0024). Empty: a generic one.
     ///
     /// Asked again only when the library has changed (its change count):
     /// on a lazily held library each lookup is a search at its peers, and

@@ -45,7 +45,7 @@ impl LinkId {
 #[derive(Clone)]
 pub struct VorkTransport {
     pub net: Net,
-    /// Our destination that identifies us on links (`retifs.node`).
+    /// Our destination that identifies us on links (`vork.node`).
     pub identify_as: DestinationHash,
     pub path_timeout: Duration,
 }

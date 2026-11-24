@@ -151,7 +151,7 @@ mod tests {
         let ed: [u8; 32] = hex::decode(ED).unwrap().try_into().unwrap();
         let id = node_hash(&ed, &x);
         assert_eq!(hex::encode(id), "12e9125e209f8c0f67acc1fe70b9e4f1");
-        assert_eq!(hex::encode(destination_hash(&id, "retifs.node")), "258d3c394d3376c4662048ca83bd2f2d");
+        assert_eq!(hex::encode(destination_hash(&id, "vork.node")), "123f6a32d38d960defa70e5531a95317");
     }
 
     #[test]

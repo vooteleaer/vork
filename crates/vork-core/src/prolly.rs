@@ -6,7 +6,7 @@
 //! leaf     = { "entries": [ [ key (bin K), value (canonical msgpack, embedded) ], … ], "level": 0 }
 //! internal = { "children": [ [ first key (bin K), cid (bin 33), seed (bin 32) ], … ], "level": n }
 //! a node ends after the entry (child) with key k at level L if
-//!     u32_be(SHA-256("retifs/v1/prolly" ‖ L ‖ k)[0..4]) < 2^32 / FANOUT,
+//!     u32_be(SHA-256("vork-storage/v1/prolly" ‖ L ‖ k)[0..4]) < 2^32 / FANOUT,
 //! or once it holds MAX_NODE bytes of entries
 //! ```
 //! - Equal key sets give equal shapes, so two versions of a library share

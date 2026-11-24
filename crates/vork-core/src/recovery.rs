@@ -5,12 +5,12 @@
 //! seed       32 random bytes
 //! words      BIP-39 English: seed ‖ SHA-256(seed)[0] in 11-bit groups, 24 words
 //!            (the BIP-39 entropy and checksum; not BIP-39's PBKDF2 seed)
-//! k(info)    HKDF-SHA256(ikm = seed, salt = "retifs/v1/recovery", info)[0..32]
+//! k(info)    HKDF-SHA256(ikm = seed, salt = "vork-storage/v1/recovery", info)[0..32]
 //! identity   X25519 private = k("x25519") ‖ Ed25519 seed = k("ed25519"): an RNS identity
 //! keyring    the library whose creator is the identity (writer = its Ed25519 public key,
-//!            ns_id = SHA-256("retifs/v1/ns" ‖ writer)[0..16]), first read key k("keyring-read")
-//! locator    k("keyring-locator"); a node keeping the keyring announces `retifs.keyring`
-//!            with app data HMAC-SHA256(locator, its retifs.node address)[0..16]
+//!            ns_id = SHA-256("vork-storage/v1/ns" ‖ writer)[0..16]), first read key k("keyring-read")
+//! locator    k("keyring-locator"); a node keeping the keyring announces `vork.keyring`
+//!            with app data HMAC-SHA256(locator, its vork.node address)[0..16]
 //! ```
 //!
 //! The words and every derivation here are irreversible once a kit is
@@ -169,7 +169,7 @@ impl RecoverySeed {
 pub struct Locator(pub [u8; 32]);
 
 impl Locator {
-    /// The tag `node` (its retifs.node address) announces: unrelated across nodes to anyone without the key.
+    /// The tag `node` (its vork.node address) announces: unrelated across nodes to anyone without the key.
     pub fn tag(&self, node: &[u8; 16]) -> [u8; 16] {
         let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&self.0).expect("any key length");
         mac.update(node);

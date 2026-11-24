@@ -595,7 +595,7 @@ struct Args {
     /// Fill free disk with spare copies (`--spare`, ADR-0012).
     spare: bool,
     hold_limit: Option<u64>,
-    /// How often to announce `retifs.node` (seconds; the announces say so).
+    /// How often to announce `vork.node` (seconds; the announces say so).
     announce_s: u32,
     lease_term: u64,
     loss_target: f64,
@@ -1570,7 +1570,7 @@ const HOLDERS_EVERY: Duration = Duration::from_secs(600);
 /// How often a reader listed already says again that it keeps a library.
 const READER_AGAIN_MS: u64 = 24 * 3600 * 1000;
 
-/// The nodes members' `retifs.holders` records name under `field`
+/// The nodes members' `vork.holders` records name under `field`
 /// (`holders` or `readers`) for library `ns`, this node's own included.
 fn ns_listed(d: &Daemon, ns: &str, field: &str) -> Vec<PeerId> {
     let Ok(term) = vork_store::Term::parse(&format!("type={HOLDERS_TYPE}")) else { return Vec::new() };
@@ -2485,7 +2485,7 @@ async fn serve(store: Arc<SlabStore>, identity: node::IdentitySecret, endpoint: 
             if from == *lib_hash.as_bytes() {
                 continue;
             }
-            // The announcing node's retifs.node address (its identity's other
+            // The announcing node's vork.node address (its identity's other
             // destination): where joining asks first.
             // The announce says (`node`); else from the announcing identity.
             let Some(dest) = parse_destination(&hex(&from)) else { continue };
@@ -2514,7 +2514,7 @@ async fn serve(store: Arc<SlabStore>, identity: node::IdentitySecret, endpoint: 
             save_heard(&listener.store.root().join("heard"), &heard);
         }
     });
-    // This node's announced libraries, all on the one `retifs.library`
+    // This node's announced libraries, all on the one `vork.library`
     // destination. Reticulum lets a destination announce about once an hour
     // (Prns's default_ar_target, 3600 s; past a grace of 5, relays ignore it
     // for a while), so they go in turn: one library per announce interval,
@@ -2632,7 +2632,7 @@ async fn serve(store: Arc<SlabStore>, identity: node::IdentitySecret, endpoint: 
     let watcher = daemon.clone();
     worker("storage nodes heard", async move {
         // Every vØrk storage node is a storage node (ADR-0014), recognised by its
-        // identity (older nodes' app data says only `retifs/v0`); the app
+        // identity (older nodes' app data says only `vork-storage/v0`); the app
         // data, when it says, gives how often it announces.
         let mut not_vork = std::collections::HashSet::new();
         while let Some((peer, hops, said)) = heard_rx.recv().await {
@@ -4462,7 +4462,7 @@ async fn ns_round(d: &Daemon, ns: &str) {
     }
 }
 
-/// This node's `retifs.node` address.
+/// This node's `vork.node` address.
 fn own_node(d: &Daemon) -> Result<PeerId, String> {
     Ok(parse_peers(std::slice::from_ref(&d.node_hex))?[0])
 }
@@ -5708,7 +5708,7 @@ async fn recovery_create(d: &Daemon) -> Result<Response, String> {
     Ok(Response::RecoveryKit { words: seed.words().into_iter().map(String::from).collect(), covered, not_covered })
 }
 
-/// The `retifs.keyring` destination of the identity with this hash.
+/// The `vork.keyring` destination of the identity with this hash.
 fn keyring_destination_of(identity_hash: &[u8; 16]) -> PeerId {
     use sha2::Digest;
     let name_hash = &sha2::Sha256::digest(b"vork.keyring")[..10];
@@ -7983,7 +7983,7 @@ fn sorted(chunks: &[(Cid, ChunkToken)]) -> Vec<(Cid, ChunkToken)> {
 /// Brings one file's holders up to date: forgets holders whose lease ran
 /// out, trims a surplus copy. Returns the loss estimate and current holders
 /// if the file needs more.
-/// The copies each file's libraries ask for (`retifs.placement` records),
+/// The copies each file's libraries ask for (`vork.placement` records),
 /// where they ask: the most any of its libraries asks.
 fn copies_wanted(d: &Daemon) -> HashMap<Cid, usize> {
     let mut out: HashMap<Cid, usize> = HashMap::new();

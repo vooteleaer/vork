@@ -23,8 +23,8 @@ finish-args:
   - --socket=wayland
   - --socket=fallback-x11
   - --device=dri
-  # The one store every vork Flatpak and the host's vorkd share.
-  - --filesystem=xdg-data/vork:create
+  # The one store (vØrk storage's, ~/.local/share/vork-storage) every vØrk Flatpak and the host's vorkd share.
+  - --filesystem=xdg-data/vork-storage:create
   # systemctl --user on the host (flatpak-spawn --host).
   - --talk-name=org.freedesktop.Flatpak
   # The tray icon (StatusNotifierItem).

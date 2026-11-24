@@ -26,7 +26,7 @@ const TTL: Duration = Duration::from_secs(1);
 const XATTR_PREFIX: &str = "user.vork.";
 /// Without a change notice, the library is re-read at least this often.
 const RESYNC: Duration = Duration::from_secs(30);
-/// `user.retifs.local`: computed, whether a file's content is on this device.
+/// `user.vork.local`: computed, whether a file's content is on this device.
 const LOCAL_XATTR: &str = "local";
 
 enum Entry {

@@ -7,7 +7,7 @@
 //! source ID from it:
 //!
 //! ```text
-//! share_id = HKDF-SHA256(ikm = source record ID, salt = "retifs/v1/share-record",
+//! share_id = HKDF-SHA256(ikm = source record ID, salt = "vork-storage/v1/share-record",
 //!                        info = the share library's ns_id)[0..16]
 //! ```
 //!
@@ -38,7 +38,7 @@ pub fn record_id(source: &RecordId, share: &NsId) -> RecordId {
 /// the share writes the addition as the same record (equal writes merge).
 ///
 /// ```text
-/// source_id = HKDF-SHA256(ikm = the member's record ID, salt = "retifs/v1/share-writeback",
+/// source_id = HKDF-SHA256(ikm = the member's record ID, salt = "vork-storage/v1/share-writeback",
 ///                         info = the share library's ns_id)[0..16]
 /// ```
 pub fn writeback_id(member_record: &RecordId, share: &NsId) -> RecordId {

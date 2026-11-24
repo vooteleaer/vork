@@ -5,7 +5,7 @@ rule, size cut, node encoding, and sealing with RNS primitives (ADR-0008) —
 comparing the root CID, root seed and the full set of node CIDs. For the
 checkpoint, replays the chains independently into stamped records (last
 writer wins per field, rights at each stamp), builds the state tree under
-HKDF(read key, "retifs/v1/state") and re-encodes the checkpoint.
+HKDF(read key, "vork-storage/v1/state") and re-encodes the checkpoint.
 
     python verify_prolly_rns.py [prolly-v1.json]
 """
@@ -22,7 +22,7 @@ from verify_ops_rns import allows, holds, limits_of, narrowed, op as ops_op
 from verify_rns import seal
 
 CLASSES = [1 << k for k in range(9, 19)]
-LABEL = b"retifs/v1/prolly"
+LABEL = b"vork-storage/v1/prolly"
 
 
 def value(t):
@@ -190,7 +190,7 @@ def check_checkpoint(doc, checks):
     before = len(recs)
     prune(recs, timeline, frontier)
     checks[f"checkpoint prunes tombstones ({before - len(recs)} of {before})"] = before - len(recs) == v.get("pruned", 0)
-    secret = hkdf(32, bytes.fromhex(v["read_key"]), b"retifs/v1/record", b"retifs/v1/state")
+    secret = hkdf(32, bytes.fromhex(v["read_key"]), b"vork-storage/v1/record", b"vork-storage/v1/state")
     (cid, seed), store = build(doc, secret, sorted(recs.items()))
     checks["checkpoint state root cid"] = cid.hex() == v["state_root_cid"]
     checks["checkpoint state root seed"] = seed.hex() == v["state_root_seed"]
@@ -200,8 +200,8 @@ def check_checkpoint(doc, checks):
         "control": control,
         "frontier": frontier,
         "high": high,
-        "retifs": "ns-checkpoint/1",
         "state": [cid, seed],
+        "vork": "ns-checkpoint/1",
     }
     checks["checkpoint encoding"] = umsgpack.packb(cp).hex() == v["encoded"]
 

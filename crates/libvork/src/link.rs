@@ -6,7 +6,7 @@
 //! ```
 //!
 //! Kinds: `node`, `ns`, `invite`, `ch`, `cap`. For `ns`, `<what>` is the
-//! library address without its `retifs-ch:` prefix (`1:<writer>:<read key>`).
+//! library address without its `vork-ch:` prefix (`1:<writer>:<read key>`).
 //! Parameters: `q` (a query, in the CLI's terms: what to open on), `view`
 //! (which kind of app), `name` (a label), `from` (a node to fetch from, may
 //! repeat). Values are percent-encoded. Unknown kinds and parameters are

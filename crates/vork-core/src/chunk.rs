@@ -4,7 +4,7 @@
 //! frame    = encoding (u8) ‖ u32_be(len) ‖ payload ‖ zero fill to (class − 64)
 //!            encoding 0 = raw, 1 = zstd (payload is the compressed data)
 //! seed     = HMAC-SHA256(convergence_secret, frame)
-//! okm      = HKDF-SHA256(ikm = seed, salt = "retifs/v1/chunk", info = "", L = 80)
+//! okm      = HKDF-SHA256(ikm = seed, salt = "vork-storage/v1/chunk", info = "", L = 80)
 //! chunk    = iv ‖ AES-256-CBC(enc_key, iv, PKCS7(frame)) ‖ HMAC-SHA256(sign_key, iv ‖ ct)
 //! ```
 //! The result is an RNS Token with key `okm[0..64]` and a derived IV, and its

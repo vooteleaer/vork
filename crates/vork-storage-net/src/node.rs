@@ -2,7 +2,7 @@
 //! destinations storage answers for, and the connection to the node's local
 //! API, which comes back by itself when the node restarts.
 //!
-//! The destination names (`retifs.node`, `retifs.library`, ...) are part of
+//! The destination names (`vork.node`, `vork.library`, ...) are part of
 //! the storage format: stored node and library addresses are made from them.
 
 use std::collections::HashMap;
