@@ -246,6 +246,12 @@ impl Net {
         self.client().devices(list)
     }
 
+    /// The owner's devices and the services on them, with the devices'
+    /// names, as the node knows them (empty from an older node).
+    pub async fn own_devices(&self) -> Vec<vork_api::OwnDestination> {
+        self.client().own_devices().await.unwrap_or_default()
+    }
+
     /// Every announce the node hears arrives as `NetEvent::Heard`.
     pub fn subscribe(&self) -> io::Result<()> {
         self.0.subscribed.store(true, Ordering::Relaxed);

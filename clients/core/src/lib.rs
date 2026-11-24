@@ -546,6 +546,8 @@ impl Daemon {
         // The user's own names for members (only they see them).
         let nicks = self.rt.block_on(saved::nicknames(&mut c));
         let nodes: HashMap<&str, &str> = v.nodes.iter().map(|(w, n)| (w.as_str(), n.as_str())).collect();
+        // The owner's own devices, by the names vØrk knows them by.
+        let devices: HashMap<&str, &str> = v.devices.iter().map(|(n, name)| (n.as_str(), name.as_str())).collect();
         let mut out: Vec<(bool, String, serde_json::Value)> = v
             .writers
             .iter()
@@ -561,10 +563,13 @@ impl Daemon {
                 let you = *w == v.own_writer;
                 let node = nodes.get(w.as_str()).map(|n| n.to_string());
                 let nickname = saved::nickname_of(&nicks, w, node.as_deref()).unwrap_or_default().to_string();
+                let device = if you { None } else { node.as_deref().and_then(|n| devices.get(n)).map(|s| s.to_string()) };
                 let name = if !nickname.is_empty() {
                     nickname.clone()
                 } else if you {
                     "This device".to_string()
+                } else if let Some(dev) = &device {
+                    dev.clone()
                 } else {
                     node.as_ref().and_then(|n| contacts.get(&n.to_lowercase()).cloned()).unwrap_or_default()
                 };
@@ -574,7 +579,7 @@ impl Daemon {
                 let hash = node.clone().unwrap_or_else(|| w.chars().take(32).collect());
                 let j = serde_json::json!({
                     "writer": w, "name": name, "nickname": nickname, "hash": hash, "role": role, "limits": limits,
-                    "node": node, "you": you, "creator": *w == creator,
+                    "node": node, "you": you, "creator": *w == creator, "own_device": device.is_some(),
                 });
                 (*w != creator, if name.is_empty() { format!("~{hash}") } else { name.to_lowercase() }, j)
             })

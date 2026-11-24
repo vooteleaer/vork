@@ -692,7 +692,9 @@ Covered ({}): {}", covered.len(), if covered.is_empty() { "none".into() } else {
                     println!("  my writer  {}", v.own_writer);
                     for (w, rights) in &v.writers {
                         // No rights: a reader (a member invited to read).
-                        println!("  writer     {w}  {}", if rights.is_empty() { "read".to_string() } else { rights.join(",") });
+                        // The owner's own device, by name.
+                        let device = v.nodes.iter().find(|(x, _)| x == w).and_then(|(_, n)| v.devices.iter().find(|(m, _)| m == n)).map(|(_, name)| format!("  ({name})"));
+                        println!("  writer     {w}  {}{}", if rights.is_empty() { "read".to_string() } else { rights.join(",") }, device.unwrap_or_default());
                     }
                     if let Some(c) = &v.checkpoint {
                         println!("  checkpoint {c}");

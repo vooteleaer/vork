@@ -426,6 +426,10 @@ pub struct PathInfo {
     pub last_heard_ms: u64,
     /// Linked now.
     pub linked: bool,
+    /// The owner's device it is on, by name (only for the owner's own
+    /// devices, which tell each other).
+    #[serde(default)]
+    pub device: Option<String>,
 }
 
 /// An attribute value (ADR-0016).
@@ -573,6 +577,10 @@ pub struct NsView {
     /// a member is (a contact's node).
     #[serde(default)]
     pub nodes: Vec<(String, String)>,
+    /// Which of those nodes are on the owner's own devices, by the device's
+    /// name (`[node, device name]`, hex): the devices tell each other.
+    #[serde(default)]
+    pub devices: Vec<(String, String)>,
     /// When another node holding it last answered a sync (ms since the Unix
     /// epoch); None if none has yet.
     #[serde(default)]

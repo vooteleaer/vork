@@ -1074,6 +1074,9 @@ fn close_store(mut store: Arc<SlabStore>) {
 }
 
 struct Daemon {
+    /// The owner's devices' storage nodes (and other services), by the
+    /// device's name: from the vØrk node, which the devices tell.
+    own_devices: Mutex<HashMap<PeerId, String>>,
     store: Arc<SlabStore>,
     transport: VorkTransport,
     node_hex: String,
@@ -1496,6 +1499,17 @@ fn library_undeleted(d: &Daemon, ns: &str) {
     d.lib_wake.notify_one();
     println!("{ns}: its deletion was called off; shown again");
     ns_changed(d, ns);
+}
+
+/// The owner's devices' services by device name, from the vØrk node,
+/// every 30 s (the devices tell each other as often).
+async fn own_devices(d: Arc<Daemon>) {
+    loop {
+        let list = d.transport.net.own_devices().await;
+        let names: HashMap<PeerId, String> = list.into_iter().filter(|o| !o.here).map(|o| (o.dest, o.name)).collect();
+        *d.own_devices.lock().unwrap() = names;
+        tokio::time::sleep(Duration::from_secs(30)).await;
+    }
 }
 
 /// At start: libraries marked deleted whose `vork.deleted` record is gone
@@ -2364,6 +2378,7 @@ async fn serve(store: Arc<SlabStore>, identity: node::IdentitySecret, endpoint: 
             std::fs::read_to_string(store.root().join("leaving")).unwrap_or_default().lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect(),
         ),
         leave_wake: Notify::new(),
+        own_devices: Mutex::new(HashMap::new()),
         deleted: Mutex::new(
             std::fs::read_to_string(store.root().join("deleted"))
                 .unwrap_or_default()
@@ -2583,6 +2598,7 @@ async fn serve(store: Arc<SlabStore>, identity: node::IdentitySecret, endpoint: 
     worker("shares", share_keeper(daemon.clone()));
     worker("leaver", leaver(daemon.clone()));
     undelete_unmarked(&daemon);
+    worker("own devices", own_devices(daemon.clone()));
     worker("crash reports", crash_reports(daemon.clone(), args.crash_library.clone()));
     #[cfg(target_os = "haiku")]
     worker("mounts", haiku_mounts::keeper(daemon.clone(), args.store.clone()));
@@ -3290,6 +3306,7 @@ async fn handle(d: &Daemon, req: Request) -> Result<Response, String> {
                     slow: q.rtt_ms > 0 && q.slow(),
                     last_heard_ms: heard.get(&p).copied().unwrap_or(0),
                     linked: linked.contains(&p),
+                    device: d.own_devices.lock().unwrap().get(&p).cloned(),
                     node,
                 });
             }
@@ -4333,6 +4350,10 @@ fn ns_view_made(d: &Daemon, ns: &str) -> Result<NsView, String> {
         lazy: d.store.ns_lazy(ns).map_err(|e| e.to_string())?,
         announced: announced_libraries(&d.store).into_iter().any(|(n, _, _)| n == ns),
         nodes: merged.nodes.iter().map(|(w, n)| (hex(w), hex(n))).collect(),
+        devices: {
+            let own = d.own_devices.lock().unwrap();
+            merged.nodes.values().filter_map(|n| own.get(n).map(|name| (hex(n), name.clone()))).collect()
+        },
         last_seen_ms: d.ns_seen.lock().unwrap().get(ns).copied(),
     })
 }

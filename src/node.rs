@@ -3455,6 +3455,10 @@ impl Node {
             }
             crate::api::Event::Frame { client, frame } => match frame {
                 ToNode::Hello { .. } => self.to_client(client, &FromNode::Hello { version: vork_api::VERSION, address: self.my_hash }),
+                ToNode::OwnDevices { req } => {
+                    let destinations = self.own_destinations();
+                    self.to_client(client, &FromNode::OwnDevices { req, destinations });
+                }
                 ToNode::Register { req, secret, name } => {
                     let identity = Arc::new(Identity::from_bytes(&secret));
                     let dest = self.add_local(identity, &name, Some(client));
@@ -4487,11 +4491,49 @@ impl Node {
             }
             paths.push(json!({ "to": hex::encode(d), "via": via.map(hex::encode), "rtt_ms": rtt.map(|t| t.as_millis() as u64), "hops": hops }));
         }
-        // This node's own destinations (an application's, such as storage's
-        // node): the owner's devices name them after this device.
-        let mut destinations: Vec<String> = self.local.keys().map(hex::encode).collect();
-        destinations.sort();
+        // This node's services (its applications' destinations, such as
+        // storage's node), for the owner's devices only: they name them after
+        // this device.
+        let mut destinations: Vec<serde_json::Value> =
+            self.local.iter().map(|(d, l)| json!({ "dest": hex::encode(d), "service": l.name })).collect();
+        destinations.sort_by(|a, b| a["dest"].as_str().cmp(&b["dest"].as_str()));
         json!({ "paths": paths, "names": names, "destinations": destinations })
+    }
+
+    /// The owner's devices and the services on them, as they told this node
+    /// (their paths answers, fresh ones only) and this node's own.
+    fn own_destinations(&self) -> Vec<vork_api::OwnDestination> {
+        let me = self.cfg.name.clone();
+        let mut out = vec![vork_api::OwnDestination { dest: self.my_hash, service: String::new(), device: self.my_hash, name: me.clone(), here: true }];
+        for (d, l) in &self.local {
+            out.push(vork_api::OwnDestination { dest: *d, service: l.name.clone(), device: self.my_hash, name: me.clone(), here: true });
+        }
+        for (dev, e) in &self.device_paths {
+            if !self.cfg.devices.contains(dev) {
+                continue;
+            }
+            let name = self
+                .routes
+                .get(dev)
+                .and_then(|by| by.values().min_by_key(|r| r.hops))
+                .and_then(|r| announced_name(&r.ann.app_data))
+                .unwrap_or_else(|| hex::encode(&dev[..4]));
+            out.push(vork_api::OwnDestination { dest: *dev, service: String::new(), device: *dev, name: name.clone(), here: false });
+            let Some((at, v)) = &e.1 else { continue };
+            if at.elapsed() >= PATHS_AGAIN * 4 {
+                continue;
+            }
+            for x in v["destinations"].as_array().into_iter().flatten() {
+                // Build 184 said only the address.
+                let (hexed, service) = match x {
+                    serde_json::Value::String(h) => (h.as_str(), ""),
+                    _ => (x["dest"].as_str().unwrap_or(""), x["service"].as_str().unwrap_or("")),
+                };
+                let Some(dest) = hex::decode(hexed).ok().and_then(|b| <Hash>::try_from(b.as_slice()).ok()) else { continue };
+                out.push(vork_api::OwnDestination { dest, service: service.to_string(), device: *dev, name: name.clone(), here: false });
+            }
+        }
+        out
     }
 
     /// The owner's group, from one of the owner's devices: a device it linked

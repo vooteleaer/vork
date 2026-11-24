@@ -19,7 +19,8 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
 
 pub type Hash = [u8; 16];
-pub const VERSION: u16 = 1;
+/// 2: `OwnDevices` (a client asks it only of a node that greets with 2 or more).
+pub const VERSION: u16 = 2;
 /// Largest frame (a 32 MiB request or response with room for headers).
 pub const MAX_FRAME: usize = (32 << 20) + 4096;
 
@@ -64,6 +65,26 @@ pub enum ToNode {
     /// -), the menu's title, and (path, title) for each page. None: the
     /// application is forgotten. The node asks for a page's content with `Page`.
     Pages { id: String, title: String, pages: Vec<(String, String)> },
+    /// The owner's devices and every service on them (their destinations:
+    /// an application's, such as storage's node), this device's included,
+    /// as the devices tell each other (never anyone else): answered with
+    /// `OwnDevices`.
+    OwnDevices { req: u32 },
+}
+
+/// A destination on one of the owner's devices, and that device.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OwnDestination {
+    pub dest: Hash,
+    /// The service: the destination's name as registered (storage's node:
+    /// `vork.node`); empty for the device itself.
+    pub service: String,
+    /// The device's node address.
+    pub device: Hash,
+    /// The device's name, as vØrk knows it.
+    pub name: String,
+    /// On this device.
+    pub here: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -78,6 +99,7 @@ pub enum FromNode {
     /// A request to one of our destinations; answer with `Respond { token }`.
     Incoming { token: u64, dest: Hash, session: u32, nonce: [u8; 32], requester: Option<Hash>, path: String, body: Vec<u8> },
     Closed { session: u32 },
+    OwnDevices { req: u32, destinations: Vec<OwnDestination> },
     /// The dashboard asks for one of this application's pages (or a call a
     /// page makes): answer with `Respond { token }`, status 0 and the content.
     Page { token: u64, id: String, path: String, body: Vec<u8> },
@@ -192,6 +214,7 @@ impl ToNode {
                 }
                 &mut w
             }
+            ToNode::OwnDevices { req } => w.u8(14).u32(*req),
         };
         w.0
     }
@@ -219,6 +242,7 @@ impl ToNode {
                 }
                 ToNode::Pages { id, title, pages }
             }
+            14 => ToNode::OwnDevices { req: r.u32()? },
             k => return Err(bad(k)),
         })
     }
@@ -251,6 +275,13 @@ impl FromNode {
             }
             FromNode::Closed { session } => w.u8(9).u32(*session),
             FromNode::Page { token, id, path, body } => w.u8(10).u64(*token).str(id).str(path).raw(body),
+            FromNode::OwnDevices { req, destinations } => {
+                w.u8(11).u32(*req).u16(destinations.len().min(u16::MAX as usize) as u16);
+                for d in destinations.iter().take(u16::MAX as usize) {
+                    w.raw(&d.dest).str(&d.service).raw(&d.device).str(&d.name).u8(d.here as u8);
+                }
+                &mut w
+            }
         };
         w.0
     }
@@ -279,6 +310,15 @@ impl FromNode {
             }
             9 => FromNode::Closed { session: r.u32()? },
             10 => FromNode::Page { token: r.u64()?, id: r.str()?, path: r.str()?, body: r.rest() },
+            11 => {
+                let req = r.u32()?;
+                let n = r.u16()? as usize;
+                let mut destinations = Vec::with_capacity(n.min(1024));
+                for _ in 0..n {
+                    destinations.push(OwnDestination { dest: r.arr()?, service: r.str()?, device: r.arr()?, name: r.str()?, here: r.u8()? == 1 });
+                }
+                FromNode::OwnDevices { req, destinations }
+            }
             k => return Err(bad(k)),
         })
     }
@@ -387,13 +427,61 @@ pub fn default_control_endpoint() -> String {
     }
 }
 
+/// An endpoint reached through a broker: `broker:<socket>#api` or
+/// `broker:<socket>#control`. On Android the node is another app's (vØrk's),
+/// whose sockets other apps can't open; the app a program runs in asks the
+/// node's app for a connection (over Binder) and hands it over through its
+/// own socket: the program writes which endpoint it wants (a line), and
+/// gets the connection as a file descriptor (SCM_RIGHTS), with one byte.
+pub const BROKER: &str = "broker:";
+
+/// A Unix socket endpoint, or one through a broker (see [`BROKER`]).
+#[cfg(unix)]
+pub fn open_unix(endpoint: &str) -> io::Result<std::os::unix::net::UnixStream> {
+    use std::io::Write;
+    use std::os::fd::{AsRawFd, FromRawFd};
+    let Some(rest) = endpoint.strip_prefix(BROKER) else {
+        return std::os::unix::net::UnixStream::connect(endpoint);
+    };
+    let (path, which) = rest.rsplit_once('#').unwrap_or((rest, "api"));
+    let mut s = std::os::unix::net::UnixStream::connect(path)?;
+    s.set_read_timeout(Some(Duration::from_secs(15)))?;
+    s.write_all(format!("{which}
+").as_bytes())?;
+    let mut byte = [0u8; 1];
+    let mut iov = libc::iovec { iov_base: byte.as_mut_ptr().cast(), iov_len: 1 };
+    // Room for one descriptor's control message, aligned for its header.
+    let mut space = [0u64; 8];
+    // SAFETY: a zeroed msghdr is valid; the buffers it points to outlive the call.
+    let mut msg: libc::msghdr = unsafe { std::mem::zeroed() };
+    msg.msg_iov = &mut iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = space.as_mut_ptr().cast();
+    msg.msg_controllen = std::mem::size_of_val(&space) as _;
+    // SAFETY: msg is set up above for one byte and one control message.
+    let n = unsafe { libc::recvmsg(s.as_raw_fd(), &mut msg, libc::MSG_CMSG_CLOEXEC) };
+    if n < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: the control buffer was filled by recvmsg; the header macros
+    // stay within msg_controllen.
+    unsafe {
+        let c = libc::CMSG_FIRSTHDR(&msg);
+        if n == 1 && !c.is_null() && (*c).cmsg_level == libc::SOL_SOCKET && (*c).cmsg_type == libc::SCM_RIGHTS {
+            let fd = std::ptr::read_unaligned(libc::CMSG_DATA(c) as *const libc::c_int);
+            return Ok(std::os::unix::net::UnixStream::from_raw_fd(fd));
+        }
+    }
+    Err(io::Error::new(io::ErrorKind::NotConnected, format!("no vØrk node {which} connection from the broker at {path} (is vØrk running?)")))
+}
+
 /// Sends one JSON request to the control endpoint and returns the answer
 /// (blocking; for programs without an async runtime).
 pub fn control_request(endpoint: &str, request: &str) -> io::Result<String> {
     use std::io::{BufRead, Write};
     #[cfg(unix)]
     let conn = {
-        let c = std::os::unix::net::UnixStream::connect(endpoint)?;
+        let c = open_unix(endpoint)?;
         c.set_read_timeout(Some(Duration::from_secs(5)))?;
         c
     };
@@ -430,6 +518,8 @@ pub struct Client {
     next: Arc<AtomicU32>,
     /// The node's own address.
     pub node: Hash,
+    /// The node's API version (its greeting).
+    pub version: u16,
 }
 
 fn err(m: impl Into<String>) -> io::Error {
@@ -440,7 +530,14 @@ impl Client {
     /// Connects and greets the node; events arrive on the returned channel.
     pub async fn connect(endpoint: &str) -> io::Result<(Client, mpsc::UnboundedReceiver<Event>)> {
         #[cfg(unix)]
-        let conn = tokio::net::UnixStream::connect(endpoint).await?;
+        let conn = if endpoint.starts_with(BROKER) {
+            let at = endpoint.to_string();
+            let c = tokio::task::spawn_blocking(move || open_unix(&at)).await.map_err(|e| err(e.to_string()))??;
+            c.set_nonblocking(true)?;
+            tokio::net::UnixStream::from_std(c)?
+        } else {
+            tokio::net::UnixStream::connect(endpoint).await?
+        };
         #[cfg(windows)]
         let conn = tokio::net::windows::named_pipe::ClientOptions::new().open(endpoint)?;
         Self::over(conn).await
@@ -450,8 +547,8 @@ impl Client {
     pub async fn over<S: AsyncRead + AsyncWrite + Send + 'static>(conn: S) -> io::Result<(Client, mpsc::UnboundedReceiver<Event>)> {
         let (mut r, mut w) = tokio::io::split(conn);
         write_frame(&mut w, &ToNode::Hello { version: VERSION }.encode()).await?;
-        let node = match FromNode::decode(&read_frame(&mut r).await?)? {
-            FromNode::Hello { address, .. } => address,
+        let (node, version) = match FromNode::decode(&read_frame(&mut r).await?)? {
+            FromNode::Hello { address, version } => (address, version),
             other => return Err(err(format!("unexpected greeting {other:?}"))),
         };
         let (tx, mut out) = mpsc::unbounded_channel::<Vec<u8>>();
@@ -480,7 +577,8 @@ impl Client {
                     | FromNode::Known { req, .. }
                     | FromNode::Opened { req, .. }
                     | FromNode::Response { req, .. }
-                    | FromNode::Error { req, .. } => Some(*req),
+                    | FromNode::Error { req, .. }
+                    | FromNode::OwnDevices { req, .. } => Some(*req),
                     _ => None,
                 };
                 match (req, frame) {
@@ -505,7 +603,7 @@ impl Client {
                 }
             }
         });
-        Ok((Client { tx, waiting, next: Arc::new(AtomicU32::new(1)), node }, ev_rx))
+        Ok((Client { tx, waiting, next: Arc::new(AtomicU32::new(1)), node, version }, ev_rx))
     }
 
     fn send(&self, f: ToNode) -> io::Result<()> {
@@ -549,6 +647,18 @@ impl Client {
     /// Tells the node the owner's other devices (destinations or identities).
     pub fn devices(&self, devices: Vec<Hash>) -> io::Result<()> {
         self.send(ToNode::Devices { devices })
+    }
+
+    /// The owner's devices and the services on them, with the devices'
+    /// names (a node older than API 2 knows none: empty).
+    pub async fn own_devices(&self) -> io::Result<Vec<OwnDestination>> {
+        if self.version < 2 {
+            return Ok(Vec::new());
+        }
+        match self.ask(|req| ToNode::OwnDevices { req }).await? {
+            FromNode::OwnDevices { destinations, .. } => Ok(destinations),
+            f => Err(err(format!("unexpected {f:?}"))),
+        }
     }
 
     pub async fn recall(&self, dest: Hash) -> io::Result<Option<Known>> {
@@ -618,11 +728,13 @@ mod tests {
             ToNode::Devices { devices: vec![] },
             ToNode::Pages { id: "app".into(), title: "App".into(), pages: vec![("/".into(), "Overview".into()), ("/b".into(), "B".into())] },
             ToNode::Pages { id: "app".into(), title: "".into(), pages: vec![] },
+            ToNode::OwnDevices { req: 7 },
         ];
         for f in to {
             assert_eq!(ToNode::decode(&f.encode()).unwrap(), f);
         }
         let from = vec![
+            FromNode::OwnDevices { req: 7, destinations: vec![OwnDestination { dest: [3; 16], service: "vork.node".into(), device: [4; 16], name: "truenas".into(), here: false }] },
             FromNode::Hello { version: 1, address: [1; 16] },
             FromNode::Registered { req: 1, dest: [2; 16] },
             FromNode::Known { req: 1, known: Some(k.clone()) },
@@ -639,5 +751,50 @@ mod tests {
         for f in from {
             assert_eq!(FromNode::decode(&f.encode()).unwrap(), f);
         }
+    }
+
+    /// A connection handed over by a broker (Android's vØrk app) arrives whole.
+    #[cfg(unix)]
+    #[test]
+    fn broker_hands_over_a_connection() {
+        use std::io::{BufRead, Read, Write};
+        use std::os::fd::AsRawFd;
+        let dir = std::env::temp_dir().join(format!("vork-broker-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("broker.sock");
+        let _ = std::fs::remove_file(&path);
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let broker = std::thread::spawn(move || {
+            let (conn, _) = listener.accept().unwrap();
+            let mut which = String::new();
+            std::io::BufReader::new(&conn).read_line(&mut which).unwrap();
+            let (ours, theirs) = std::os::unix::net::UnixStream::pair().unwrap();
+            let byte = [1u8];
+            let mut iov = libc::iovec { iov_base: byte.as_ptr() as *mut _, iov_len: 1 };
+            let mut space = [0u64; 8];
+            unsafe {
+                let mut msg: libc::msghdr = std::mem::zeroed();
+                msg.msg_iov = &mut iov;
+                msg.msg_iovlen = 1;
+                msg.msg_control = space.as_mut_ptr().cast();
+                msg.msg_controllen = libc::CMSG_SPACE(4) as _;
+                let c = libc::CMSG_FIRSTHDR(&msg);
+                (*c).cmsg_level = libc::SOL_SOCKET;
+                (*c).cmsg_type = libc::SCM_RIGHTS;
+                (*c).cmsg_len = libc::CMSG_LEN(4) as _;
+                std::ptr::write_unaligned(libc::CMSG_DATA(c) as *mut libc::c_int, theirs.as_raw_fd());
+                assert_eq!(libc::sendmsg(conn.as_raw_fd(), &msg, 0), 1);
+            }
+            (which, ours)
+        });
+        let mut got = open_unix(&format!("{BROKER}{}#control", path.display())).unwrap();
+        let (which, mut ours) = broker.join().unwrap();
+        assert_eq!(which, "control
+");
+        got.write_all(b"hello").unwrap();
+        let mut buf = [0u8; 5];
+        ours.read_exact(&mut buf).unwrap();
+        assert_eq!(&buf, b"hello");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
