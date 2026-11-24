@@ -156,6 +156,10 @@ class VorkVpn : VpnService() {
             // to the exit; IPv6 outside vØrk is held back, so nothing goes around it.
             b.addRoute("0.0.0.0", 0).addRoute("::", 0)
         }
+        // Metered as the network under it, not always (Android's default for
+        // a VPN): else every app saw Wi-Fi as metered while vØrk was on, and
+        // waited for Wi-Fi (backups) or held back on it.
+        if (android.os.Build.VERSION.SDK_INT >= 29) b.setMetered(false)
         return b
             .setSession("vØrk")
             .addAddress(InetAddress.getByAddress(bytes), 128)
