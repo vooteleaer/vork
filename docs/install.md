@@ -170,10 +170,10 @@ The dashboard's **Updates** page shows the newest release and what's new in it, 
 | Device | File |
 |---|---|
 | Windows 10/11 | `vork-storage-<version>.msi` |
-| Debian, Ubuntu, Raspberry Pi (`.deb`) | coming |
-| Docker and NAS | coming |
+| Android | `vork-storage-<version>.apk`, beside the vØrk app |
+| Debian, Ubuntu, Raspberry Pi | `vork-storage_<version>_amd64.deb` or `_arm64.deb` |
+| Docker and NAS (TrueNAS SCALE) | [`packaging/docker/storage.yaml`](../packaging/docker/storage.yaml) |
 | Haiku | coming |
-| Android | coming |
 
 **Windows:**
 
@@ -184,7 +184,13 @@ The dashboard's **Updates** page shows the newest release and what's new in it, 
 
 Next: [getting started](storage/getting-started.md) with two devices. To update, run a newer MSI over it. To remove it: **Settings → Apps → vØrk storage → Uninstall**. Your libraries leave Explorer, but the store (`%LOCALAPPDATA%\vork-storage`) and the `%USERPROFILE%\vork` folder stay.
 
-On other platforms, until their installers come, storage can be built from source: [command line](storage/10-command-line.md#installing).
+**Android:** install `vork-storage-<version>.apk` beside the vØrk app (`vork-net`); storage runs on that app's node, so it needs no network permission or VPN of its own. Open it to join libraries; allow Contacts and Calendar there if you want your address books and calendars in Android's own apps.
+
+**Debian, Ubuntu, Raspberry Pi:** `sudo apt install ./vork-storage_<version>_amd64.deb` (with vØrk's own package installed). Storage runs for every user who signs in (a systemd user service), its store in `~/.local/share/vork-storage`, your libraries as folders in `~/vork`. Remove it with `sudo apt remove vork-storage`; the store stays.
+
+**Docker and NAS:** `storage.yaml` runs storage beside a node from `node.yaml` (or the vork package's): change the folders, the device's name and the disk limit at its top, then install it as the node (TrueNAS: **Apps → Discover → ⋮ → Install via YAML**). Its containers have no network of their own; they reach the node through its API socket. Join your libraries from the dashboard's **Storage** pages.
+
+On Haiku, until its package comes, storage can be built from source: [command line](storage/10-command-line.md#installing).
 
 ## When something doesn't work
 

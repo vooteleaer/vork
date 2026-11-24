@@ -33,7 +33,7 @@ services:
     environment:
       VORK_RELEASE: v0.4.0
       VORK_FILE: vork-storage-linux-x86_64.tar.gz
-      VORK_SHA256: ""
+      VORK_SHA256: 495c25b781e20898bdb2100c48343e806f405a6cccfc0d9895af565198c8b5c0
     volumes:
       - /mnt/tank/apps/vork-storage:/data
     command:
