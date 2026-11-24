@@ -67,6 +67,16 @@ async function post(path, body) {
   return v;
 }
 
+// The owner's devices' storage nodes (and other destinations), named as
+// vØrk names the devices: only in the node's dashboard, which knows them.
+let devicesAsked = null;
+function ownDevices() {
+  if (!inDashboard || !vork.devices) return Promise.resolve({});
+  // Asked again while nothing's known yet (devices answer within a minute).
+  if (!devicesAsked) devicesAsked = vork.devices().catch(() => ({})).then((d) => { if (!Object.keys(d).length) devicesAsked = null; return d; });
+  return devicesAsked;
+}
+
 function human(n) {
   if (n === undefined || n === null) return "";
   const u = ["B", "KB", "MB", "GB", "TB"];
@@ -272,12 +282,15 @@ const views = {
     const mlist = el("div", { class: "list" }, el("div", { class: "dim" }, "…"));
     mem.append(mlist);
     v.append(mem);
-    get("/api/members?ns=" + encodeURIComponent(ns)).then((m) => {
+    Promise.all([get("/api/members?ns=" + encodeURIComponent(ns)), ownDevices()]).then(([m, devs]) => {
       mlist.replaceChildren();
       if (m.error) { mlist.append(el("div", { class: "bad" }, m.error)); return; }
       for (const x of m) {
+        // The owner's own device, named as vØrk names it (unless renamed here).
+        const dev = !x.you && !x.nickname && x.node ? devs[x.node] : null;
+        const name = dev ? dev.name : x.name;
         mlist.append(el("div", { class: "row" },
-          el("span", { class: "grow" }, x.name || `<${x.hash}>`, " ", el("span", { class: "dim" }, `· ${x.role}${x.creator ? " · made it" : ""}${x.you ? " · this device" : ""}${x.name ? ` · <${x.hash}>` : ""}`)),
+          el("span", { class: "grow" }, name || `<${x.hash}>`, " ", el("span", { class: "dim" }, `· ${x.role}${x.creator ? " · made it" : ""}${x.you ? " · this device" : ""}${dev ? " · your device" : ""}${name ? ` · <${x.hash}>` : ""}`)),
           el("button", { onclick: () => {
             const n = prompt(`Name <${x.hash}> (e.g. Neighbour's iPad). Only you see it, on your devices, in every library this device is in; its hash stays next to it. Empty: just the hash.`, x.nickname || "");
             if (n !== null) act("/api/nickname", { ns, writer: x.writer, name: n }, n.trim() ? "Named " + n.trim() : "Name removed");
@@ -294,7 +307,7 @@ const views = {
     const plist = el("div", { class: "list" }, el("div", { class: "dim" }, "…"));
     pathCard.append(plist);
     v.append(pathCard);
-    get("/api/paths?ns=" + encodeURIComponent(ns)).then((ps) => {
+    Promise.all([get("/api/paths?ns=" + encodeURIComponent(ns)), ownDevices()]).then(([ps, devs]) => {
       plist.replaceChildren();
       if (ps.error) { plist.append(el("div", { class: "bad" }, ps.error)); return; }
       if (!ps.length) plist.append(el("div", { class: "dim" }, "No other nodes."));
@@ -308,7 +321,7 @@ const views = {
         const link = p.rtt_ms ? ` · rtt ${p.rtt_ms} ms${p.rate_bps ? " · " + human(p.rate_bps) + "/s" : ""}` : "";
         plist.append(el("div", { class: "row" },
           el("span", { class: "dot " + (p.hops === null || p.hops === undefined ? "down" : (p.linked ? "up" : "")) }),
-          el("span", { class: "grow" }, p.name || (p.writer ? "member" : "peer"), " ", el("span", { class: "mono dim" }, p.node)),
+          el("span", { class: "grow" }, p.name || (devs[p.node] && devs[p.node].name) || (p.writer ? "member" : "peer"), " ", el("span", { class: "mono dim" }, p.node)),
           el("span", { class: p.hops === null || p.hops === undefined ? "bad" : "" }, route),
           el("span", { class: "dim" }, `${link}${p.slow ? " · slow" : ""} · ${ago(p.last_heard_ms)}`)));
       }

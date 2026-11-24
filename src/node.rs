@@ -4487,7 +4487,11 @@ impl Node {
             }
             paths.push(json!({ "to": hex::encode(d), "via": via.map(hex::encode), "rtt_ms": rtt.map(|t| t.as_millis() as u64), "hops": hops }));
         }
-        json!({ "paths": paths, "names": names })
+        // This node's own destinations (an application's, such as storage's
+        // node): the owner's devices name them after this device.
+        let mut destinations: Vec<String> = self.local.keys().map(hex::encode).collect();
+        destinations.sort();
+        json!({ "paths": paths, "names": names, "destinations": destinations })
     }
 
     /// The owner's group, from one of the owner's devices: a device it linked
