@@ -29,8 +29,9 @@ android {
         targetSdk = 34
         versionCode = commits
         versionName = if (released) workspaceVersion else "$workspaceVersion-dev.$commits"
-        // The daemons and the core: 64- and 32-bit ARM phones, x86_64 emulators (those built).
-        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
+        // Only the ABIs build-apk.ps1 built (its jniLibs), so a device of
+        // another one isn't offered an APK without the app's own libraries.
+        ndk { abiFilters += (File(projectDir, "src/main/jniLibs").listFiles()?.filter { it.isDirectory }?.map { it.name } ?: emptyList()).ifEmpty { listOf("arm64-v8a") } }
     }
 
     buildFeatures { compose = true }
