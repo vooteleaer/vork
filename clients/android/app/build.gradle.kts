@@ -14,7 +14,8 @@ fun git(vararg args: String): String = try {
 } catch (e: Exception) {
     ""
 }
-val workspaceVersion = File(repo, "Cargo.toml").readLines().first { it.startsWith("version = ") }.substringAfter('"').substringBefore('"')
+// The release's version, as the vØrk app's: the vork crate's ([package]).
+val workspaceVersion = File(repo, "Cargo.toml").readLines().dropWhile { it.trim() != "[package]" }.first { it.startsWith("version = ") }.substringAfter('"').substringBefore('"')
 val commits = git("rev-list", "--count", "HEAD").toIntOrNull() ?: 1
 val released = git("describe", "--exact-match", "--tags", "HEAD") == "v$workspaceVersion"
 
@@ -28,8 +29,8 @@ android {
         targetSdk = 34
         versionCode = commits
         versionName = if (released) workspaceVersion else "$workspaceVersion-dev.$commits"
-        // The daemons and the core are built for 64-bit ARM phones (and x86_64 emulators).
-        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+        // The daemons and the core: 64- and 32-bit ARM phones, x86_64 emulators (those built).
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }
 
     buildFeatures { compose = true }
