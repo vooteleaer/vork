@@ -295,6 +295,11 @@ struct PathEnd {
     rx: u64,
     /// Smooth weighted round robin state.
     credit: i64,
+    /// The neighbor it goes through is the far end's own node: one hop, no
+    /// relay (a destination of that node, such as its storage). Known from
+    /// the route (the neighbor announced it itself) when we open it, and
+    /// from the open's untouched TTL when we are its far end.
+    host: bool,
 }
 
 struct Session {
@@ -1786,7 +1791,7 @@ impl Node {
             // We are the far end. The session is known once traffic arrives.
             self.ends.insert(
                 (from, label),
-                PathEnd { origin: false, dest: Some(dest), sid: None, acked: true, srtt: None, probe: None, lost: 0, last_seen: Instant::now(), rx: 0, credit: 0 },
+                PathEnd { origin: false, dest: Some(dest), sid: None, acked: true, srtt: None, probe: None, lost: 0, last_seen: Instant::now(), rx: 0, credit: 0, host: ttl == TTL },
             );
             self.send_msg(from, &Msg::PathAck { label });
             return;
@@ -1881,9 +1886,10 @@ impl Node {
 
     fn open_path(&mut self, sid: u32, dest: Hash, via: u32) {
         let label = rand_u64();
+        let host = self.hosts(via, &dest);
         self.ends.insert(
             (via, label),
-            PathEnd { origin: true, dest: None, sid: Some(sid), acked: false, srtt: None, probe: None, lost: 0, last_seen: Instant::now(), rx: 0, credit: 0 },
+            PathEnd { origin: true, dest: None, sid: Some(sid), acked: false, srtt: None, probe: None, lost: 0, last_seen: Instant::now(), rx: 0, credit: 0, host },
         );
         self.sessions.get_mut(&sid).unwrap().paths.push((via, label));
         log(format!("opening a path to {} via {}", short(&dest), self.name(via)));
@@ -1908,7 +1914,13 @@ impl Node {
 
     fn is_direct(&self, sid: u32, key: (u32, u64)) -> bool {
         let Some(n) = self.neighbors.get(&key.0) else { return false };
-        self.sessions.get(&sid).is_some_and(|s| n.x_pub == s.peer_x || Some(n.x_pub) == s.direct_key)
+        self.ends.get(&key).is_some_and(|e| e.host) || self.sessions.get(&sid).is_some_and(|s| n.x_pub == s.peer_x || Some(n.x_pub) == s.direct_key)
+    }
+
+    /// Whether neighbor `via` is where `dest` lives: it announced `dest`
+    /// itself (one hop), so a path through it reaches `dest` without a relay.
+    fn hosts(&self, via: u32, dest: &Hash) -> bool {
+        self.routes.get(dest).and_then(|by| by.get(&via)).is_some_and(|r| r.hops == 1)
     }
 
     /// The identity a destination belongs to, from its announce.
@@ -2221,7 +2233,10 @@ impl Node {
             let hops: Vec<u32> = self.first_hops(&dest).into_iter().filter(|v| !resting.contains(v)).collect();
             let owner = self.dest_identity(&dest);
             let direct_key = s.direct_key;
-            let direct = hops.iter().copied().find(|v| (owner.is_some() && self.neighbors[v].hash == owner) || Some(self.neighbors[v].x_pub) == direct_key);
+            let direct = hops
+                .iter()
+                .copied()
+                .find(|v| (owner.is_some() && self.neighbors[v].hash == owner) || Some(self.neighbors[v].x_pub) == direct_key || self.hosts(*v, &dest));
             if let Some(d) = direct {
                 if !used.contains(&d) {
                     self.open_path(sid, dest, d);
