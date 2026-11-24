@@ -36,6 +36,7 @@ class ApiService : Service() {
                     ParcelFileDescriptor.dup(s.fileDescriptor)
                 }
             } catch (e: Exception) {
+                android.util.Log.w("ApiService", "connecting to ${socket.absolutePath}", e)
                 null
             }
             reply?.writeNoException()

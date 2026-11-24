@@ -10,6 +10,7 @@ import android.net.LocalSocketAddress
 import android.os.IBinder
 import android.os.Parcel
 import android.os.ParcelFileDescriptor
+import android.util.Log
 import java.io.File
 
 /**
@@ -23,6 +24,7 @@ import java.io.File
  * node's own.
  */
 object NodeBridge {
+    private const val TAG = "NodeBridge"
     private const val NET = "org.vork.net"
     private const val DESCRIPTOR = "org.vork.net.Api"
     private const val CONNECT_API = IBinder.FIRST_CALL_TRANSACTION
@@ -91,6 +93,8 @@ object NodeBridge {
             reply.readException()
             if (reply.readInt() != 0) ParcelFileDescriptor.CREATOR.createFromParcel(reply) else null
         } catch (e: Exception) {
+            Log.w(TAG, "the vØrk app's $which connection failed", e)
+            binder = null // asked again with a new binding next time
             null
         } finally {
             data.recycle()
@@ -98,20 +102,42 @@ object NodeBridge {
         }
     }
 
-    private fun serve(context: Context) {
+    /**
+     * The bound socket stays referenced as long as the server: collected, its
+     * finalizer would close the descriptor the server listens on (accept then
+     * fails with EBADF, and every program finds no node).
+     */
+    private var bound: LocalSocket? = null
+
+    /** A server on [socket], bound afresh. */
+    private fun listen(context: Context): LocalServerSocket {
         val path = socket(context)
         path.delete()
-        val server = LocalSocket(LocalSocket.SOCKET_STREAM).run {
-            bind(LocalSocketAddress(path.absolutePath, LocalSocketAddress.Namespace.FILESYSTEM))
-            LocalServerSocket(fileDescriptor)
-        }
+        val s = LocalSocket(LocalSocket.SOCKET_STREAM)
+        s.bind(LocalSocketAddress(path.absolutePath, LocalSocketAddress.Namespace.FILESYSTEM))
+        bound = s
+        return LocalServerSocket(s.fileDescriptor)
+    }
+
+    private fun serve(context: Context) {
+        var server = listen(context)
         while (true) {
-            val client = try { server.accept() } catch (e: Exception) { Thread.sleep(1_000); continue }
+            val client = try {
+                server.accept()
+            } catch (e: Exception) {
+                // Broken (it shouldn't be): listen again rather than spin.
+                Log.w(TAG, "accept failed; listening again", e)
+                Thread.sleep(1_000)
+                runCatching { server.close() }
+                runCatching { bound?.close() }
+                try { server = listen(context) } catch (e2: Exception) { Log.w(TAG, "listening again", e2) }
+                continue
+            }
             Thread {
                 client.use { c ->
-                    runCatching {
+                    try {
                         c.soTimeout = 10_000
-                        val which = c.inputStream.bufferedReader().readLine()?.trim() ?: return@runCatching
+                        val which = c.inputStream.bufferedReader().readLine()?.trim() ?: return@Thread
                         val pfd = connect(context, which)
                         if (pfd != null) {
                             pfd.use {
@@ -120,8 +146,11 @@ object NodeBridge {
                                 c.outputStream.flush()
                             }
                         } else {
+                            Log.w(TAG, "no $which connection from the vØrk app (bound: ${binder != null})")
                             c.outputStream.write(0) // no node: the program says so and tries again later
                         }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "handing a connection on", e)
                     }
                 }
             }.start()
