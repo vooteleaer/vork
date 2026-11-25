@@ -4276,7 +4276,7 @@ impl Node {
                 if self.is_device(&hash) {
                     return Ok(json!({ "ok": true, "already": true }));
                 }
-                // A device that takes no part in linking (an ESPHome one): nothing to ask.
+                // A device that takes no part in linking (a Lite device): nothing to ask.
                 // Whom it lets in is in its own configuration; this side's owner decides
                 // for this side, and the owner's other devices hear it (ADR-0030).
                 let no_linking = self.routes.get(&hash).is_some_and(|r| r.values().any(|x| x.ann.name_hash == wire::NO_NAME && x.ann.flags & FLAG_NO_LINKING != 0));
