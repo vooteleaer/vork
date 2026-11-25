@@ -602,6 +602,10 @@ pub struct Node {
     group_heard: HashMap<String, (Instant, u64)>,
     /// How each device reaches the others, as it last told us: when asked, when answered, the answer.
     device_paths: HashMap<Hash, (Instant, Option<(Instant, serde_json::Value)>)>,
+    /// Local network discovery (mDNS), when on.
+    mdns: Option<crate::lan::ServiceDaemon>,
+    /// Services of the owner's devices announced on the local network for them: (what, its full name).
+    proxied: HashMap<Hash, Vec<(crate::lan::Proxied, String)>>,
     /// Names asked lately (logged once a minute each).
     dns_seen: HashMap<(String, u16), Instant>,
     /// Public nodes asked for their keys while this node knew no one (ADR-0031).
@@ -857,6 +861,8 @@ impl Node {
             group_sent: HashMap::new(),
             group_heard: HashMap::new(),
             device_paths: HashMap::new(),
+            mdns: None,
+            proxied: HashMap::new(),
             dns_seen: HashMap::new(),
             bootstrap_asked: HashSet::new(),
             bootstrap_fetched: None,
@@ -1013,6 +1019,7 @@ impl Node {
             match crate::lan::start(&hex::encode(&self.my_hash[..8]), self.me.x_pub().as_bytes(), self.cfg.listen.port(), lan_tx) {
                 Ok(d) => {
                     log(format!("looking for nodes on the local network (mDNS {})", crate::lan::SERVICE));
+                    self.mdns = Some(d.clone());
                     Some(d)
                 }
                 Err(e) => {
@@ -1290,6 +1297,7 @@ impl Node {
                         self.send_links();
                         self.send_group();
                         self.ask_paths();
+                        self.announce_proxied();
                         self.update_tick();
                         // A session to the exit node kept open, so whether it works is known before traffic needs it.
                         // (One this node opened: its paths are probed, so their state is known.)
@@ -4464,6 +4472,49 @@ impl Node {
             self.request(sid, PATHS_PATH, b"{}", None);
             let old = self.device_paths.remove(&d).and_then(|e| e.1);
             self.device_paths.insert(d, (Instant::now(), old));
+        }
+    }
+
+    /// Services the owner's devices ask to be made known on the local network
+    /// (a Lite device's native API): announced by mDNS at the device's own vØrk
+    /// address, while its answers are fresh and this node's interface has IPv4.
+    fn announce_proxied(&mut self) {
+        let Some(mdns) = self.mdns.clone() else { return };
+        let v4 = self.tun.is_some() && crate::tun::V4.load(std::sync::atomic::Ordering::Relaxed);
+        let mut want: HashMap<Hash, Vec<crate::lan::Proxied>> = HashMap::new();
+        if v4 {
+            for d in self.cfg.devices.clone() {
+                let Some((_, Some((at, v)))) = self.device_paths.get(&d) else { continue };
+                if at.elapsed() >= PATHS_AGAIN * 4 {
+                    continue;
+                }
+                // Not those the device announces itself on this network: Home Assistant here finds it directly.
+                let list: Vec<_> = crate::lan::Proxied::list(v).into_iter().filter(|s| !crate::lan::native(&mdns, &s.kind, &s.name)).collect();
+                if !list.is_empty() {
+                    want.insert(d, list);
+                }
+            }
+        }
+        let gone: Vec<Hash> = self.proxied.keys().filter(|d| want.get(*d).is_none_or(|w| self.proxied[*d].iter().map(|p| &p.0).ne(w.iter()))).copied().collect();
+        for d in gone {
+            for (s, full) in self.proxied.remove(&d).unwrap_or_default() {
+                crate::lan::withdraw(&mdns, &full);
+                log(format!("no longer announcing {} {} on the local network", s.kind, s.name));
+            }
+        }
+        for (d, list) in want {
+            if self.proxied.contains_key(&d) {
+                continue;
+            }
+            let Some(ip) = self.aliases.of(&d, true) else { continue };
+            let mut done = Vec::new();
+            for s in list {
+                if let Some(full) = crate::lan::announce(&mdns, &s, ip) {
+                    log(format!("announcing {} {} of {} on the local network at {ip}", s.kind, s.name, short(&d)));
+                    done.push((s, full));
+                }
+            }
+            self.proxied.insert(d, done);
         }
     }
 
