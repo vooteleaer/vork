@@ -15,7 +15,7 @@
 //!   paths and opens new ones; packets are spread over the healthy paths.
 
 use crate::identity::{self, Hash, Identity, LABEL_ANNOUNCE, LABEL_BIND, node_hash, short};
-use crate::wire::{self, Announce, FLAG_RELAY, Msg, wg};
+use crate::wire::{self, Announce, FLAG_NO_LINKING, FLAG_RELAY, Msg, wg};
 use boringtun::noise::handshake::parse_handshake_anon;
 use boringtun::noise::{Packet, Tunn, TunnResult};
 use boringtun::x25519::{PublicKey, StaticSecret};
@@ -4275,6 +4275,15 @@ impl Node {
                 }
                 if self.is_device(&hash) {
                     return Ok(json!({ "ok": true, "already": true }));
+                }
+                // A device that takes no part in linking (an ESPHome one): nothing to ask.
+                // Whom it lets in is in its own configuration; this side's owner decides
+                // for this side, and the owner's other devices hear it (ADR-0030).
+                let no_linking = self.routes.get(&hash).is_some_and(|r| r.values().any(|x| x.ann.name_hash == wire::NO_NAME && x.ann.flags & FLAG_NO_LINKING != 0));
+                if no_linking {
+                    self.set_device(&address, true);
+                    log(format!("{} linked as one of your devices (it takes no part in linking)", short(&hash)));
+                    return Ok(json!({ "ok": true, "no_linking": true }));
                 }
                 // Asked by it already: this is the answer.
                 if self.links.requests.iter().any(|r| r.address == address) {
