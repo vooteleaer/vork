@@ -8,7 +8,7 @@ One vØrk storage (the same Rust daemon, `vorkd`) on the vØrk node of each devi
 |---|---|---|
 | **Windows** | `vork-storage-<version>.msi`, per user; `vork-storage-run` from login | Cloud Files, `%USERPROFILE%\vork` |
 | **Linux** | `.deb`: coming | FUSE mount, `~/vork` |
-| **Docker** | coming | none (`vorkd --no-mounts`) |
+| **Docker** | coming | FUSE folders for other containers (`vorkd --mounts DIR`), or none (`--no-mounts`) |
 | **Haiku** | hpkg: coming | userlandfs volumes in `~/vork` |
 | **Android** | APK: coming (the storage app beside the vØrk app) | DocumentsProvider planned |
 

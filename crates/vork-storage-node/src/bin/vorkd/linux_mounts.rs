@@ -9,6 +9,11 @@
 //! mount` records it, so `vØrk storage mount` lists it and `vØrk storage unmount` takes
 //! it down; one taken down stays down until vorkd starts again. A frontend
 //! that stopped (its record left behind) is started again.
+//!
+//! With `--mounts DIR` (a NAS's storage container) the folders are in DIR
+//! instead, also for a given store, open to other users (another
+//! container's apps, through a bind mount of DIR) and shown as DIR's
+//! owner's files.
 
 use std::collections::{HashMap, HashSet};
 use std::os::unix::process::CommandExt;
@@ -30,8 +35,17 @@ fn home() -> PathBuf {
     std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| "/".into())
 }
 
-fn dir_of(ns: &str) -> PathBuf {
-    home().join("vork").join(ns)
+/// Where the libraries' folders are, and whether they're for others too.
+#[derive(Clone)]
+struct Place {
+    root: PathBuf,
+    shared: bool,
+}
+
+impl Place {
+    fn dir_of(&self, ns: &str) -> PathBuf {
+        self.root.join(ns)
+    }
 }
 
 fn record_of(store: &Path, ns: &str) -> PathBuf {
@@ -65,13 +79,19 @@ fn recorded_pid(store: &Path, ns: &str) -> Option<u32> {
     Path::new(&format!("/proc/{pid}")).exists().then_some(pid)
 }
 
-fn mount(store: &Path, ns: &str) -> Result<Child, String> {
-    let dir = dir_of(ns);
+fn mount(place: &Place, store: &Path, ns: &str) -> Result<Child, String> {
+    let dir = place.dir_of(ns);
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let records = store.join("mounts");
     std::fs::create_dir_all(&records).map_err(|e| e.to_string())?;
     let log = std::fs::File::create(records.join(format!("{ns}.log"))).map_err(|e| e.to_string())?;
-    let child = Command::new(frontend())
+    let mut cmd = Command::new(frontend());
+    if place.shared {
+        use std::os::unix::fs::MetadataExt;
+        let m = std::fs::metadata(&place.root).map_err(|e| format!("{}: {e}", place.root.display()))?;
+        cmd.arg("--allow-other").arg("--owner").arg(format!("{}:{}", m.uid(), m.gid()));
+    }
+    let child = cmd
         .arg("--store")
         .arg(store)
         .arg(ns)
@@ -87,12 +107,12 @@ fn mount(store: &Path, ns: &str) -> Result<Child, String> {
 }
 
 /// A library left: its folder unmounted (the frontend then exits by itself).
-fn unmount(store: &Path, ns: &str) {
-    let dir = dir_of(ns);
-    if is_mounted(&dir)
-        && !Command::new("fusermount3").arg("-u").arg(&dir).stderr(Stdio::null()).status().is_ok_and(|s| s.success())
-        && !Command::new("fusermount3").arg("-uz").arg(&dir).stderr(Stdio::null()).status().is_ok_and(|s| s.success())
-    {
+/// fusermount3 for a user's own mounts; umount where there's no fusermount3
+/// (a container, as root).
+fn unmount(place: &Place, store: &Path, ns: &str) {
+    let dir = place.dir_of(ns);
+    let ran = |exe: &str, flag: &str| Command::new(exe).arg(flag).arg(&dir).stderr(Stdio::null()).status().is_ok_and(|s| s.success());
+    if is_mounted(&dir) && !ran("fusermount3", "-u") && !ran("fusermount3", "-uz") && !ran("umount", "-l") {
         eprintln!("mounts: couldn't unmount {}", dir.display());
         return;
     }
@@ -126,11 +146,47 @@ fn file_manager_menus() {
     }
 }
 
-pub async fn keeper(d: Arc<Daemon>, store: PathBuf) {
-    file_manager_menus();
+/// A shared folder's mounts left by an earlier run (its container gone, the
+/// mounts still in the host's table, propagated back in and dead), and their
+/// records: taken down, so every library is mounted afresh. Nothing in this
+/// run has mounted anything yet.
+fn clear_stale(place: &Place, store: &Path) {
+    let under = format!("{}/", place.root.to_string_lossy().trim_end_matches('/'));
+    let table = std::fs::read_to_string("/proc/self/mountinfo").unwrap_or_default();
+    for line in table.lines() {
+        // "… mountpoint … - fstype source options": vork-mount's are fuse
+        // (fuse.vork where the subtype is kept) with source vork:<library>.
+        let mut fs = line.split(" - ").nth(1).unwrap_or("").split(' ');
+        let (Some(at), Some(fstype), Some(source)) = (line.split(' ').nth(4), fs.next(), fs.next()) else { continue };
+        let at = unescape(at);
+        if at.starts_with(&under) && fstype.starts_with("fuse") && source.starts_with("vork:") {
+            let gone = Command::new("umount").arg("-l").arg(&at).stderr(Stdio::null()).status().is_ok_and(|s| s.success());
+            println!("mounts: an earlier run's mount at {at} {}", if gone { "taken down" } else { "couldn't be taken down" });
+        }
+    }
+    if let Ok(records) = std::fs::read_dir(store.join("mounts")) {
+        for r in records.flatten() {
+            if r.path().extension().is_none() {
+                let _ = std::fs::remove_file(r.path());
+            }
+        }
+    }
+}
+
+pub async fn keeper(d: Arc<Daemon>, store: PathBuf, root: Option<PathBuf>) {
+    let place = match root {
+        Some(root) => Place { root, shared: true },
+        None => {
+            file_manager_menus();
+            Place { root: home().join("vork"), shared: false }
+        }
+    };
     if !Path::new("/dev/fuse").exists() {
         eprintln!("mounts: no /dev/fuse here: libraries aren't mounted as folders");
         return;
+    }
+    if place.shared {
+        clear_stale(&place, &store);
     }
     // Let the local API come up first: the frontends talk to it.
     tokio::time::sleep(Duration::from_secs(3)).await;
@@ -154,7 +210,7 @@ pub async fn keeper(d: Arc<Daemon>, store: PathBuf) {
             running
         });
         for ns in &names {
-            let dir = dir_of(ns);
+            let dir = place.dir_of(ns);
             let recorded = record_of(&store, ns).exists();
             if is_mounted(&dir)
                 || (mounted.contains(ns) && !recorded)
@@ -167,7 +223,7 @@ pub async fn keeper(d: Arc<Daemon>, store: PathBuf) {
             if recorded && recorded_pid(&store, ns).is_some() {
                 continue;
             }
-            match mount(&store, ns) {
+            match mount(&place, &store, ns) {
                 Ok(child) => {
                     println!("mounts: {ns} at {}", dir.display());
                     children.insert(ns.clone(), child);
@@ -183,7 +239,7 @@ pub async fn keeper(d: Arc<Daemon>, store: PathBuf) {
         // Left: no longer a library here.
         for ns in mounted.clone() {
             if !names.contains(&ns) {
-                unmount(&store, &ns);
+                unmount(&place, &store, &ns);
                 mounted.remove(&ns);
             }
         }

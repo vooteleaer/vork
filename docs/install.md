@@ -188,7 +188,7 @@ Next: [getting started](storage/getting-started.md) with two devices. To update,
 
 **Debian, Ubuntu, Raspberry Pi:** `sudo apt install ./vork-storage_<version>_amd64.deb` (with vØrk's own package installed). Storage runs for every user who signs in (a systemd user service), its store in `~/.local/share/vork-storage`, your libraries as folders in `~/vork`. Remove it with `sudo apt remove vork-storage`; the store stays.
 
-**Docker and NAS:** `storage.yaml` runs storage beside a node from `node.yaml` (or the vork package's): change the folders, the device's name and the disk limit at its top, then install it as the node (TrueNAS: **Apps → Discover → ⋮ → Install via YAML**). Its containers have no network of their own; they reach the node through its API socket. Join your libraries from the dashboard's **Storage** pages.
+**Docker and NAS:** `storage.yaml` runs storage beside a node from `node.yaml` (or the vork package's): change the folders, the device's name and the disk limit at its top, then install it as the node (TrueNAS: **Apps → Discover → ⋮ → Install via YAML**). Its containers have no network of their own; they reach the node through its API socket. Join your libraries from the dashboard's **Storage** pages. Other containers (a media server, say) can have the libraries as folders: `storage.yaml` says what to uncomment (FUSE in the storage container, a shared bind mount).
 
 On Haiku, until its package comes, storage can be built from source: [command line](storage/10-command-line.md#installing).
 

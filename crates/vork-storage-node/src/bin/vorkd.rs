@@ -622,6 +622,10 @@ struct Args {
     store_given: bool,
     /// `--no-mounts`: no library as a folder in ~/vork (Linux).
     no_mounts: bool,
+    /// `--mounts DIR`: every library as a folder in DIR, also with
+    /// `--store`, open to other users (other containers) and shown as
+    /// DIR's owner's (Linux).
+    mounts: Option<PathBuf>,
     /// `--app-socket PATH`: another app socket, besides the store's (Unix):
     /// e.g. in a folder shared with an app's container, which then sees
     /// nothing of the store.
@@ -714,6 +718,7 @@ fn args() -> Args {
         default_libraries: None,
         store_given: false,
         no_mounts: false,
+        mounts: None,
         app_socket: None,
         crash_library: CRASH_LIBRARY.into(),
     };
@@ -738,6 +743,7 @@ fn args() -> Args {
                 a.store_given = true;
             }
             "--no-mounts" => a.no_mounts = true,
+            "--mounts" => a.mounts = Some(it.next().expect("--mounts DIR").into()),
             "--app-socket" => a.app_socket = Some(it.next().expect("--app-socket PATH").into()),
             "--put" => a.put.push(it.next().expect("--put FILE").into()),
             "--public" => a.public = true,
@@ -780,7 +786,7 @@ fn args() -> Args {
                     "vorkd [--store DIR] [--max-store SIZE] [--min-free SIZE] [--cache-max SIZE] [--private-requests] [--spare]
                              [--hold-for-others SIZE] [--db-cache SIZE] [--lease-term DURATION] [--loss-target P] [--min-copies N] [--compact] [--no-storage] [--keep-joined all|rules] [--site NAME] [--slow-link-budget DURATION]\n        \
                      [--stamp-cost BITS] [--max-stamp-cost BITS] [--announce-every DURATION]\n        \
-                     [--device NAME] [--crash-library LIBRARY] [--default-libraries FILE] [--no-mounts] [--app-socket PATH] [--public] [--put FILE]..."
+                     [--device NAME] [--crash-library LIBRARY] [--default-libraries FILE] [--no-mounts] [--mounts DIR] [--app-socket PATH] [--public] [--put FILE]..."
                 );
                 std::process::exit(0);
             }
@@ -2602,10 +2608,11 @@ async fn serve(store: Arc<SlabStore>, identity: node::IdentitySecret, endpoint: 
     worker("crash reports", crash_reports(daemon.clone(), args.crash_library.clone()));
     #[cfg(target_os = "haiku")]
     worker("mounts", haiku_mounts::keeper(daemon.clone(), args.store.clone()));
-    // The user's own store only (no --store: a test node's isn't anyone's files).
+    // The user's own store only (no --store: a test node's isn't anyone's
+    // files), or wherever --mounts says (a NAS's container).
     #[cfg(target_os = "linux")]
-    if !args.store_given && !args.no_mounts {
-        worker("mounts", linux_mounts::keeper(daemon.clone(), args.store.clone()));
+    if !args.no_mounts && (args.mounts.is_some() || !args.store_given) {
+        worker("mounts", linux_mounts::keeper(daemon.clone(), args.store.clone(), args.mounts.clone()));
     }
     watchdog(daemon.clone());
     if daemon.keyring.is_some() {

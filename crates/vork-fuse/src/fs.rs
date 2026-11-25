@@ -68,9 +68,18 @@ pub struct VorkFs {
     changed: Arc<AtomicBool>,
 }
 
+/// How a library is shown beyond its own user: `allow_other` lets other
+/// users (another container's apps) in at all; `owner` is whose its files
+/// are (default: whoever mounts it).
+#[derive(Default)]
+pub struct Sharing {
+    pub allow_other: bool,
+    pub owner: Option<(u32, u32)>,
+}
+
 /// `via`: the library is on another of the user's nodes; every request
 /// goes there over a Link (ADR-0019).
-pub fn mount(store: &Path, ns: &str, mountpoint: &Path, wait: Duration, via: Option<String>) -> Result<(), String> {
+pub fn mount(store: &Path, ns: &str, mountpoint: &Path, wait: Duration, via: Option<String>, sharing: Sharing) -> Result<(), String> {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
     let client = rt.block_on(Client::connect(store)).map_err(|e| format!("can't reach vorkd at {}: {e}", store.display()))?.via(via.clone());
     let fs = VorkFs {
@@ -85,13 +94,16 @@ pub fn mount(store: &Path, ns: &str, mountpoint: &Path, wait: Duration, via: Opt
         handles: HashMap::new(),
         next_fh: 1,
         queries: HashMap::new(),
-        uid: unsafe { libc::getuid() },
-        gid: unsafe { libc::getgid() },
+        uid: sharing.owner.map_or_else(|| unsafe { libc::getuid() }, |o| o.0),
+        gid: sharing.owner.map_or_else(|| unsafe { libc::getgid() }, |o| o.1),
         started: SystemTime::now(),
         wait,
         changed: watch(store, ns, via),
     };
-    let opts = [MountOption::FSName(format!("vork:{ns}")), MountOption::Subtype("vork".into()), MountOption::DefaultPermissions];
+    let mut opts = vec![MountOption::FSName(format!("vork:{ns}")), MountOption::Subtype("vork".into()), MountOption::DefaultPermissions];
+    if sharing.allow_other {
+        opts.push(MountOption::AllowOther);
+    }
     fuser::mount2(fs, mountpoint, &opts).map_err(|e| e.to_string())
 }
 
