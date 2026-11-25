@@ -116,9 +116,9 @@ pub const NO_NAME: [u8; NAME_HASH_LEN] = [0; NAME_HASH_LEN];
 pub const MAX_APP_DATA: usize = 512;
 
 pub const FLAG_RELAY: u8 = 1;
-/// A device that takes no part in linking (a vØrk Lite device, ADR-0010): its
-/// own configuration names the owner's devices it lets in, so an owner links it
-/// on their side alone.
+/// A device that takes no part in asking to be linked (a vØrk Lite device,
+/// ADR-0010): an owner links it on their side alone and tells it so with the
+/// code from its link (in its log); it lets in that owner's devices.
 pub const FLAG_NO_LINKING: u8 = 2;
 
 impl Announce {

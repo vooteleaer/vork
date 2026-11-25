@@ -4273,17 +4273,21 @@ impl Node {
                         self.ask_key(a);
                     }
                 }
-                if self.is_device(&hash) {
-                    return Ok(json!({ "ok": true, "already": true }));
-                }
-                // A device that takes no part in linking (a Lite device): nothing to ask.
-                // Whom it lets in is in its own configuration; this side's owner decides
-                // for this side, and the owner's other devices hear it (ADR-0030).
+                // A device that takes no part in asking (a Lite device): linked here at
+                // once, and told so with the code from its link (shown in its log): the
+                // first owner to bring the code is the one it lets in, with the owner's
+                // other devices, which it hears of from them (ADR-0030).
                 let no_linking = self.routes.get(&hash).is_some_and(|r| r.values().any(|x| x.ann.name_hash == wire::NO_NAME && x.ann.flags & FLAG_NO_LINKING != 0));
                 if no_linking {
-                    self.set_device(&address, true);
-                    log(format!("{} linked as one of your devices (it takes no part in linking)", short(&hash)));
+                    if !self.is_device(&hash) {
+                        self.set_device(&address, true);
+                        log(format!("{} linked as one of your devices (a Lite device)", short(&hash)));
+                    }
+                    self.links.send(&address, if code.is_empty() { "request".to_string() } else { format!("request:{code}") }.as_str());
                     return Ok(json!({ "ok": true, "no_linking": true }));
+                }
+                if self.is_device(&hash) {
+                    return Ok(json!({ "ok": true, "already": true }));
                 }
                 // Asked by it already: this is the answer.
                 if self.links.requests.iter().any(|r| r.address == address) {

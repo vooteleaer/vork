@@ -651,6 +651,8 @@ async fn network_main() -> Result<()> {
             let r = ask_node(config, serde_json::json!({ "cmd": "link", "address": address, "code": code.unwrap_or_default(), "addrs": addrs })).await?;
             if r["already"].as_bool() == Some(true) {
                 println!("already one of your devices");
+            } else if r["no_linking"].as_bool() == Some(true) {
+                println!("linked {address}: a Lite device, told with its link's code");
             } else {
                 println!("asked {address}: it's linked once its owner allows it (vork requests shows the state)");
             }
