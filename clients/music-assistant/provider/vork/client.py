@@ -93,13 +93,21 @@ class Record:
 
 
 class Connection:
-    """One connection to the app socket, past ``Hello``. Calls are serialised."""
+    """One connection to the app socket, past ``Hello``. Calls are serialised.
+
+    vorkd answers a connection's requests one at a time, in order. A call
+    that doesn't finish (cancelled while waiting for its answer, or failed
+    mid-frame) leaves its answer on the socket, where the next call would
+    read it as its own: such a connection is `broken` and must not be used
+    again. Answers are also checked against the request's ID.
+    """
 
     def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         self._reader = reader
         self._writer = writer
         self._next = 1
         self._lock = asyncio.Lock()
+        self.broken = False
 
     @classmethod
     async def open(cls, socket_path: str, token: str) -> Connection:
@@ -108,30 +116,48 @@ class Connection:
         except OSError as err:
             raise VorkError(f"can't reach vorkd at {socket_path}: {err}") from err
         conn = cls(reader, writer)
-        await conn.call({"op": "hello", "token": token})
+        try:
+            await conn.call({"op": "hello", "token": token})
+        except BaseException:
+            conn.abort()
+            raise
         return conn
 
     async def call(self, msg: dict[str, Any]) -> dict[str, Any]:
         async with self._lock:
+            if self.broken:
+                raise VorkError("connection to vorkd out of step")
             mid = self._next
             self._next += 1
             body = msgpack.packb({"v": PROTOCOL_VERSION, "id": mid, "msg": msg}, use_bin_type=True)
+            # Broken until the whole answer is read: a cancellation (or any
+            # error) in between leaves the connection out of step.
+            self.broken = True
             try:
                 self._writer.write(struct.pack(">I", len(body)) + body)
                 await self._writer.drain()
                 head = await self._reader.readexactly(4)
                 (n,) = struct.unpack(">I", head)
                 if n > MAX_FRAME:
-                    raise VorkError(f"frame of {n} bytes")
+                    raise VorkError(f"connection to vorkd sent a frame of {n} bytes")
                 env = msgpack.unpackb(await self._reader.readexactly(n), raw=False)
             except (OSError, asyncio.IncompleteReadError) as err:
                 raise VorkError(f"connection to vorkd lost: {err}") from err
+            if not isinstance(env, dict) or env.get("id", mid) != mid:
+                raise VorkError(f"connection to vorkd out of step: answer {env.get('id') if isinstance(env, dict) else '?'} to request {mid}")
+            self.broken = False
         answer = env.get("msg", env)
         if answer.get("result") == "error":
             raise VorkError(answer.get("message", "error"))
         return answer
 
+    def abort(self) -> None:
+        """Closes without waiting (from a cancelled call)."""
+        self.broken = True
+        self._writer.close()
+
     async def close(self) -> None:
+        self.broken = True
         self._writer.close()
         try:
             await self._writer.wait_closed()
@@ -140,34 +166,58 @@ class Connection:
 
 
 class Client:
-    """vØrk storage as an app sees it: a socket path and a token, connections made as needed."""
+    """vØrk storage as an app sees it: a socket path and a token, connections made as needed.
+
+    Each call has a connection to itself, taken from a few kept idle: vorkd
+    answers one connection's requests one at a time, so one shared
+    connection would make every call wait behind a stream's read that is
+    fetching pieces (up to its wait), and one cancelled call would leave its
+    answer for the next (a cover's bytes played as a track).
+    """
+
+    MAX_IDLE = 4
 
     def __init__(self, socket_path: str, token: str) -> None:
         self.socket_path = socket_path.strip()
         self.token = token.strip()
-        self._conn: Connection | None = None
+        self._idle: list[Connection] = []
 
-    async def _shared(self) -> Connection:
-        if self._conn is None:
-            self._conn = await Connection.open(self.socket_path, self.token)
-        return self._conn
+    async def _take(self, fresh: bool) -> Connection:
+        while self._idle and not fresh:
+            conn = self._idle.pop()
+            if not conn.broken:
+                return conn
+            conn.abort()
+        return await Connection.open(self.socket_path, self.token)
+
+    def _give(self, conn: Connection) -> None:
+        if conn.broken or len(self._idle) >= self.MAX_IDLE:
+            conn.abort()
+        else:
+            self._idle.append(conn)
 
     async def call(self, msg: dict[str, Any]) -> dict[str, Any]:
-        """A request on the shared connection; reconnects once if it was lost."""
+        """A request on a connection of its own; on a fresh one again if a kept one was lost."""
         for attempt in (0, 1):
-            conn = await self._shared()
+            conn = await self._take(fresh=attempt > 0)
             try:
-                return await conn.call(msg)
+                answer = await conn.call(msg)
             except VorkError as err:
-                if "connection" not in str(err) or attempt:
+                self._give(conn)  # closed if broken; kept if vorkd only said no
+                if not conn.broken or attempt:
                     raise
-                self._conn = None
+                continue
+            except BaseException:
+                conn.abort()  # cancelled mid-call: its answer may still come
+                raise
+            self._give(conn)
+            return answer
         raise VorkError("unreachable")
 
     async def close(self) -> None:
-        if self._conn:
-            await self._conn.close()
-            self._conn = None
+        idle, self._idle = self._idle, []
+        for conn in idle:
+            await conn.close()
 
     # The requests the provider uses.
 

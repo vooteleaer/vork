@@ -525,18 +525,20 @@ class VorkProvider(MusicProvider):
     async def get_audio_stream(self, streamdetails: StreamDetails, seek_position: int = 0) -> AsyncGenerator[bytes]:
         """The track's bytes in pieces; vØrk storage fetches pieces not here yet from the library's nodes."""
         cap = streamdetails.data["cap"]
+        size = streamdetails.size  # the record's; vorkd clamps reads to the file's own size
         offset = 0
-        while True:
+        while size is None or offset < size:
+            want = PIECE if size is None else min(PIECE, size - offset)
             try:
-                data = await self.client.read_range(cap, self.library, offset, PIECE, PIECE_WAIT_MS)
+                data = await self.client.read_range(cap, self.library, offset, want, PIECE_WAIT_MS)
             except VorkError as err:
                 raise MediaNotFoundError(f"vØrk storage: {err}") from err
             if not data:
-                return
+                return  # the file's end
             yield data
             offset += len(data)
-            if len(data) < PIECE:
-                return
+            if size is None and len(data) < want:
+                return  # vorkd reads short only at the file's end
 
     async def resolve_image(self, path: str) -> str | bytes:
         rec = next((r for r in self._covers.values() if r.id == path), None) or await self.client.record(self.library, path)
