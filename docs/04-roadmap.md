@@ -40,6 +40,7 @@ Links with fresh-handshake liveness, signed announces, path labels swapped per h
 - **How:** ESP-IDF on an ESP32-S3. Outer layer: the stock ESPHome/esp_wireguard tunnel to a full node. Layer messages: a UDP socket on port 4799 in the tunnel. Inner layer: try (a) the WireGuard core of wireguard-lwip without its netif, sending its messages in `DATA`; (b) the fugo101/wireguard_lwip fork (16 peers, custom output). Ed25519 from libsodium.
 - **Done when:** a PC pings the ESP32 by its address through the server, end to end encrypted; flash and RAM use measured.
 - **Risks:** the inner layer may not fit the stock libraries; then the outcome is a change to the wire format (for example, a lighter inner layer for Lite nodes) decided before M12.
+- **Status:** done (2026-11-24). The inner layer is its own small WireGuard responder over Monocypher (no stock library fitted), checked against boringtun; Ed25519 from Monocypher. A PC pings an ESP32-S3 end to end through relays (14–120 ms); flash +35 kB, static RAM +1 kB.
 
 ## M2 IPv6 sessions and TUN — mostly done
 
@@ -72,6 +73,7 @@ Links with fresh-handshake liveness, signed announces, path labels swapped per h
 - **Goal:** `external_components: vork` in ESPHome; Home Assistant reaches the device by identity.
 - **Scope:** depends on S1. The component brings up the Lite layer on top of the `wireguard:` component; the inner session delivers IPv6 (or IPv4) packets into lwIP, so the device's native API and MQTT work unchanged.
 - **Done when:** Home Assistant adds the device by its vØrk name and it stays reachable through a relay.
+- **Status:** done (2026-11-25), published 2026-11-26 as [vork-lite](https://github.com/vooteleaer/vork-lite) (an ESP-IDF library) and [esphome-vork-lite](https://github.com/vooteleaer/esphome-vork-lite) (the ESPHome component), v0.1.0. It needs no `wireguard:` block after all: the device opens vØrk's outer link itself (to a node found by mDNS, else the bootstrap node), makes its own identity, is linked with a one-time code in its log, and its native API is announced by the owner's nodes on their local networks, so Home Assistant discovers it and gives it its API key.
 - **Depends on:** S1, M2.
 
 ## M6 Performance
