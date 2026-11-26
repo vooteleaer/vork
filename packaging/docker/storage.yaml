@@ -57,10 +57,10 @@ services:
     depends_on:
       vork-storage-get: { condition: service_completed_successfully }
     command: ["/data/bin/vorkd", "--store", "/data/store", "--max-store", "500G"]
-    # Libraries as folders for other containers (a release with vork-mount,
-    # after v0.4.0): uncomment these, add "--mounts", "/libraries" to the
-    # command above, and make the host folder's owner the user your other
-    # apps run as (TrueNAS: 568); their files are shown as that user's.
+    # Libraries as folders for other containers (v0.5.0 or newer): uncomment
+    # these, add "--mounts", "/libraries" to the command above, and make the
+    # host folder's owner the user your other apps run as (TrueNAS: 568);
+    # their files are shown as that user's.
     # Another container sees them with a bind mount of the same host folder
     # with rslave propagation, e.g. in its volumes:
     #   - type: bind
