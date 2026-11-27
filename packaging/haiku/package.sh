@@ -12,7 +12,7 @@
 # tunnel driver) is IPv4 only, as Haiku's network: programs there reach your
 # devices at their 198.18 addresses; .vork names don't resolve there yet.
 #
-# Three crates need a change for Haiku until their releases have it; build
+# Four crates need a change for Haiku until their releases have it; build
 # with a copy of each from ~/.cargo/registry, changed, given as
 #   --config 'patch.crates-io.<crate>.path="<the copy>"':
 # - mio (1.2.5): Haiku in the O_NONBLOCK-after-accept lists of
@@ -21,7 +21,9 @@
 # - if-addrs (0.15.0): Haiku left out of its netlink change notifier, as the
 #   BSDs (every not(target_os = "illumos") / target_os = "illumos" list);
 # - boringtun (0.7.1): CLOCK_MONOTONIC for CLOCK_BOOTTIME in
-#   src/sleepyinstant/unix.rs (Haiku has no CLOCK_BOOTTIME).
+#   src/sleepyinstant/unix.rs (Haiku has no CLOCK_BOOTTIME);
+# - ipstack (1.0.1): target_os = "haiku" in src/lib.rs's lists with linux
+#   (its TUN_PROTO constants, for a packet header the node doesn't use).
 # mDNS (local network discovery) is left out on Haiku: mdns-sd needs IP_PKTINFO.
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)

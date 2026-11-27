@@ -147,21 +147,7 @@ ESPHome's WireGuard component has **one peer and IPv4 only**, and it can't accep
 
 ## Storage
 
-vØrk storage is a prototype encrypted, replicated data layer, an application on vØrk: libraries of records and files, kept on your own devices and blind storage nodes (ADR-0015). It runs on vØrk: `vorkd` attaches to the machine's vØrk node through its [local API](06-local-api.md) (ADR-0022).
-
-| Crate | What |
-|---|---|
-| `vork-api` | the vØrk node's local API: protocol and client |
-| `vork-core` | chunks, CIDs, manifests, records, leases, channels, recovery |
-| `vork-store` | the local slab store |
-| `vork-storage-net` | the network side: fetching, serving, the connection to the vØrk node |
-| `vork-storage-node` | `vorkd`, the storage daemon; `vork-storage`, its commands; `vork-storage-run`, which keeps the programs running from login; `vork-import-retifs`, which brings libraries over from retifs |
-| `libvork` | client of the daemon's local API |
-| `vork-tree`, `vork-fuse`, `vork-cloudfiles`, `vork-haikufs` | a library as a folder: FUSE (`vork-mount`), Windows Explorer, Haiku |
-| `vork-gateway`, `vork-extract`, `vork-card` | libraries as local websites, attribute extraction, identities on a YubiKey |
-| `clients/web` | `vork-web`: storage's pages, in the vØrk dashboard with `--dashboard` (ADR-0032) |
-
-To run it: a vØrk node first (`vork run`, or the service), then `vorkd` (it finds the node's API socket, or `VORK_API=<socket or pipe>`) and `vork-web --dashboard`, or `vork-storage-run` for both; `vorkd --store DIR` keeps a separate store (the default is `vork-storage` in the user's data folder). On Windows, `vork-storage-<version>.msi` installs and starts them ([install](install.md#installing-vørk-storage)). `vork put FILE`, `vork query LIB …` and the other storage commands are passed to `vork-storage`; `vork help-storage` lists them. `vork status` on its own is the network node's; `vork status READ-CAP` is storage's. Storage documents: [docs/storage](storage/README.md).
+vØrk storage, a prototype encrypted, replicated data layer, is an application on vØrk (ADR-0015): `vorkd` attaches to the machine's vØrk node through its [local API](06-local-api.md) (ADR-0022), the crate `vork-api` here. Since 2026-11-27 it lives in its own repository, [vork-storage](https://github.com/vooteleaer/vork-storage), with its crates, apps and documents.
 
 ## Documentation
 

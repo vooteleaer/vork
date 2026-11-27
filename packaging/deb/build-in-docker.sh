@@ -2,20 +2,15 @@
 # Builds the .deb for amd64 and arm64 in Ubuntu 22.04 containers (arm64
 # through Docker's emulation: slow, but no cross WebKitGTK is needed).
 #
-#     packaging/deb/build-in-docker.sh [--storage] [amd64] [arm64]
+#     packaging/deb/build-in-docker.sh [amd64] [arm64]
 #
-# vork by default, vork-storage with --storage. The packages land in
-# target/deb. Each architecture keeps its own Cargo cache and build folder
+# The packages land in target/deb (vØrk storage's are built in its own
+# repository). Each architecture keeps its own Cargo cache and build folder
 # in target/, so a second run is quicker.
 set -e
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 SCRIPT=build-deb.sh
 PACKAGES="libwebkit2gtk-4.1-dev libayatana-appindicator3-dev libxdo-dev"
-if [ "$1" = --storage ]; then
-    SCRIPT=build-storage-deb.sh
-    PACKAGES=
-    shift
-fi
 for ARCH in ${*:-amd64 arm64}; do
     docker run --rm --platform "linux/$ARCH" \
         -v "$ROOT:/src" -w /src \

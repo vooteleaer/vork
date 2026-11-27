@@ -2,7 +2,7 @@
 //! key. The address is the truncated hash of both public keys, X25519 first,
 //! so only the holder of the signing key can announce it. Hashes, key files
 //! and named destinations are the ones vØrk storage's format already uses
-//! (docs/storage/02-irreversible-decisions.md), so a storage identity is a
+//! (vork-storage: docs/02-irreversible-decisions.md), so a storage identity is a
 //! vØrk identity and its stored addresses stay valid.
 
 use anyhow::{Context, Result, bail};
@@ -141,7 +141,7 @@ pub fn short(hash: &Hash) -> String {
 mod tests {
     use super::*;
 
-    // The YubiKey identity from docs/storage/recon/yubikey.md, checked with Python RNS.
+    // The YubiKey identity from vork-storage docs/recon/yubikey.md, checked with Python RNS.
     const X: &str = "4f30f06604f14fd9059eebce00f645063a72ca45bf94ab18d54aa10be8f9d852";
     const ED: &str = "bb3e8a8c6af96b39a9a94894604fd0a5cc6bbe7a2a404cad8a92e37190970f63";
 

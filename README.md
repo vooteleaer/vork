@@ -18,7 +18,7 @@ It does what Tailscale and similar tools do, without their coordination server. 
 - **Reach your own devices from anywhere.** Open your home server's files, SSH to your desktop, or check a camera from your phone on mobile data with `home-server.vork`. It works behind home routers and mobile networks, with no port forwarding needed on every device.
 - **Use your home internet when you're away.** Turn on an *exit node* at home, and on hotel or café Wi-Fi your laptop and phone send all their internet traffic through it. The local network sees only sealed traffic.
 - **Keep everything else out.** Only your linked devices can reach your devices' services. A stranger's node can carry your traffic but can't open a connection to you. If you want to share one thing, for example a game server with a friend, you open that one port, for everyone or for one friend's device.
-- **Keep your files on your own devices** with *vØrk storage*, an application on vØrk: encrypted libraries kept in sync and backed up by your devices, a folder in Explorer, its pages in the dashboard. It's a prototype with its own installer (Windows now, other platforms coming): [installing vØrk storage](docs/install.md#installing-vørk-storage), [its documents](docs/storage/README.md).
+- **Keep your files on your own devices** with [*vØrk storage*](https://github.com/vooteleaer/vork-storage), an application on vØrk in a repository of its own: encrypted libraries kept in sync and backed up by your devices, a folder in Explorer, an app of its own on each platform.
 - **Put small devices on it.** An ESP32 joins as a *Lite* device with [vØrk Lite](https://github.com/vooteleaer/esphome-vork-lite): add `vork_lite:` to its ESPHome configuration, paste the link from its log into your dashboard, and Home Assistant reaches it from anywhere. For your own firmware there's the [vork-lite library](https://github.com/vooteleaer/vork-lite) (ESP-IDF).
 - **Run without anyone's permission.** No accounts, no licence server, nobody to ask. If one node disappears, the network routes around it.
 
@@ -217,7 +217,7 @@ What's next is in the [roadmap](docs/04-roadmap.md).
 - [Technical overview](docs/technical-overview.md): the protocol layers, paths, test results and throughput measurements.
 - [Documentation](docs/README.md): vision, architecture, wire format, threat model, roadmap, open questions, and the design decisions (ADRs).
 - [Local API](docs/06-local-api.md): how applications talk to the node on their machine.
-- [vØrk storage](docs/storage/README.md): the encrypted storage application built on vØrk (`crates/`), with its own documents and ADRs.
+- [vØrk storage](https://github.com/vooteleaer/vork-storage): the encrypted storage application built on vØrk, in its own repository with its own documents, ADRs and releases.
 - [vork-lite](https://github.com/vooteleaer/vork-lite): a Lite node for ESP32 (ESP-IDF), and its [ESPHome component](https://github.com/vooteleaer/esphome-vork-lite).
 
 ## License

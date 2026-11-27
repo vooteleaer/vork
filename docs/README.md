@@ -2,7 +2,7 @@
 
 | Document | What |
 |---|---|
-| [install](install.md) | installing on each kind of device, linking, updating, troubleshooting; installing vØrk storage |
+| [install](install.md) | installing on each kind of device, linking, updating, troubleshooting |
 | [technical-overview](technical-overview.md) | how the prototype works, what was tested, throughput |
 | [00-vision](00-vision.md) | what vØrk is for, principles, non-goals |
 | [01-architecture](01-architecture.md) | how the parts fit: layers, paths, NAT traversal, node profiles, privacy classes, applications |
@@ -11,8 +11,7 @@
 | [04-roadmap](04-roadmap.md) | milestones with scope, approach and acceptance tests |
 | [05-open-questions](05-open-questions.md) | decisions still to make |
 | [06-local-api](06-local-api.md) | how applications use the machine's node: frames, endpoint |
-| [storage/](storage/README.md) | vØrk storage (prototype): its own documents and ADRs |
-| [clients/](clients/platforms.md) | the earlier storage clients per platform, and their plan (history) |
+| [vØrk storage](https://github.com/vooteleaer/vork-storage) | the storage application (prototype): its own repository, documents and ADRs |
 
 ## Decisions (ADRs)
 
@@ -52,3 +51,4 @@ New decisions copy [adr/0000-template.md](adr/0000-template.md). *Accepted* mean
 | [0030](adr/0030-one-owner-one-group.md) | One owner, one group: a device of my device is mine | accepted |
 | [0031](adr/0031-bootstrap-list.md) | One network from the start: a list of public nodes, by their owners' choice | accepted |
 | [0032](adr/0032-application-pages.md) | Applications add pages to the node's dashboard | accepted |
+| [0033](adr/0033-storage-apart.md) | vØrk storage in a repository of its own, with an app of its own | accepted |

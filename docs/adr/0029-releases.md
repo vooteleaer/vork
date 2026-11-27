@@ -10,7 +10,7 @@ The repository is public, and the README has nothing to download. Self-updating 
 ## Decision
 
 ### Versions
-- **vØrk the network has its own series, from 0.1.0**, separate from storage's old one. (Since 2026-11-23 vØrk storage is released with vØrk, under vØrk's version, with installers of its own: `docs/storage/versioning.md`.) Its version is the node crate's (`[package]` in the root `Cargo.toml`).
+- **vØrk the network has its own series, from 0.1.0**, separate from storage's old one. (Since 2026-11-23 vØrk storage is released with vØrk, under vØrk's version, with installers of its own. Since 2026-11-27 it's its own repository, [vork-storage](https://github.com/vooteleaer/vork-storage), with releases of its own; vØrk 0.6.0 is the first without it.) Its version is the node crate's (`[package]` in the root `Cargo.toml`).
 - **A release is `v0.MINOR.PATCH`**, a tag on the commit. Before 1.0, a MINOR release may change the wire format (nodes of different MINOR versions may not understand each other), and a PATCH release never does. Releases are GitHub pre-releases until 1.0.
 - **Builds between releases** are the next release's number, `dev` and the build number: `0.2.0-dev.143`. The build number is the commit count (ADR-0028), so it only grows.
 

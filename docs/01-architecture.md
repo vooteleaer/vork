@@ -92,4 +92,4 @@ The default rule: your IP address is never shown to anyone outside your islands 
 - **Identity firewall:** rules say which identity may use which service, using `whois`; IP rules have nothing to hold on to.
 - **Identities on hardware keys:** a person's identity on a YubiKey signs short-lived session keys for devices; servers have their own identities, delegated by their owner. See ADR-0013.
 - **Islands:** closed groups (membership by signed invitation) inside the open network. See ADR-0014.
-- **Storage:** vØrk storage, an application on the machine's node through the local API (ADR-0015, ADR-0022), installed apart; its pages appear in the node's dashboard (ADR-0032). Crates in `crates/`, documents in [storage/](storage/README.md).
+- **Storage:** vØrk storage, an application on the machine's node through the local API (ADR-0015, ADR-0022), installed apart, with an app of its own; since 2026-11-27 in its own repository, [vork-storage](https://github.com/vooteleaer/vork-storage).
