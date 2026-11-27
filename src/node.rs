@@ -572,6 +572,18 @@ pub struct Node {
     /// the LAN stay on it) while all else goes through the exit.
     #[cfg_attr(not(windows), allow(dead_code))]
     exit_routed: Option<(u32, std::net::Ipv4Addr)>,
+    /// Linux, using an exit node: whether its routes are in place.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    exit_on: bool,
+    /// At an exit node: whether the system forwards the clients' IPv4 with
+    /// NAT (Linux); else, and for IPv6 always, the node's own stack does.
+    exit_kernel: bool,
+    /// The node's own stack for exit clients' traffic (ADR-0026 addendum).
+    exit_stack: Option<crate::netstack::Stack>,
+    /// The clients' own addresses seen in the stack's traffic: whose answers they are.
+    exit_from: HashMap<std::net::IpAddr, Hash>,
+    /// Whether this exit reaches the IPv6 internet (said in its announce).
+    exit_v6: bool,
     /// A restart asked for (the dashboard, after a setting taken at start):
     /// when, a moment after the answer went out.
     restart_at: Option<Instant>,
@@ -626,6 +638,8 @@ pub struct Node {
     /// Names asked through the exit, by the port they went from: who asked,
     /// when, and the network's servers to ask instead if no answer comes.
     exit_dns: HashMap<u16, (crate::dns::Query, Instant)>,
+    /// Ports of names answered through the exit, for a while: the other server's answer is dropped.
+    exit_dns_done: HashMap<u16, Instant>,
     /// Sessions asked who is on them, and when.
     who_asked: HashMap<u32, Instant>,
     /// New anonymous neighbors per IP in the current minute.
@@ -672,6 +686,10 @@ fn bind_socket(addr: SocketAddr) -> anyhow::Result<std::net::UdpSocket> {
             libc::setsockopt(s.as_raw_fd(), libc::SOL_SOCKET, libc::SO_SNDBUFFORCE, p, len);
         }
     }
+    // Linux: what it sends to other nodes keeps to the machine's own routes
+    // while an exit node carries the rest.
+    #[cfg(target_os = "linux")]
+    crate::tun::mark_socket(std::os::fd::AsRawFd::as_raw_fd(&s));
     s.set_nonblocking(true)?;
     s.bind(&addr.into())?;
     let rb = s.recv_buffer_size().unwrap_or(0);
@@ -744,7 +762,7 @@ pub fn log(msg: impl AsRef<str>) {
     emit(1, msg.as_ref());
 }
 
-fn debug(msg: impl AsRef<str>) {
+pub fn debug(msg: impl AsRef<str>) {
     emit(2, msg.as_ref());
 }
 
@@ -848,6 +866,11 @@ impl Node {
             tried: HashMap::new(),
             tun: None,
             exit_routed: None,
+            exit_on: false,
+            exit_kernel: false,
+            exit_stack: None,
+            exit_from: HashMap::new(),
+            exit_v6: false,
             restart_at: None,
             ip_identified: HashSet::new(),
             ip_unknown: HashMap::new(),
@@ -872,6 +895,7 @@ impl Node {
             v6_in: HashMap::new(),
             exit_clients: Default::default(),
             exit_dns: HashMap::new(),
+            exit_dns_done: HashMap::new(),
             who_asked: HashMap::new(),
             new_from: HashMap::new(),
             key_answers: HashMap::new(),
@@ -1063,10 +1087,13 @@ impl Node {
                 Ok(t) => {
                     log(format!("interface {} up: this node is {addr}", t.name));
                     crate::dns::register(&t.name);
+                    // What a run that didn't end cleanly left of an exit's routes.
+                    #[cfg(target_os = "linux")]
+                    crate::tun::exit_routes(&t.name, false);
                     if self.cfg.exit {
                         match crate::exit::setup(&t.name) {
-                            Ok(()) => log(format!("exit node: the owner's devices may send their internet traffic out through here ({}/{})", crate::exit::NET, crate::exit::PREFIX)),
-                            Err(e) => warn(format!("exit node off: {e}")),
+                            Ok(()) => self.exit_kernel = true,
+                            Err(e) => log(format!("exit node: IPv4 through the node's own stack ({e})")),
                         }
                     }
                     self.tun = Some(Arc::new(t));
@@ -1077,6 +1104,21 @@ impl Node {
         let mut tun = self.tun.clone();
         let (exit_answers, mut exit_answers_rx) = tokio::sync::mpsc::unbounded_channel::<(Hash, Vec<u8>)>();
         self.exit_answers = Some(exit_answers);
+        // An exit's own stack: IPv6 always, IPv4 where the system doesn't forward it.
+        let (stack_out, mut stack_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+        if self.cfg.exit {
+            self.exit_stack = Some(crate::netstack::Stack::start(stack_out));
+            self.exit_v6 = crate::netstack::has_ipv6();
+            log(format!(
+                "exit node: the owner's devices may send their internet traffic out through here (IPv4 {}, IPv6 {})",
+                if self.exit_kernel { "with the system's NAT" } else { "through the node's own stack" },
+                if self.exit_v6 { "through the node's own stack" } else { "not: this machine has no IPv6 internet" }
+            ));
+            let names = Some(crate::exit::system_resolvers()).filter(|r| !r.is_empty()).unwrap_or_else(|| self.cfg.dns_upstream.clone());
+            log(format!("exit node: clients' names asked of {}", if names.is_empty() { "the servers they ask".to_string() } else { names.iter().map(|a| a.ip().to_string()).collect::<Vec<_>>().join(", ") }));
+        } else {
+            drop(stack_out);
+        }
         // The web dashboard: its requests are control requests from the owner.
         let (web_tx, mut web_rx) = tokio::sync::mpsc::channel::<crate::control::Request>(16);
         if let Some(addr) = self.cfg.web {
@@ -1192,6 +1234,7 @@ impl Node {
                         Err(e) => debug(format!("interface: {e}")),
                     }
                 }
+                Some(p) = stack_rx.recv() => self.on_stack_packet(&p),
                 Some((device, p)) = exit_answers_rx.recv() => {
                     if let Some(sid) = self.ip_session(device) {
                         let mut body = vec![APP_EXIT];
@@ -1315,6 +1358,14 @@ impl Node {
                             self.choose_exit();
                         }
                         self.exit_routes_sync();
+                        // An exit whose IPv6 came or went (another network): said in its next announce.
+                        if self.cfg.exit {
+                            let v6 = crate::netstack::has_ipv6();
+                            if v6 != self.exit_v6 {
+                                self.exit_v6 = v6;
+                                log(if v6 { "exit node: IPv6 internet here now: clients' IPv6 goes out too" } else { "exit node: no IPv6 internet here now: clients hold their IPv6 back" });
+                            }
+                        }
                     }
                     self.exit_dns_late();
                     if self.restart_at.is_some_and(|t| Instant::now() >= t) {
@@ -1619,7 +1670,7 @@ impl Node {
 
     fn own_announce(&mut self) -> Announce {
         let me = self.me_arc.clone();
-        let data = if self.cfg.exit { json!({ "name": self.cfg.name, "exit": true }) } else { json!({ "name": self.cfg.name }) }.to_string().into_bytes();
+        let data = if self.cfg.exit { json!({ "name": self.cfg.name, "exit": true, "exit6": self.exit_v6 }) } else { json!({ "name": self.cfg.name }) }.to_string().into_bytes();
         self.sign_announce(&me, wire::NO_NAME, data)
     }
 
@@ -2050,10 +2101,25 @@ impl Node {
     /// so it doesn't go into the interface it carries; that interface is
     /// looked for again each time, as a laptop moves between networks.
     fn exit_routes_sync(&mut self) {
+        // A node that is an exit itself sends its clients' traffic out
+        // directly: its own doesn't go through another.
+        let want = !self.cfg.exit && self.exit_up();
+        #[cfg(target_os = "linux")]
+        if want != self.exit_on {
+            let Some(tun) = self.tun.clone() else { return };
+            self.exit_on = want;
+            log(if want {
+                format!("exit: this machine's internet goes through {}", self.cfg.exit_via.map(|v| short(&v)).unwrap_or_default())
+            } else {
+                "exit: this machine's internet goes out directly again".to_string()
+            });
+            let name = tun.name.clone();
+            std::thread::spawn(move || crate::tun::exit_routes(&name, want));
+        }
         #[cfg(windows)]
         {
             let Some(tun) = self.tun.clone() else { return };
-            let physical = if self.exit_up() { crate::tun::default_route(tun.index) } else { None };
+            let physical = if want { crate::tun::default_route(tun.index) } else { None };
             if physical == self.exit_routed {
                 return;
             }
@@ -2077,6 +2143,12 @@ impl Node {
 
     /// The exit's routes taken away now (the node stopping or restarting).
     fn exit_routes_off(&mut self) {
+        #[cfg(target_os = "linux")]
+        if std::mem::take(&mut self.exit_on) {
+            if let Some(tun) = &self.tun {
+                crate::tun::exit_routes(&tun.name, false);
+            }
+        }
         #[cfg(windows)]
         if self.exit_routed.take().is_some() {
             if let Some(tun) = &self.tun {
@@ -2102,7 +2174,7 @@ impl Node {
         let Some(via) = self.cfg.exit_via else { return };
         let port = loop {
             let p = 20000 + (rand_u64() % 40000) as u16;
-            if !self.exit_dns.contains_key(&p) {
+            if !self.exit_dns.contains_key(&p) && !self.exit_dns_done.contains_key(&p) {
                 break p;
             }
         };
@@ -2117,6 +2189,7 @@ impl Node {
 
     /// Names the exit didn't answer in 2 s: asked of the network's servers.
     fn exit_dns_late(&mut self) {
+        self.exit_dns_done.retain(|_, t| t.elapsed() < Duration::from_secs(10));
         let late: Vec<u16> = self.exit_dns.iter().filter(|(_, (_, t))| t.elapsed() > Duration::from_secs(2)).map(|(p, _)| *p).collect();
         for p in late {
             let Some((q, _)) = self.exit_dns.remove(&p) else { continue };
@@ -2219,6 +2292,7 @@ impl Node {
                     "dns": labels.get(dest).map(|l| format!("{l}.{}", crate::dns::DOMAIN)),
                     "on_lan": self.lan_seen.get(&best.ann.x_pub).is_some_and(|t| t.elapsed() < ROUTE_TTL),
                     "exit": serde_json::from_slice::<serde_json::Value>(&best.ann.app_data).ok().and_then(|v| v["exit"].as_bool()).unwrap_or(false),
+                    "exit6": serde_json::from_slice::<serde_json::Value>(&best.ann.app_data).ok().and_then(|v| v["exit6"].as_bool()).unwrap_or(false),
                 }))
             })
             .collect();
@@ -2502,7 +2576,19 @@ impl Node {
         if dst == crate::dns::ADDR.octets() {
             return; // not plain DNS (TLS on 853, TCP): the resolver doesn't do those
         }
-        let Some(prefix) = crate::tun::prefix_of(&dst) else { return };
+        let Some(prefix) = crate::tun::prefix_of(&dst) else {
+            // Outside vØrk: through the exit node if it carries IPv6, else
+            // held back (programs fall back to IPv4, nothing goes around the exit).
+            if let Some(via) = self.cfg.exit_via.filter(|v| !self.cfg.exit && self.exit_carries_v6(v) && self.exit_up()) {
+                if let Some(sid) = self.ip_session(via) {
+                    let mut body = Vec::with_capacity(p.len() + 1);
+                    body.push(APP_EXIT);
+                    body.extend_from_slice(p);
+                    self.send_app(sid, &body);
+                }
+            }
+            return;
+        };
         let dest = self
             .routes
             .iter()
@@ -2984,12 +3070,16 @@ impl Node {
     /// of the owner's devices, out with its own address. At the device: from
     /// the exit it chose, onto the interface.
     fn on_exit_packet(&mut self, sid: u32, p: &[u8]) {
-        let Some(tun) = self.tun.clone() else { return };
         let Some(who) = self.sessions.get(&sid).and_then(|s| s.peer_identity) else {
             return self.ask_who(sid);
         };
-        if p.len() < 20 || p[0] >> 4 != 4 {
-            return;
+        match p.first().map(|b| b >> 4) {
+            Some(4) if p.len() >= 20 => {}
+            Some(6) if p.len() >= 40 => {
+                self.ip_peer.insert(who, sid);
+                return self.on_exit_v6(who, p);
+            }
+            _ => return,
         }
         self.ip_peer.insert(who, sid);
         // A device sends from its own (derived) address; it's answered there.
@@ -3002,7 +3092,8 @@ impl Node {
             // (a network may let only its own servers answer, as a router that
             // blocks outside DNS does), and answered as from the server asked.
             if let Some((sport, 53, msg)) = crate::exit::udp4_parts(p) {
-                let resolvers = crate::exit::system_resolvers();
+                // Android has no system list: the phone's network's servers, given by the app.
+                let resolvers = Some(crate::exit::system_resolvers()).filter(|r| !r.is_empty()).unwrap_or_else(|| self.cfg.dns_upstream.clone());
                 if let (false, Some(back)) = (resolvers.is_empty(), self.exit_answers.clone()) {
                     let client = std::net::Ipv4Addr::new(p[12], p[13], p[14], p[15]);
                     let msg = msg.to_vec();
@@ -3018,22 +3109,83 @@ impl Node {
             if !self.cfg.exit_lan && !crate::exit::internet(dst) {
                 return debug(format!("exit traffic to {dst} from {}: not the internet (exit_lan is off)", short(&who)));
             }
-            let Some(addr) = self.exit_clients.of(&who) else { return };
-            if let Some(out) = crate::exit::readdress(p, Some(addr), None) {
-                tun.send(&out);
+            if self.exit_kernel {
+                let Some(tun) = self.tun.clone() else { return };
+                let Some(addr) = self.exit_clients.of(&who) else { return };
+                if let Some(out) = crate::exit::readdress(p, Some(addr), None) {
+                    tun.send(&out);
+                }
+            } else if let Some(stack) = &self.exit_stack {
+                let src = std::net::Ipv4Addr::new(p[12], p[13], p[14], p[15]);
+                self.exit_from.insert(src.into(), who);
+                stack.send(p.to_vec());
             }
         } else if self.cfg.exit_via == Some(who) && p[16..20] == self.aliases.me.octets() {
+            let Some(tun) = self.tun.clone() else { return };
             // An answer to a name this node asked through the exit: to whoever asked it (the first answer wins).
             if let Some((53, port, msg)) = crate::exit::udp4_parts(p) {
                 if crate::exit::DNS.iter().any(|d| p[12..16] == d.octets()) {
                     if let Some((q, _)) = self.exit_dns.remove(&port) {
+                        self.exit_dns_done.insert(port, Instant::now());
                         tun.send(&crate::dns::reply(&q, msg));
+                        return;
                     }
-                    return;
+                    // The second server's answer to one already answered: dropped.
+                    if self.exit_dns_done.contains_key(&port) {
+                        return;
+                    }
+                    // Else a program here asked that server itself: its answer.
                 }
             }
             tun.send(p);
         }
+    }
+
+    /// IPv6 through an exit node (ADR-0026 addendum). At the exit: from one
+    /// of the owner's devices, its own overlay address as the source, into
+    /// the node's stack. At the device: from the exit, onto the interface.
+    fn on_exit_v6(&mut self, who: Hash, p: &[u8]) {
+        let Some((src, dst)) = crate::tun::v6_ends(p) else { return };
+        if self.cfg.exit && src == crate::tun::overlay(&who).octets() {
+            if !self.is_device(&who) {
+                return debug(format!("exit traffic from {}, not one of the owner's devices: dropped", short(&who)));
+            }
+            let to = std::net::Ipv6Addr::from(dst);
+            if !self.cfg.exit_lan && !crate::exit::internet6(to) {
+                return debug(format!("exit traffic to {to} from {}: not the internet (exit_lan is off)", short(&who)));
+            }
+            if let Some(stack) = &self.exit_stack {
+                self.exit_from.insert(std::net::Ipv6Addr::from(src).into(), who);
+                stack.send(p.to_vec());
+            }
+        } else if self.cfg.exit_via == Some(who) && dst == crate::tun::overlay(&self.my_hash).octets() {
+            if let Some(tun) = &self.tun {
+                tun.send(p);
+            }
+        }
+    }
+
+    /// A packet out of the exit's own stack: an answer for the device whose address it goes to.
+    fn on_stack_packet(&mut self, p: &[u8]) {
+        let dst: std::net::IpAddr = match p.first().map(|b| b >> 4) {
+            Some(4) if p.len() >= 20 => std::net::Ipv4Addr::new(p[16], p[17], p[18], p[19]).into(),
+            Some(6) if p.len() >= 40 => std::net::Ipv6Addr::from(<[u8; 16]>::try_from(&p[24..40]).unwrap()).into(),
+            _ => return,
+        };
+        let Some(device) = self.exit_from.get(&dst).copied() else { return };
+        if let Some(sid) = self.ip_session(device) {
+            let mut body = Vec::with_capacity(p.len() + 1);
+            body.push(APP_EXIT);
+            body.extend_from_slice(p);
+            self.send_app(sid, &body);
+        }
+    }
+
+    /// Whether exit node `via` says it carries IPv6.
+    fn exit_carries_v6(&self, via: &Hash) -> bool {
+        self.routes.get(via).is_some_and(|by| {
+            by.values().any(|r| r.ann.name_hash == wire::NO_NAME && serde_json::from_slice::<serde_json::Value>(&r.ann.app_data).ok().and_then(|v| v["exit6"].as_bool()) == Some(true))
+        })
     }
 
     /// An IPv4 packet from a program here: to an alias, it goes on as IPv6.
@@ -4949,6 +5101,13 @@ impl Node {
                 "up": self.exit_up(),
                 "auto": self.cfg.exit_auto,
                 "rtt_ms": self.cfg.exit_via.and_then(|v| self.rtt_to(&v)).map(|t| t.as_millis() as u64),
+                "v6": self.cfg.exit_via.is_some_and(|v| self.exit_carries_v6(&v)),
+            })),
+            // This node as an exit: how it carries its clients' traffic.
+            "exit_offer": self.cfg.exit.then(|| json!({
+                "nat": self.exit_kernel,
+                "v6": self.exit_v6,
+                "clients": self.exit_from.values().collect::<HashSet<_>>().len(),
             })),
             "update": json!({
                 "build": crate::update::build(),

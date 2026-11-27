@@ -79,7 +79,9 @@ class VorkVpn : VpnService() {
                         // An exit node chosen or dropped: the interface is made again with the other routes.
                         // One that stops answering for 10 s is left until it answers again: the
                         // phone's internet goes out directly meanwhile instead of stopping.
-                        val chosen = n.optJSONObject("settings")?.optString("exit_via").orEmpty().isNotEmpty()
+                        // A phone that is an exit itself sends its own traffic out directly.
+                        val settings = n.optJSONObject("settings")
+                        val chosen = settings?.optString("exit_via").orEmpty().isNotEmpty() && settings?.optBoolean("exit") != true
                         val up = n.optJSONObject("exit")?.optBoolean("up") == true
                         val now = System.currentTimeMillis()
                         exitDownSince = if (!chosen || up) null else exitDownSince ?: now
@@ -152,9 +154,17 @@ class VorkVpn : VpnService() {
         for (i in 0 until 15) bytes[i + 1] = address.substring(i * 2, i * 2 + 2).toInt(16).toByte()
         val b = Builder()
         if (exit) {
-            // Through an exit node (ADR-0026): all traffic comes in. IPv4 goes on
-            // to the exit; IPv6 outside vØrk is held back, so nothing goes around it.
+            // Through an exit node (ADR-0026): all traffic comes in and goes on
+            // to the exit (IPv6 too, if the exit carries it; else held back, so
+            // nothing goes around it).
             b.addRoute("0.0.0.0", 0).addRoute("::", 0)
+            // The local network stays local (an exit carries the internet only):
+            // printers, casting and other VLANs behind the router.
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                for ((net, len) in listOf("10.0.0.0" to 8, "172.16.0.0" to 12, "192.168.0.0" to 16)) {
+                    b.excludeRoute(android.net.IpPrefix(InetAddress.getByName(net), len))
+                }
+            }
         }
         // Metered as the network under it, not always (Android's default for
         // a VPN): else every app saw Wi-Fi as metered while vØrk was on, and

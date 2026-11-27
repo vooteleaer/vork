@@ -127,7 +127,7 @@ Linking makes two devices each other's: they reach each other's services and nam
 
 ## Use an exit node
 
-An exit node sends a device's internet traffic out through home, for when you're on someone else's Wi-Fi. The exit is a Linux device of yours (a home server, a Raspberry Pi with the `.deb`): add `exit = true` to its `/etc/vork/vork.toml` and restart it. Then, on a phone or Windows PC: the dashboard's **Exit node** page, **Automatic** (the fastest of your exits). Your local network stays reachable directly; if the exit stops answering, the device goes back to its own connection.
+An exit node sends a device's internet traffic out through home, for when you're on someone else's Wi-Fi. The exit is any device of yours that stays at home (a home server, a Raspberry Pi, a Windows PC, an old phone on the charger): on its dashboard's **Exit node** page turn on **Offer this node as an exit** (or add `exit = true` to its `vork.toml`), and it restarts. Then, on the phone or laptop you take with you: the dashboard's **Exit node** page, **Automatic** (the fastest of your exits). Your local network stays reachable directly; if the exit stops answering, the device goes back to its own connection. A Linux laptop needs systemd-resolved (most desktops have it) for its names to go through the exit as well.
 
 ## The dashboard in a browser: its key
 

@@ -46,6 +46,8 @@ rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"]
 # The roots for fetching the bootstrap list over HTTPS (no system store on Android or Haiku).
 webpki-roots = "0.26"
 socket2 = "0.5"
+# An exit node's own TCP/IP stack, where the system doesn't forward with NAT (ADR-0026).
+ipstack = "1.0.1"
 tokio = { version = "1", features = ["full"] }
 toml = "0.8"
 qrcode = { version = "0.14.1", default-features = false }

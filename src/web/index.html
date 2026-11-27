@@ -750,15 +750,16 @@ function rulePreview() {
 function pExit() {
   const s = S.settings || {}, ex = S.exit, devs = S.settings?.devices || [], exits = nodes().filter((n) => n.exit && devs.includes(n.address));
   return `
-  <div class="grid ${APP ? "" : "g2"}">
-    ${APP ? "" : `<div class="card"><h2>Offer this node as an exit</h2><div class="sub">Your devices may send their internet traffic out through here (IPv4, with NAT)</div>
-      <div class="setting"><div class="t"><div>Exit node</div><div>Only your own devices; Linux, with the interface on${s.exit ? "" : " (takes effect at the next start)"}</div></div>${sw("exit", s.exit)}</div>
+  <div class="grid g2">
+    <div class="card"><h2>Offer this node as an exit</h2><div class="sub">Your devices may send their internet traffic out through here</div>
+      <div class="setting"><div class="t"><div>Exit node</div><div>Only your own devices${s.exit && S.exit_offer ? "" : " (takes effect at the next start)"}${APP ? "; this phone's own traffic then goes out directly" : ""}</div></div>${sw("exit", s.exit)}</div>
       <div class="setting"><div class="t"><div>Let clients into this machine's networks</div><div>Otherwise the internet only: the LAN, private ranges and loopback stay closed</div></div>${sw("exit_lan", s.exit_lan, s.exit ? "" : "disabled")}</div>
-    </div>`}
+      ${S.exit_offer ? `<div class="field"><span class="k">Carries</span><span>IPv4 ${S.exit_offer.nat ? "with the system's NAT" : "through the node's own stack"} · IPv6 ${S.exit_offer.v6 ? "through the node's own stack" : "no (this machine has no IPv6 internet)"}${S.exit_offer.clients ? ` · ${S.exit_offer.clients} device(s) using it` : ""}</span><span></span></div>` : ""}
+    </div>
     <div class="card"><h2>Use an exit</h2><div class="sub">This node's own internet traffic through one of your devices</div>
       <div class="setting"><div class="t"><div>Automatic</div><div>The fastest of your devices that offer it; directly when none answers</div></div>${sw("exit_auto", s.exit_auto)}</div>
-      ${ex ? `<div class="field"><span class="k">Now</span><span>${ex.via ? `${esc(nameOf(ex.via))} ${ex.up ? '<span class="tag green">up</span>' : '<span class="tag amber">not answering</span>'}${ex.rtt_ms != null ? ` · ${ex.rtt_ms} ms` : ""}` : "none answering: direct"}</span><span></span></div>` : ""}
-      ${exits.length ? exits.map((n) => `<div class="setting"><div class="t"><div>${esc(n.name || short(n.address))}</div><div>${n.direct ? "direct" : n.hops + " hop(s)"}</div></div>${s.exit_via === n.address && !s.exit_auto ? `<button class="btn ghost sm" data-exit-via="">Stop</button>` : `<button class="btn ghost sm" data-exit-via="${n.address}">Use</button>`}</div>`).join("") : `<div class="empty">None of your devices offers itself as an exit.</div>`}
+      ${ex ? `<div class="field"><span class="k">Now</span><span>${ex.via ? `${esc(nameOf(ex.via))} ${ex.up ? '<span class="tag green">up</span>' : '<span class="tag amber">not answering</span>'}${ex.rtt_ms != null ? ` · ${ex.rtt_ms} ms` : ""}${ex.via ? (ex.v6 ? " · IPv4 and IPv6" : " · IPv4 (IPv6 held back)") : ""}` : "none answering: direct"}</span><span></span></div>` : ""}
+      ${exits.length ? exits.map((n) => `<div class="setting"><div class="t"><div>${esc(n.name || short(n.address))}</div><div>${n.direct ? "direct" : n.hops + " hop(s)"}${n.exit6 ? " · IPv4 and IPv6" : " · IPv4"}</div></div>${s.exit_via === n.address && !s.exit_auto ? `<button class="btn ghost sm" data-exit-via="">Stop</button>` : `<button class="btn ghost sm" data-exit-via="${n.address}">Use</button>`}</div>`).join("") : `<div class="empty">None of your devices offers itself as an exit.</div>`}
     </div>
   </div>`;
 }

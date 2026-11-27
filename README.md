@@ -146,7 +146,7 @@ It shows traffic, connections and the log, and lets you pair devices, open firew
 
 <p align="center"><img src="docs/images/exit.svg" alt="A laptop on hotel Wi-Fi sends sealed traffic through vØrk to the home server, which forwards it to the internet." width="860"></p>
 
-On a **Linux** device that should be the exit (with the `tun` line on), add to `vork.toml`:
+On the device that should be the exit (a home server, a PC, even a phone), turn on **Offer this node as an exit** on the dashboard's Exit node page, or add to `vork.toml`:
 
 ```toml
 exit = true
@@ -158,7 +158,9 @@ On the devices that should use it:
 exit_via = "auto"        # the fastest of your devices that offers itself as an exit
 ```
 
-The Android app has a switch for the same thing, and on Windows the dashboard's Exit node page. Windows and Android send all their internet traffic and name lookups through the exit while it answers; your local network (other devices at home, a printer) stays reachable directly. If the exit stops answering, your device goes back to its normal connection instead of cutting you off. By default, devices using the exit reach the internet only, not the exit's home network. `exit_lan = true` on the exit lets them in there too. Today the exit carries IPv4 traffic, and a Linux device can be an exit but can't use one yet.
+or **Automatic** on the dashboard's Exit node page (the Android app has the same page). Windows, Linux and Android then send all their internet traffic and name lookups through the exit while it answers; your local network (other devices at home, a printer) stays reachable directly. If the exit stops answering, your device goes back to its normal connection instead of cutting you off. By default, devices using the exit reach the internet only, not the exit's home network. `exit_lan = true` on the exit lets them in there too.
+
+Any of Linux, Windows and Android can be an exit. On Linux the system forwards IPv4 with NAT; elsewhere (and for IPv6 everywhere) the node opens each connection again from the exit itself, so nothing has to be set up on it. IPv6 goes through an exit that has IPv6 internet of its own; with one that doesn't, devices keep to IPv4 while they use it. A Linux device using an exit needs systemd-resolved for its names to go through the exit too.
 
 ## The firewall
 
@@ -204,7 +206,6 @@ The full analysis is in the [threat model](docs/03-threat-model.md).
 
 - Prototype: the protocol and file formats will change, and nodes of different versions may stop understanding each other. Keep your devices on the same version.
 - Releases are pre-releases: no macOS or iOS yet; on Haiku the interface is IPv4 only and there is no local network discovery, and updating is by downloading the new release.
-- An exit node must be Linux; Windows and Android can use one, Linux not yet.
 - To get started, you need one device that's reachable from the internet (or two on the same network: vØrk finds neighbors on the local network by itself).
 - Large networks: route announcements are flooded to everyone today. That's fine for many nodes, but not for millions.
 - No per-relay bandwidth limits yet.

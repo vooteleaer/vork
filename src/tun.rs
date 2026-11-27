@@ -46,6 +46,8 @@ pub fn v6_ends(p: &[u8]) -> Option<([u8; 16], [u8; 16])> {
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub use linux::{Tun, receive_fd};
+#[cfg(target_os = "linux")]
+pub use linux::{exit_routes, mark_socket};
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod linux {
@@ -90,6 +92,83 @@ mod linux {
                 crate::node::log(format!("IPv4 aliases in {range}: this node is {me}"))
             }
             Err(e) => crate::node::log(format!("IPv4 aliases off: {e:#}")),
+        }
+    }
+
+    /// The mark on the node's own sockets (`SO_MARK`): what it sends to other
+    /// nodes leaves by the machine's own routes while an exit carries the rest.
+    #[cfg(target_os = "linux")]
+    pub const MARK: u32 = 0x766b;
+    /// The routing table that sends everything to the interface meanwhile.
+    #[cfg(target_os = "linux")]
+    const TABLE: &str = "7387";
+    /// The rules, by priority: the node's own traffic, the private ranges
+    /// (the LAN and other VLANs behind the router: an exit carries the
+    /// internet only), every route the machine has but its default, then
+    /// the table. Before the main table's own rule (32766).
+    #[cfg(target_os = "linux")]
+    const RULES: [u32; 4] = [5300, 5305, 5310, 5320];
+    #[cfg(target_os = "linux")]
+    const PRIVATE: [&str; 3] = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"];
+
+    /// Marks a socket of the node's own (see [`MARK`]); needs CAP_NET_ADMIN,
+    /// which the node has for its interface.
+    #[cfg(target_os = "linux")]
+    pub fn mark_socket(fd: std::os::fd::RawFd) {
+        let v = MARK as libc::c_int;
+        unsafe {
+            libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_MARK, (&v as *const libc::c_int).cast(), std::mem::size_of::<libc::c_int>() as libc::socklen_t);
+        }
+    }
+
+    /// Linux using an exit node (ADR-0026): all traffic to the interface
+    /// `name` but the node's own and the machine's networks, and names
+    /// through the node (systemd-resolved); or (false) all of it taken away
+    /// again. What a run before left is taken away first, every time.
+    #[cfg(target_os = "linux")]
+    pub fn exit_routes(name: &str, on: bool) {
+        for fam in ["-4", "-6"] {
+            for pref in RULES {
+                let pref = pref.to_string();
+                for _ in 0..8 {
+                    if ip(&[fam, "rule", "del", "pref", &pref]).is_err() {
+                        break;
+                    }
+                }
+            }
+            let _ = ip(&[fam, "route", "flush", "table", TABLE]);
+        }
+        let resolvectl = |args: &[&str]| std::process::Command::new("resolvectl").args(args).output().is_ok_and(|o| o.status.success());
+        if !on {
+            resolvectl(&["domain", name, "~vork"]);
+            resolvectl(&["default-route", name, "no"]);
+            return;
+        }
+        let mark = format!("{MARK:#x}/0xffff");
+        let mut fail = Vec::new();
+        for fam in ["-4", "-6"] {
+            let steps: [Vec<&str>; 4] = [
+                vec![fam, "route", "replace", "default", "dev", name, "table", TABLE],
+                vec![fam, "rule", "add", "pref", "5300", "fwmark", &mark, "lookup", "main"],
+                vec![fam, "rule", "add", "pref", "5310", "lookup", "main", "suppress_prefixlength", "0"],
+                vec![fam, "rule", "add", "pref", "5320", "lookup", TABLE],
+            ];
+            for s in steps {
+                if let Err(e) = ip(&s) {
+                    fail.push(format!("{e:#}"));
+                }
+            }
+        }
+        for net in PRIVATE {
+            if let Err(e) = ip(&["-4", "rule", "add", "pref", "5305", "to", net, "lookup", "main"]) {
+                fail.push(format!("{e:#}"));
+            }
+        }
+        if !fail.is_empty() {
+            crate::node::log(format!("exit: routes not all set: {}", fail.join("; ")));
+        }
+        if !(resolvectl(&["domain", name, "~vork", "~."]) && resolvectl(&["default-route", name, "yes"])) {
+            crate::node::log("exit: systemd-resolved didn't take every name; names may be asked of this network's servers");
         }
     }
 

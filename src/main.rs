@@ -18,6 +18,7 @@ mod dns;
 mod alias;
 mod bootstrap;
 mod exit;
+mod netstack;
 mod firewall;
 mod update;
 mod web;

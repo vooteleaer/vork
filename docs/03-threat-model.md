@@ -71,7 +71,8 @@ Any node may be hostile: neighbors, relays, the far end of a path that isn't the
 | Grind a key to match an address prefix (2³² tries for 8 digits) | `allow` rules name nodes by full address; `<prefix>.vork` resolves only among the owner's devices | implemented |
 | Take a name (`home-server.vork`) by announcing it | names resolve only for the owner's devices | implemented |
 | Use someone's exit node | only the owner's devices (ADR-0026) | implemented |
-| An exit client reaches the exit's LAN | the internet only by default (private, shared, link-local, loopback, multicast dropped); `exit_lan = true` to allow | implemented |
+| An exit client reaches the exit's LAN | the internet only by default (private, shared, link-local, loopback, multicast dropped; IPv6: global unicast only); `exit_lan = true` to allow | implemented |
+| Exit clients exhaust the exit (connections in its own stack) | only the owner's devices; at most 4096 flows at a time, a flow over that dropped | implemented |
 | Sniff the web dashboard's key on the LAN | HTTPS: a certificate the node makes and keeps (trust on first use, its SHA-256 shown by `vork web-link` to compare), or one given (`web_cert`, `web_key`: Let's Encrypt's, say); plain HTTP is redirected | implemented (a reload when a given certificate is renewed is to come: restart the node meanwhile) |
 | Reach the dashboard behind Home Assistant's ingress without signing in | that listener (`web_ingress`, plain HTTP, no key) takes connections from one address only, the Supervisor's ingress proxy (`172.30.32.2`, `web_ingress_from`), which lets in only Home Assistant's signed-in users; anything else is dropped. It is off unless set (the add-on sets it) | implemented |
 | Another user of a Windows PC changes the node | the control pipe lets interactive users in with full rights (a personal PC's trade-off) | accepted; an operator setting planned |

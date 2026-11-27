@@ -220,7 +220,9 @@ allow = []
 # update_dir = "/var/lib/vork/releases"
 
 # Offer this node as an exit node: the owner's devices may send their internet
-# traffic (IPv4) out through it (Linux, with the interface on).
+# traffic out through it (IPv4, and IPv6 if this machine has it). On Linux
+# with the interface on, the system forwards IPv4 with NAT; elsewhere the
+# node opens each connection again from here.
 # exit = true
 # Exit clients reach the internet only; this lets them into this machine's
 # networks (its LAN, private ranges) too.

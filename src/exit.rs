@@ -7,6 +7,11 @@
 //! onto its interface with that source, and the system forwards them out with
 //! NAT; answers come back to the interface, to the device's address, and go
 //! back with the destination `198.18.0.1`. Only the owner's devices may use it.
+//!
+//! Where the system can't do that (Windows, Android, a Linux without
+//! iptables), and for IPv6 everywhere, the node's own stack carries it
+//! instead (`netstack`): a device's packets keep its own address and come
+//! back to it.
 
 use std::net::Ipv4Addr;
 
@@ -14,6 +19,7 @@ use crate::identity::Hash;
 
 /// The exit's addresses for the devices using it.
 pub const NET: Ipv4Addr = Ipv4Addr::new(198, 19, 255, 0);
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub const PREFIX: u8 = 24;
 
 pub fn in_range(a: Ipv4Addr) -> bool {
@@ -59,17 +65,84 @@ pub fn internet(a: Ipv4Addr) -> bool {
         || o[0] >= 240)
 }
 
+/// IPv6's counterpart of [`internet`]: global unicast only (2000::/3), so
+/// not the exit's own networks (unique local, link-local), loopback,
+/// multicast, IPv4-mapped or documentation addresses.
+pub fn internet6(a: std::net::Ipv6Addr) -> bool {
+    crate::netstack::global6(a)
+}
+
 /// Public resolvers asked through the exit (Quad9, Cloudflare): the network
 /// the device is on doesn't see its names (the device's own network's
 /// servers may be private addresses the exit can't reach).
 pub const DNS: [Ipv4Addr; 2] = [Ipv4Addr::new(9, 9, 9, 9), Ipv4Addr::new(1, 1, 1, 1)];
 
-/// The resolvers this machine uses (`nameserver` in /etc/resolv.conf): an
-/// exit asks them its clients' names (ADR-0026).
+/// The resolvers this machine uses: an exit asks them its clients' names
+/// (ADR-0026). Unix: `nameserver` in /etc/resolv.conf. Windows: those of
+/// the connected adapters with a gateway (the machine's own networks, not
+/// vØrk's interface), the lowest metric first. Android has neither: the
+/// node's `dns_upstream` (the phone's network's) is asked instead.
+#[cfg(not(windows))]
 pub fn system_resolvers() -> Vec<std::net::SocketAddr> {
     resolvers_in(&std::fs::read_to_string("/etc/resolv.conf").unwrap_or_default())
 }
 
+#[cfg(windows)]
+pub fn system_resolvers() -> Vec<std::net::SocketAddr> {
+    use windows_sys::Win32::NetworkManagement::IpHelper::*;
+    use windows_sys::Win32::Networking::WinSock::{AF_INET, AF_INET6, AF_UNSPEC, SOCKADDR_IN, SOCKADDR_IN6};
+    const INCLUDE_GATEWAYS: u32 = 0x80;
+    let mut size: u32 = 32 * 1024;
+    let mut buf: Vec<u64> = Vec::new();
+    for _ in 0..3 {
+        buf = vec![0u64; (size as usize).div_ceil(8)];
+        let r = unsafe { GetAdaptersAddresses(AF_UNSPEC as u32, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | INCLUDE_GATEWAYS, std::ptr::null(), buf.as_mut_ptr().cast(), &mut size) };
+        if r == 0 {
+            break;
+        }
+        if r != 111 {
+            return Vec::new(); // not ERROR_BUFFER_OVERFLOW
+        }
+    }
+    let mut found: Vec<(u32, std::net::SocketAddr)> = Vec::new();
+    unsafe {
+        let mut a = buf.as_ptr() as *const IP_ADAPTER_ADDRESSES_LH;
+        while !a.is_null() {
+            let ad = &*a;
+            // Up (1), and with a gateway: a network of the machine's own.
+            if ad.OperStatus == 1 && !ad.FirstGatewayAddress.is_null() {
+                let mut d = ad.FirstDnsServerAddress;
+                while !d.is_null() {
+                    let sa = (*d).Address.lpSockaddr;
+                    if !sa.is_null() {
+                        let addr: Option<std::net::IpAddr> = match (*sa).sa_family {
+                            AF_INET => Some(std::net::Ipv4Addr::from(u32::from_be((*(sa as *const SOCKADDR_IN)).sin_addr.S_un.S_addr)).into()),
+                            AF_INET6 => Some(std::net::Ipv6Addr::from((*(sa as *const SOCKADDR_IN6)).sin6_addr.u.Byte).into()),
+                            _ => None,
+                        };
+                        // fec0:0:0:ffff::/48: Windows' placeholders where none is set.
+                        if let Some(ip) = addr.filter(|ip| !matches!(ip, std::net::IpAddr::V6(v6) if v6.segments()[0] == 0xfec0 || v6.segments()[0] & 0xffc0 == 0xfe80)) {
+                            found.push((ad.Ipv4Metric, std::net::SocketAddr::new(ip, 53)));
+                        }
+                    }
+                    d = (*d).Next;
+                }
+            }
+            a = ad.Next;
+        }
+    }
+    found.sort_by_key(|(m, a)| (*m, a.is_ipv6()));
+    let mut out: Vec<std::net::SocketAddr> = Vec::new();
+    for (_, a) in found {
+        if !out.contains(&a) {
+            out.push(a);
+        }
+    }
+    out.truncate(3);
+    out
+}
+
+#[cfg_attr(windows, allow(dead_code))]
 fn resolvers_in(text: &str) -> Vec<std::net::SocketAddr> {
     text.lines()
         .filter_map(|l| l.trim().strip_prefix("nameserver"))
@@ -188,9 +261,10 @@ fn adjust(field: &mut [u8], old: &[u8], new: &[u8]) {
     field.copy_from_slice(&(!(sum as u16)).to_be_bytes());
 }
 
-/// The system set up to forward the devices' traffic out with NAT (Linux):
+/// The system set up to forward the devices' IPv4 out with NAT (Linux):
 /// forwarding on, and in iptables, the devices' range let through and
-/// masqueraded. Each rule is added only if missing.
+/// masqueraded. Each rule is added only if missing. An error: the node's
+/// own stack carries it instead.
 #[cfg(target_os = "linux")]
 pub fn setup(interface: &str) -> Result<(), String> {
     let range = format!("{NET}/{PREFIX}");
@@ -225,7 +299,7 @@ pub fn setup(interface: &str) -> Result<(), String> {
 
 #[cfg(not(target_os = "linux"))]
 pub fn setup(_interface: &str) -> Result<(), String> {
-    Err("an exit node is Linux only for now".into())
+    Err("no NAT of the system's here".into())
 }
 
 #[cfg(test)]
@@ -266,6 +340,14 @@ mod tests {
         assert!(udp_ok(&out), "UDP checksum");
         let back = readdress(&out, None, Some(Ipv4Addr::new(9, 9, 9, 9))).unwrap();
         assert!(udp_ok(&back));
+    }
+
+    #[test]
+    fn internet_only_v6() {
+        assert!(internet6("2606:4700:4700::1111".parse().unwrap()));
+        for a in ["fd00::53", "fe80::1", "::1", "ff02::1", "::ffff:10.0.0.1", "2001:db8::1", "::"] {
+            assert!(!internet6(a.parse().unwrap()), "{a}");
+        }
     }
 
     #[test]
