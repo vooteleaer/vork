@@ -754,7 +754,7 @@ function pExit() {
     <div class="card"><h2>Offer this node as an exit</h2><div class="sub">Your devices may send their internet traffic out through here</div>
       <div class="setting"><div class="t"><div>Exit node</div><div>Only your own devices${s.exit && S.exit_offer ? "" : " (takes effect at the next start)"}${APP ? "; this phone's own traffic then goes out directly" : ""}</div></div>${sw("exit", s.exit)}</div>
       <div class="setting"><div class="t"><div>Let clients into this machine's networks</div><div>Otherwise the internet only: the LAN, private ranges and loopback stay closed</div></div>${sw("exit_lan", s.exit_lan, s.exit ? "" : "disabled")}</div>
-      ${S.exit_offer ? `<div class="field"><span class="k">Carries</span><span>IPv4 ${S.exit_offer.nat ? "with the system's NAT" : "through the node's own stack"} · IPv6 ${S.exit_offer.v6 ? "through the node's own stack" : "no (this machine has no IPv6 internet)"}${S.exit_offer.clients ? ` · ${S.exit_offer.clients} device(s) using it` : ""}</span><span></span></div>` : ""}
+      ${S.exit_offer ? `<div class="field"><span class="k">Carries</span><span>IPv4 ${S.exit_offer.nat ? "with the system's NAT" : "through the node's own stack"} · IPv6 ${S.exit_offer.v6 ? "through the node's own stack" : "no (this machine has no IPv6 internet)"}${S.exit_offer.clients ? ` · ${S.exit_offer.clients} device(s) have used it since the start`: ""}</span><span></span></div>` : ""}
     </div>
     <div class="card"><h2>Use an exit</h2><div class="sub">This node's own internet traffic through one of your devices</div>
       <div class="setting"><div class="t"><div>Automatic</div><div>The fastest of your devices that offer it; directly when none answers</div></div>${sw("exit_auto", s.exit_auto)}</div>

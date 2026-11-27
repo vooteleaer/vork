@@ -5107,7 +5107,8 @@ impl Node {
             "exit_offer": self.cfg.exit.then(|| json!({
                 "nat": self.exit_kernel,
                 "v6": self.exit_v6,
-                "clients": self.exit_from.values().collect::<HashSet<_>>().len(),
+                // Devices that have sent through it since the start, either way.
+                "clients": self.exit_from.values().chain(self.exit_clients.nodes()).collect::<HashSet<_>>().len(),
             })),
             "update": json!({
                 "build": crate::update::build(),

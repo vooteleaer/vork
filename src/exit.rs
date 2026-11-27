@@ -47,6 +47,11 @@ impl Clients {
     pub fn node(&self, ip: Ipv4Addr) -> Option<Hash> {
         self.by_addr.get(&ip).copied()
     }
+
+    /// The devices given an address since the start.
+    pub fn nodes(&self) -> impl Iterator<Item = &Hash> {
+        self.by_node.keys()
+    }
 }
 
 /// Whether an exit forwards to `a` without `exit_lan`: the internet only, not
