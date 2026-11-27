@@ -459,7 +459,13 @@ pub fn open_unix(endpoint: &str) -> io::Result<std::os::unix::net::UnixStream> {
     msg.msg_control = space.as_mut_ptr().cast();
     msg.msg_controllen = std::mem::size_of_val(&space) as _;
     // SAFETY: msg is set up above for one byte and one control message.
-    let n = unsafe { libc::recvmsg(s.as_raw_fd(), &mut msg, libc::MSG_CMSG_CLOEXEC) };
+    // Close-on-exec as it arrives where the system can (Haiku and macOS can't:
+    // there it's set just after).
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
+    let flags = libc::MSG_CMSG_CLOEXEC;
+    #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly")))]
+    let flags = 0;
+    let n = unsafe { libc::recvmsg(s.as_raw_fd(), &mut msg, flags) };
     if n < 0 {
         return Err(io::Error::last_os_error());
     }
@@ -469,6 +475,9 @@ pub fn open_unix(endpoint: &str) -> io::Result<std::os::unix::net::UnixStream> {
         let c = libc::CMSG_FIRSTHDR(&msg);
         if n == 1 && !c.is_null() && (*c).cmsg_level == libc::SOL_SOCKET && (*c).cmsg_type == libc::SCM_RIGHTS {
             let fd = std::ptr::read_unaligned(libc::CMSG_DATA(c) as *const libc::c_int);
+            if flags == 0 {
+                libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+            }
             return Ok(std::os::unix::net::UnixStream::from_raw_fd(fd));
         }
     }
