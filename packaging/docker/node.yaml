@@ -32,9 +32,9 @@ services:
     stop_grace_period: 15s
     stop_signal: SIGINT
     environment:
-      VORK_RELEASE: v0.5.0
+      VORK_RELEASE: v0.6.0
       VORK_FILE: vork-linux-x86_64
-      VORK_SHA256: 10af4016a45ef6f7600843eb6a2550c8ce5a08fc2a61c2c320c8479ec1996bf3
+      VORK_SHA256: b27c656c02720bf12b376c4a15f66cece54dd74a79f372b1b0ab3d5b2657230a
       VORK_WEB: "[::]:30742"    # the dashboard, IPv4 and IPv6 (a high port, as TrueNAS asks of apps)
     volumes:
       - /mnt/tank/apps/vork:/var/lib/vork
