@@ -42,7 +42,7 @@ Each install picks a free UDP port of its own (from 40000–59999), so several d
 
 ### 1. Install it on each device
 
-Downloads are on the [releases page](https://github.com/vooteleaer/vork/releases). Step by step for each kind of device, with updating, removing and what to do when something doesn't work: **[the install guide](docs/install.md)**.
+Downloads are on the [releases page](https://github.com/vooteleaer/vork/releases), and over vØrk itself in the public library [vØrk installers](docs/install.md#the-installers-over-vørk). Step by step for each kind of device, with updating, removing and what to do when something doesn't work: **[the install guide](docs/install.md)**.
 
 | On | Take | What it does |
 |---|---|---|

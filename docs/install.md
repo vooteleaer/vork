@@ -163,6 +163,18 @@ To make a browser forget the key, clear the page's site data.
 
 The dashboard's **Updates** page shows the newest release and what's new in it, and offers this device's file when it's newer: install it over the old one, as above. Your settings and devices stay.
 
+## The installers over vØrk
+
+The release files are also in a public vØrk storage library, **vØrk installers**: every release's files as on GitHub, with their `SHA256SUMS`, in folders by program and version (`/vork/0.6.0/`, `/vork-storage/0.6.0/`). Once a device runs vØrk and [vØrk storage](https://github.com/vooteleaer/vork-storage), it can take the next release, or the installer for another device, from your own network instead of GitHub, and keeps a copy for the others it reaches. Its records are signed by the library's writer, so nobody else can put a file in it.
+
+It's announced on the network: in vØrk storage, **Announces → vØrk installers → Join**. Or join it by its link:
+
+```
+vork-storage open 'vork:ns/1:4ac758d2e22507250cad2352277361bfc2a407b17fe0b67b1cd41ac061e37bef:d78bad223da2da6b09e36d1c453ac0df7e4f789298b5544c175c338cc986080d?name=v%C3%98rk%20installers&from=046a711e8ecb640788591665b4428b6b'
+```
+
+Check a file against `SHA256SUMS` before installing it, as with a download.
+
 ## When something doesn't work
 
 - **What the node says:** the dashboard's **Log** page; on Linux `journalctl -u vork`; on Windows `C:\ProgramData\vork\state\vork.log`; in Docker the container's log.
